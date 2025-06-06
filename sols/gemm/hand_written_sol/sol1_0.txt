@@ -1,0 +1,60 @@
+void test(float A[12544][256], float B[256][64], float C[12544][64]) {
+    config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
+    config_st(64 * sizeof(float)); // C in DRAM (64 columns in C)
+    config_ld(256 * sizeof(float), 1, 0); // A in DRAM (256 columns in A)
+    config_ld(64 * sizeof(float), 1, 1); // B in DRAM (64 columns in B)
+
+    uint32_t A_sp_addr = 0, B_sp_addr = 0x2000, C_acc_addr = 1 << 31;
+
+    // Using constants directly in the loop
+    for (int i = 0; i < 12544; i += 32) {           // TILE_SIZE_I = 32
+        for (int j = 0; j < 64; j += 64) {          // TILE_SIZE_J = 64
+            for (int k = 0; k < 256; k += 128) {    // TILE_SIZE_K = 128
+
+                // Load A and B tiles into scratchpad
+                for (int ii = 0; ii < 32; ii += 4)    // TILE_SIZE_I = 32
+                    for (int kk = 0; kk < 128; kk += 4) // TILE_SIZE_K = 128
+                        mvin(&A[i + ii][k + kk], A_sp_addr + ii * 32 + kk, 4, 4);
+
+                for (int jj = 0; jj < 64; jj += 4)     // TILE_SIZE_J = 64
+                    for (int kk = 0; kk < 128; kk += 4) // TILE_SIZE_K = 128
+                        mvin2(&B[k + kk][j + jj], B_sp_addr + kk * 16 + jj, 4, 4);
+
+                // Perform matrix multiplication on the tiles
+                for (int ii = 0; ii < 32; ii += 4)     // TILE_SIZE_I = 32
+                    for (int jj = 0; jj < 64; jj += 4)  // TILE_SIZE_J = 64
+                        for (int kk = 0; kk < 128; kk += 4) { // TILE_SIZE_K = 128
+                            uint32_t A_blk = A_sp_addr + ii * 32 + kk;
+                            uint32_t B_blk = B_sp_addr + kk * 16 + jj;
+                            uint32_t C_blk = C_acc_addr + ii * 16 + jj;
+
+                            preload(B_blk, C_blk | (k == 0 && kk == 0 ? 0 : 1 << 30), 4, 4, 4, 4);
+                            compute_preloaded(A_blk, 0xffffffff, 4, 4, 4, 4);
+                        }
+            }
+
+            // Move the result from the accumulator back to DRAM
+            for (int ii = 0; ii < 32; ii += 4)        // TILE_SIZE_I = 32
+                for (int jj = 0; jj < 64; jj += 4)      // TILE_SIZE_J = 64
+                    mvout(&C[i + ii][j + jj], C_acc_addr + ii * 16 + jj, 4, 4);
+        }
+    }
+
+    fence();
+}
+// NOT CORRECT:
+Temporal tiling:
+  1, 1, 392, 1, 1, 1, 1,  // L3 (DRAM level)
+  1, 1, 1, 1, 2, 1, 1,  // L2 (Scratchpad level)
+  1, 1, 64, 1, 128, 16, 1,  // L1 (Accumulator level)
+  1, 1, 1, 1, 1, 1, 1   // L0 (Register level)
+Spatial tiling:
+  1, 1, 1, 1, 1, 1, 1   // L3 (DRAM level)
+  1, 1, 1, 1, 1, 4, 1   // L2 (Scratchpad level)
+  1, 1, 1, 1, 4, 1, 1   // L1 (Accumulator level)
+  1, 1, 1, 1, 1, 1, 1   // L0 (Register level)
+Loop permutation:
+  7, 7, 6, 7, 4, 5, 7,  // L3 (DRAM level)
+  7, 7, 7, 7, 6, 7, 7,  // L2 (Scratchpad level)
+  7, 7, 6, 7, 4, 5, 7,  // L1 (Accumulator level)
+  7, 7, 7, 7, 7, 7, 7   // L0 (Register level)

@@ -1,0 +1,101 @@
+void test(float A[512][512], float B[512][512], float C[512][512]) {
+    // Configuration for the systolic array operations
+    config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
+    config_st(512 * sizeof(float)); // C has 512 columns in DRAM
+    
+    // Configuration for loading matrices into scratchpad memory
+    config_ld(512 * sizeof(float), 1, 0); // A matrix has 512 columns in DRAM
+    config_ld(512 * sizeof(float), 1, 1); // B matrix has 512 columns in DRAM
+    config_ld(512 * sizeof(float), 1, 2); // C matrix has 512 columns in DRAM
+
+    // Addresses in scratchpad and accumulator
+    static uint32_t A_sp_addr = 0;       // Address in scratchpad for A
+    static uint32_t B_sp_addr = 0x400;  // Address in scratchpad for B
+    static uint32_t C_sp_addr = 0x800;  // Address in scratchpad for C partial sum
+    static uint32_t C_acc_addr = 1 << 31; // Address in accumulator for C
+
+    // Tile sizes to fit into scratchpad and accumulator
+    const int TILE_SIZE_I = 64; // Tile size for I dimension (A and C)
+    const int TILE_SIZE_K = 64; // Tile size for K dimension (A and B)
+    const int TILE_SIZE_J = 64; // Tile size for J dimension (B and C)
+
+    // Perform the matrix multiplication in tiles
+    for (int k = 0; k < 512; k += TILE_SIZE_K) {
+        for (int i = 0; i < 512; i += TILE_SIZE_I) {
+            for (int j = 0; j < 512; j += TILE_SIZE_J) {
+
+                // Move A and B matrices into the scratchpad
+                for (int ii = 0; ii < TILE_SIZE_I; ii += 4) {
+                    for (int kk = 0; kk < TILE_SIZE_K; kk += 4) {
+                        uint32_t A_tile_addr = A_sp_addr + (ii * TILE_SIZE_K + kk * 4) / 4;
+                        mvin(&A[i + ii][k + kk], A_tile_addr, 4, 4);
+                    }
+                }
+                for (int jj = 0; jj < TILE_SIZE_J; jj += 4) {
+                    for (int kk = 0; kk < TILE_SIZE_K; kk += 4) {
+                        uint32_t B_tile_addr = B_sp_addr + (kk * TILE_SIZE_J + jj * 4) / 4;
+                        mvin2(&B[k + kk][j + jj], B_tile_addr, 4, 4);
+                    }
+                }
+
+                // Move partially computed C tile into the scratchpad as bias
+                for (int ii = 0; ii < TILE_SIZE_I; ii += 4) {
+                    for (int jj = 0; jj < TILE_SIZE_J; jj += 4) {
+                        uint32_t C_sp_tile_addr = C_sp_addr + (ii * TILE_SIZE_J + jj * 4) / 4;
+                        mvin3(&C[i + ii][j + jj], C_sp_tile_addr, 4, 4);
+                    }
+                }
+
+                // Perform the matrix multiplication on the tiles
+                for (int ii = 0; ii < TILE_SIZE_I; ii += 4) {
+                    for (int jj = 0; jj < TILE_SIZE_J; jj += 4) {
+                        for (int kk = 0; kk < TILE_SIZE_K; kk += 4) {
+                            uint32_t A_block_addr = A_sp_addr + (ii * TILE_SIZE_K + kk * 4) / 4;
+                            uint32_t B_block_addr = B_sp_addr + (kk * TILE_SIZE_J + jj * 4) / 4;
+                            uint32_t C_sp_block_addr = C_sp_addr + (ii * TILE_SIZE_J + jj * 4) / 4;
+                            uint32_t C_acc_block_addr = C_acc_addr + (ii * TILE_SIZE_J + jj * 4) / 4;
+
+                            if (k == 0 && kk == 0) {
+                                preload(B_block_addr, C_acc_block_addr, 4, 4, 4, 4);
+                                compute_preloaded(A_block_addr, 0xffffffff, 4, 4, 4, 4);
+                            } else if (kk == 0) {
+                                preload(B_block_addr, C_acc_block_addr, 4, 4, 4, 4);
+                                compute_preloaded(A_block_addr, C_sp_block_addr, 4, 4, 4, 4);
+                            } else {
+                                preload(B_block_addr, C_acc_block_addr | (1 << 30), 4, 4, 4, 4);
+                                compute_preloaded(A_block_addr, 0xffffffff, 4, 4, 4, 4);
+                            }
+                        }
+                    }
+                }
+
+                // Move out partial sum from the accumulator back to DRAM
+                for (int ii = 0; ii < TILE_SIZE_I; ii += 4) {
+                    for (int jj = 0; jj < TILE_SIZE_J; jj += 4) {
+                        uint32_t C_out_addr = C_acc_addr + (ii * TILE_SIZE_J + jj * 4) / 4;
+                        mvout(&C[i + ii][j + jj], C_out_addr, 4, 4);
+                    }
+                }
+            }
+        }
+    }
+
+    printf("%d\n", C[0][0]);
+    // Ensure all operations are completed before proceeding
+    fence();
+}
+Temporal tiling:
+  1, 1, 8, 1, 8, 8, 1,  // L3 (DRAM level)
+  1, 1, 1, 1, 1, 1, 1,  // L2 (Scratchpad level)
+  1, 1, 64, 1, 16, 16, 1,  // L1 (Accumulator level)
+  1, 1, 1, 1, 1, 1, 1   // L0 (Register level)
+Spatial tiling:
+  1, 1, 1, 1, 1, 1, 1   // L3 (DRAM level)
+  1, 1, 1, 1, 1, 4, 1   // L2 (Scratchpad level)
+  1, 1, 1, 1, 4, 1, 1   // L1 (Accumulator level)
+  1, 1, 1, 1, 1, 1, 1   // L0 (Register level)
+Loop permutation:
+  7, 7, 5, 7, 6, 4, 7,  // L3 (DRAM level)
+  7, 7, 7, 7, 7, 7, 7,  // L2 (Scratchpad level)
+  7, 7, 6, 7, 4, 5, 7,  // L1 (Accumulator level)
+  7, 7, 7, 7, 7, 7, 7   // L0 (Register level)

@@ -1,0 +1,71 @@
+// Tile sizes to fit into scratchpad and accumulator
+#define TILE_SIZE_I // Tile size for I dimension (A and C)
+#define TILE_SIZE_K // Tile size for K dimension (A and B)
+#define TILE_SIZE_J // Tile size for J dimension (B and C)
+
+void test(float A[I_SIZE][K_SIZE], float B[K_SIZE][J_SIZE], float C[I_SIZE][J_SIZE]) {
+    // Configuration for the systolic array operations
+    config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
+    config_st(J_SIZE * sizeof(float)); // C has J_SIZE columns in DRAM
+
+    // Configuration for loading matrices into scratchpad memory
+    config_ld(K_SIZE * sizeof(float), 1, 0); // A matrix has K_SIZE columns in DRAM
+    config_ld(J_SIZE * sizeof(float), 1, 1); // B matrix has J_SIZE columns in DRAM
+
+    // Addresses in scratchpad and accumulator
+    static uint32_t A_sp_addr = 0;       // Address in scratchpad for A
+    static uint32_t B_sp_addr = I_SIZE * K_SIZE / DIM;  // Address in scratchpad for B, after end of A
+    static uint32_t C_acc_addr = 1 << 31; // Address in accumulator for C
+
+    // Perform the matrix multiplication in tiles
+    for (int i = 0; i < I_SIZE; i += TILE_SIZE_I) {
+        for (int j = 0; j < J_SIZE; j += TILE_SIZE_J) {
+            for (int k = 0; k < K_SIZE; k += TILE_SIZE_K) {
+
+                // Move A and B matrices into the scratchpad
+                for (int ii = 0; ii < TILE_SIZE_I; ii += DIM) {
+                    for (int kk = 0; kk < TILE_SIZE_K; kk += DIM) {
+                        uint32_t A_tile_addr = A_sp_addr + (ii * TILE_SIZE_K + kk * DIM) / DIM;
+                        mvin(&A[i + ii][k + kk], A_tile_addr, DIM, DIM);
+                    }
+                }
+                for (int jj = 0; jj < TILE_SIZE_J; jj += DIM) {
+                    for (int kk = 0; kk < TILE_SIZE_K; kk += DIM) {
+                        uint32_t B_tile_addr = B_sp_addr + (kk * TILE_SIZE_J + jj * DIM) / DIM;
+                        mvin2(&B[k + kk][j + jj], B_tile_addr, DIM, DIM);
+                    }
+                }
+
+                // Perform the matrix multiplication on the tiles
+                for (int ii = 0; ii < TILE_SIZE_I; ii += DIM) {
+                    for (int jj = 0; jj < TILE_SIZE_J; jj += DIM) {
+                        for (int kk = 0; kk < TILE_SIZE_K; kk += DIM) {
+                            uint32_t A_block_addr = A_sp_addr + (ii * TILE_SIZE_K + kk * DIM) / DIM;
+                            uint32_t B_block_addr = B_sp_addr + (kk * TILE_SIZE_J + jj * DIM) / DIM;
+                            uint32_t C_block_addr = C_acc_addr + (ii * TILE_SIZE_J + jj * DIM) / DIM;
+
+                            if (k == 0 && kk == 0) {
+                                preload(B_block_addr, C_block_addr, DIM, DIM, DIM, DIM);
+                                compute_preloaded(A_block_addr, 0xffffffff, DIM, DIM, DIM, DIM);
+                            } else {
+                                preload(B_block_addr, C_block_addr | (1 << 30), DIM, DIM, DIM, DIM);
+                                compute_preloaded(A_block_addr, 0xffffffff, DIM, DIM, DIM, DIM);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Move the result from the accumulator back to DRAM
+            for (int ii = 0; ii < TILE_SIZE_I; ii += DIM) {
+                for (int jj = 0; jj < TILE_SIZE_J; jj += DIM) {
+                    uint32_t C_out_addr = C_acc_addr + (ii * TILE_SIZE_J + jj * DIM) / DIM;
+                    mvout(&C[i + ii][j + jj], C_out_addr, DIM, DIM);
+                }
+            }
+        }
+    }
+
+    // Ensure all operations are completed before proceeding
+    fence();
+}
