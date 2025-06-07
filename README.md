@@ -1,4 +1,4 @@
- <div style="display: flex; flex-wrap: wrap;">
+ <div align="center">
     <img src="accelerator.png" alt="Accelerator" style="width:35%;">
     <img src="code.png" alt="Optimized code example" style="width:27%;">
     <img src="2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
