@@ -51,13 +51,36 @@ The instruction above have been confirmed to work on a machine with a local Xili
 ## Repository Structure
 
 **`autocomp/`**
-- 
+- `search/` - Core search and optimization infrastructure
+  - `search.py` - Main search algorithm implementation. Implements the beam search described in the paper. Change search parameters within this file.
+  - `llm_agent.py` - LLM agents for planning and code optimization. Implements the two prompt phases described in the paper.
+  - `llm_ensemble.py` - Wrapper around LLM agents that enables calls to be split between multiple agents.
+  - `hardware_eval.py` - Hardware evaluation utilities for Gemmini. Must configure paths to Chipyard/FireSim/Gemmini here.
+  - `prob.py` - Wrapper for tests (parsed from the `tests/` directory).
+  - `code_repo.py` - Code repository management.
+- `common/` - Shared utilities and helper functions
+  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Anthropic, and Google Gemini. Implements parallel calls for OpenAI.
+  - `my_logging.py` - Custom logging functionality.
+  - `utils.py` - General utility functions.
 
 **`prompts/`**
+- `isa_prompt_conv.py` - Accelerator ISA section of the prompt, used for GEMM and convolution.
+- `isa_prompt_admm.py` - Accelerator ISA section of the prompt, used for TinyMPC.
+- `opt_system/` - Prompts and examples used for optimization
+  - `gemmini_rules.py` - Rules section of the prompt (helps constrain output and encourage functional correctness).
+  - `plan_prompt.py` - Planning phase prompt (note that implementation prompt is entirely contained within `search/llm_agent.py` above).
+  - `tiling_example.py` - Tiling optimization example.
+  - `if_example.py` - Conditional optimization example (from convolution).
+  - `if_example_matmul.py` - Conditional optimization example (from GEMM).
 
 **`sols/`**
+- `exo/` - Exo unoptimized and optimized baseline code for the GEMM benchmarks in the paper. `sol{id}_exo_baseline.c` is the unoptimized code and is used by `search/search.py` as the starting code fro optimization.
+- `gemm/` - Additional GEMM benchmarks used for schedule reuse. No hand-optimized code available.
+- `exo-conv/` - Exo unoptimized and optimized baseline code for the convolution benchmarks in the paper.
+- `admm-multifunction/` - TinyMPC unoptimized and optimized baseline code. Only problem IDs 1 and 2 are used in the paper. Run with FP32 4x4 Gemmini.
 
 **`tests/`**
+- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/` - Test cases corresponding to `sols/` above.
 
 ## Usage
 
