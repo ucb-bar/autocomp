@@ -97,7 +97,7 @@ TinyMPC kernels (stored under the name `admm-multifunction`) require manual chan
       year={2025},
       eprint={2505.18574},
       archivePrefix={arXiv},
-      primaryClass={cs.CL},
+      primaryClass={cs.PL},
       url={https://arxiv.org/abs/2505.18574}, 
 }
 ```
