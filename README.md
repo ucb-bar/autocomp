@@ -1,5 +1,5 @@
 <div align="center">
-<img src="logo.svg" height="200">
+<img src="logo.svg" height="250">
 </div>
 
 # Autocomp: LLM-driven Code Optimization for Tensor Accelerators
