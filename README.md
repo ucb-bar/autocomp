@@ -1,6 +1,14 @@
-<div align="center">
-<img src="logo.svg" height="250">
-</div>
+ <div style="display: flex; flex-wrap: wrap;">
+  <div style="float: left; width: 34%; padding: 5px;">
+    <img src="accelerator.png" alt="Snow" style="width:100%">
+  </div>
+  <div style="float: left; width: 26.5%; padding: 5px;">
+    <img src="code.png" alt="Forest" style="width:100%">
+  </div>
+  <div style="float: left; width: 36%; padding: 5px;">
+    <img src="2phase.svg" alt="Mountains" style="width:100%">
+  </div>
+</div> 
 
 # Autocomp: LLM-driven Code Optimization for Tensor Accelerators
 
