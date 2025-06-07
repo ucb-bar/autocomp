@@ -1,4 +1,6 @@
-<!--   <img src="logo.png" width="200" height="200"> -->
+<div align="center">
+<img src="logo.png" width="200" height="133">
+</div>
 
 # Autocomp: LLM-driven Code Optimization for Tensor Accelerators
 
