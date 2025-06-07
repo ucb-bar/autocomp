@@ -320,18 +320,18 @@ class GemminiHardwareBackend:
         if pe_dim == 4:
             if not FP32_4PE_CHIPYARD_PATH:
                 raise ValueError("FP32_4PE_CHIPYARD_PATH not set at top of hardware_eval.py")
-            self.gemmini_path = FP32_4PE_CHIPYARD_PATH / "generators" / "gemmini"
-            self.firesim_path = FP32_4PE_CHIPYARD_PATH / "sims" / "firesim"
+            self.gemmini_path = pathlib.Path(FP32_4PE_CHIPYARD_PATH).resolve() / "generators" / "gemmini"
+            self.firesim_path = pathlib.Path(FP32_4PE_CHIPYARD_PATH).resolve() / "sims" / "firesim"
         elif pe_dim == 16:
             if not INT8_16PE_CHIPYARD_PATH:
                 raise ValueError("INT8_16PE_CHIPYARD_PATH not set at top of hardware_eval.py")
-            self.gemmini_path = INT8_16PE_CHIPYARD_PATH / "generators" / "gemmini"
-            self.firesim_path = INT8_16PE_CHIPYARD_PATH / "sims" / "firesim"
+            self.gemmini_path = pathlib.Path(INT8_16PE_CHIPYARD_PATH).resolve() / "generators" / "gemmini"
+            self.firesim_path = pathlib.Path(INT8_16PE_CHIPYARD_PATH).resolve() / "sims" / "firesim"
         elif pe_dim == 32:
             if not INT8_32PE_CHIPYARD_PATH:
                 raise ValueError("INT8_32PE_CHIPYARD_PATH not set at top of hardware_eval.py")
-            self.gemmini_path = INT8_32PE_CHIPYARD_PATH / "generators" / "gemmini"
-            self.firesim_path = INT8_32PE_CHIPYARD_PATH / "sims" / "firesim"
+            self.gemmini_path = pathlib.Path(INT8_32PE_CHIPYARD_PATH).resolve() / "generators" / "gemmini"
+            self.firesim_path = pathlib.Path(INT8_32PE_CHIPYARD_PATH).resolve() / "sims" / "firesim"
         else:
             raise ValueError("supported Gemmini pe_dims: {4, 16, 32}")
         self.spad_size_kb = spad_size_kb
