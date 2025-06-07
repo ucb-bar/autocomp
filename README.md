@@ -1,6 +1,6 @@
  <div style="display: flex; flex-wrap: wrap;">
     <img src="accelerator.png" alt="Snow" style="width:34%; margin-right: 10px;">
-    <img src="code.png" alt="Forest" style="width:26.5%; margin-right: 10px;">
+    <img src="code.png" alt="Forest" style="width:27%; margin-right: 10px;">
     <img src="2phase.svg" alt="Mountains" style="width:36%;">
 </div> 
 
