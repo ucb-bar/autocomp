@@ -1,7 +1,7 @@
  <div style="display: flex; flex-wrap: wrap;">
-    <img src="accelerator.png" alt="Snow" style="width:35%; margin-right: 3%;">
-    <img src="code.png" alt="Forest" style="width:28%; margin-right: 3%;">
-    <img src="2phase.svg" alt="Mountains" style="width:31%;">
+    <img src="accelerator.png" alt="Accelerator" style="width:35%;">
+    <img src="code.png" alt="Optimized code example" style="width:27%;">
+    <img src="2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
 </div> 
 
 # Autocomp: LLM-driven Code Optimization for Tensor Accelerators
