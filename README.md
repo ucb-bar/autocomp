@@ -57,7 +57,7 @@ TinyMPC kernels (stored under the name `admm-multifunction`) require manual chan
 
 ## Repository Structure
 
-**`autocomp/`**
+**`autocomp/`** - Core Autocomp code.
 - `search/` - Core search and optimization infrastructure
   - `search.py` - Main search algorithm implementation. Implements the beam search described in the paper. Change search parameters within this file.
   - `llm_agent.py` - LLM agents for planning and code optimization. Implements the two prompt phases described in the paper. The optimization menu is defined within this file.
@@ -70,8 +70,7 @@ TinyMPC kernels (stored under the name `admm-multifunction`) require manual chan
   - `my_logging.py` - Custom logging functionality.
   - `utils.py` - General utility functions.
 
-**`prompts/`**
-Contains various prompts imported by `autocomp/search/llm_agent.py`.
+**`prompts/`** - Contains various prompts imported by `autocomp/search/llm_agent.py`.
 - `isa_prompt_conv.py` - Accelerator ISA section of the prompt, used for GEMM and convolution.
 - `isa_prompt_admm.py` - Accelerator ISA section of the prompt, used for TinyMPC.
 - `opt_system/` - Prompts and examples used for optimization
@@ -81,14 +80,14 @@ Contains various prompts imported by `autocomp/search/llm_agent.py`.
   - `if_example.py` - Conditional optimization example (from convolution).
   - `if_example_matmul.py` - Conditional optimization example (from GEMM).
 
-**`sols/`**
+**`sols/`** - Contains baseline code for the benchmarks in the paper.
 - `exo/` - Exo unoptimized and optimized baseline code for the GEMM benchmarks in the paper. `sol{id}_exo_baseline.c` is the unoptimized code and is used by `autocomp/search/search.py` as the starting code fro optimization.
 - `gemm/` - Additional GEMM benchmarks used for schedule reuse. No hand-optimized code available.
 - `exo-conv/` - Exo unoptimized and optimized baseline code for the convolution benchmarks in the paper.
 - `admm-multifunction/` - TinyMPC unoptimized and optimized baseline code. Only problem IDs 1 and 2 are used in the paper. Run with FP32 4x4 Gemmini.
 
-**`tests/`**
-- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/` - Test cases corresponding to `sols/` above.
+**`tests/`** - Contains test cases corresponding to `sols/` above.
+- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/` - Test cases corresponding to directories in `sols/` above.
 
 ## Citations
 ```
