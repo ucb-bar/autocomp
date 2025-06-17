@@ -4,7 +4,7 @@ import random
 from autocomp.common import logger, LLMClient, llm_utils
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
-from autocomp.search.annotate_perf import GemminiCode
+# from autocomp.search.annotate_perf import GemminiCode
 from prompts import isa_prompt_conv, isa_prompt_admm
 from prompts.opt_system import plan_prompt, gemmini_rules, tiling_example, if_example, if_example_matmul
 
