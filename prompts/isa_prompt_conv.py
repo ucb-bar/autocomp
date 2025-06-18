@@ -45,7 +45,7 @@ def PROMPT(pe_dim):
 // B must have been moved in to the scratchpad first
 // B_cols must be less than or equal to DIM, B_rows must be less than or equal to DIM, C_cols must be less than or equal to DIM, C_rows must be less than or equal to DIM
 // must run to change the output address to C_acc_addr 
-// if B_spad_addr unchaged from previous preload instruction, can set B_spad_addr = 0xffffffff; must be specified otherwise
+// if B_spad_addr unchanged from previous preload instruction, can set B_spad_addr = 0xffffffff; must be specified otherwise
 
 #define compute_preloaded(A_spad_addr, bias_spad_addr, A_cols, A_rows, bias_cols, bias_rows)
 // compute on DIM by DIM systolic array, with optional added bias (can be used for matrix addition)
