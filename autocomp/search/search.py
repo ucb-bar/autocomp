@@ -489,27 +489,31 @@ class BeamSearchStrategy(SearchStrategy):
         }})
 
 if __name__ == "__main__":
-    # Initialize the optimizer
-    # timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # output_dir = pathlib.Path(f"output/{timestamp}")
-
+    # Generic search parameters
     models = ["o3-mini", "gpt-4o"]
-    prob_type = "exo-conv"
-    # prob_type = "exo"
-    prob_id = 2
-    prob = Prob(prob_type, prob_id)
     metric = "latency"
     simulator = "firesim"
+    search_strategy = "beam"
+    iterations = 10
+    prob_type = "exo"
+    prob_id = 0
 
-    # Initialize with base code
-    # initial_code = "int main() { return 0; }"
-    # with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "exo" / "sol1_0.txt") as f:
-    #     initial_code = f.read()
-    # with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
-    #     initial_code = f.read()
-    with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
-        initial_code = f.read()
+    # Get initial code
+    prob = Prob(prob_type, prob_id)
+    if "admm" in prob_type:
+        with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
+            initial_code = f.read()
+    else:
+        with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
+            initial_code = f.read()
 
+    # Beam search parameters
+    num_plan_candidates=6
+    num_code_candidates=2
+    beam_size=6
+
+    # Planning prompt knobs
+    dropout_menu_options = 0.3
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 1
@@ -517,27 +521,20 @@ if __name__ == "__main__":
     plan_icl_examples = False
     code_icl_examples = True
 
+    # Typically not used
+    num_analyses=0
+    num_pairs_to_combine = 0
+    num_gen_per_combine = 0
+    trigger_exhaustive_threshold = 1
+    trigger_exhaustive_iters = 20
+    start_exhaustive_iters = 0
+    random.seed(1111)
+    
     # prevent_duplicate_level
     # 0: prevent candidates with same parent and plan
     # 1: prevent candidates with same parent
     # 2: prevent candidates with any parents in common (any nodes below root have branching factor 1)
     prevent_duplicate_level = 0
-
-    # search_strategy = "beam"
-    num_analyses=0
-    num_plan_candidates=12
-    num_code_candidates=4
-    beam_size=6
-    num_pairs_to_combine = 0
-    num_gen_per_combine = 0
-    dropout_menu_options = 0.3
-    trigger_exhaustive_threshold = 1
-    trigger_exhaustive_iters = 20
-    start_exhaustive_iters = 0
-    random.seed(1111)
-
-    search_strategy = "beam"
-    iterations = 10
 
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
     for model in models:
