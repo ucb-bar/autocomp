@@ -140,7 +140,7 @@ def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path,
         return_dict["retval"] = "Compile error"
         return
 
-    p = subprocess.run(["stdbuf", "-oL", "sh", "./scripts/run-spike.sh", test_name], cwd=gemmini_path, 
+    p = subprocess.run(["stdbuf", "-oL", "spike", "--extension=gemmini", "./build/bareMetalC/auto_comp_test-baremetal"], cwd=gemmini_sw_path, 
                          capture_output=True, text=True, errors="ignore")
     spike_output = p.stdout
 
