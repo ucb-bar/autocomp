@@ -11,13 +11,13 @@
 
 Welcome to the code repository of **Autocomp**. Check out our introductory [blog post](https://charleshong3.github.io/blog/autocomp.html)!
 
-**Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
+**📚 Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
-**Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
+Authors: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
 
 Note that this repository is still under construction.
 
-## Setup
+## ⚙️ Setup
 
 [Chipyard](https://chipyard.readthedocs.io/en/latest/) and [FireSim](https://docs.fires.im/en/1.20.1/) are needed to replicate experiments with Gemmini (you can also set `"simulator"` in `search.py` to `"spike"`, but this will only optimize instruction counts, not cycle counts).
 
@@ -48,14 +48,14 @@ In `autocomp/search/hardware_eval.py`, you will need to update at least one of t
 ### Note for AWS F1 users
 The instruction above have been confirmed to work on a machine with a local Xilinx Alveo U250 FPGA. Due to the upcoming deprecation of AWS F1 instances, FireSim support for AWS is spotty at the moment, but we have confirmed that some configurations work with FireSim-as-top with older versions (such as [this one](https://github.com/charleshong3/firesim-dosa)). However, there may be version mismatches (for example with Gemmini software) if you check out old versions of FireSim, so proceed with caution.
 
-## Usage
+## 🚀 Usage
 
 `autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
 ### TinyMPC
 TinyMPC kernels (stored under the name `admm-multifunction`) require manual changes to the code. Specifically, `autocomp/search/llm_agent.py` should be changed to import `prompts.isa_prompt_admm` instead of `prompts.isa_prompt_conv`. Also, an FP32 4x4 Gemmini configuration should be used (requires building a new bitstream with Gemmini's FP32DefaultConfig).
 
-## Repository Structure
+## 📁 Repository Structure
 
 **`autocomp/`** - Core Autocomp code.
 - `search/` - Core search and optimization infrastructure
@@ -89,7 +89,7 @@ TinyMPC kernels (stored under the name `admm-multifunction`) require manual chan
 **`tests/`** - Contains test cases corresponding to `sols/` above.
 - `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/` - Test cases corresponding to directories in `sols/` above.
 
-## Citations
+## 📜 Citation
 ```
 @misc{hong2025autocomp,
       title={Autocomp: LLM-Driven Code Optimization for Tensor Accelerators}, 
