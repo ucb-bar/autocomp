@@ -1,7 +1,7 @@
  <div align="center">
-    <img src="accelerator.png" alt="Accelerator" style="width:35%;">
-    <img src="code.png" alt="Optimized code example" style="width:27%;">
-    <img src="2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
+    <img src="img/accelerator.png" alt="Accelerator" style="width:35%;">
+    <img src="img/code.png" alt="Optimized code example" style="width:27%;">
+    <img src="img/2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
 </div> 
 
 # Autocomp: LLM-driven Code Optimization for Tensor Accelerators
@@ -27,12 +27,12 @@ First, clone [Chipyard](https://github.com/ucb-bar/chipyard) and check out commi
 
 ### FireSim
 
-Next, make sure FireSim is set up and ready to run. You will probably need to run `firesim managerinit --platform <your_platform>` and configure files such as `firesim/deploy/config_hwdb.yaml` and `firesim/deploy/config_runtime.yaml`. Make sure to use a FireSim bitstream for your FPGA platform with the Gemmini configuration you want to use. You will also need to set up a FireSim workload `json` file with `"benchmark_name": "gemmini"`. An example of files we used is [here](https://github.com/charleshong3/auto-comp-firesim-files). 
+Next, make sure FireSim is set up and ready to run. FireSim has already been cloned as a submodule of Chipyard, but requires some additional setup as described in the [FireSim docs](https://docs.fires.im/en/1.20.1/). Within the `firesim` directory, you will need to run `firesim managerinit --platform <your_platform>` and configure files such as `firesim/deploy/config_hwdb.yaml` and `firesim/deploy/config_runtime.yaml`. Make sure to use a FireSim bitstream for your FPGA platform with the Gemmini configuration you want to use. You will also need to set up a FireSim workload `json` file with `"benchmark_name": "gemmini"`. An example of files we used is [here](https://github.com/charleshong3/auto-comp-firesim-files). 
 
 Under `firesim/deploy/workloads`, create a directory called `gemmini`. This will be pointed to by `config_runtime.yaml` and `autocomp/search/hardware_eval.py` within Autocomp.
 
 ### Gemmini
-The last dependency is [Gemmini](https://github.com/ucb-bar/gemmini), which has already been cloned as a Chipyard subrepository. Navigate to `chipyard/generators/gemmini/software/gemmini-rocc-tests` and check out branch `auto-comp-v2`.
+The last dependency is [Gemmini](https://github.com/ucb-bar/gemmini), which has already been cloned as a Chipyard submodule. Navigate to `chipyard/generators/gemmini/software/gemmini-rocc-tests` and check out branch `auto-comp-v2`.
 
 In order to collect scratchpad/accumulator utilization stats, you will need to use our modifications to Spike (the RISC-V ISA simulator). Navigate to `chipyard/generators/gemmini/software/libgemmini` and check out branch `auto-comp`. Then, run the following:
 ```sh
