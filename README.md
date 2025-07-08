@@ -53,7 +53,7 @@ The instruction above have been confirmed to work on a machine with a local Xili
 `autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
 ### TinyMPC
-TinyMPC kernels (stored under the name `admm-multifunction`) require manual changes to the code. Specifically, `autocomp/search/llm_agent.py` should be changed to import `prompts.isa_prompt_admm` instead of `prompts.isa_prompt_conv`. Also, an FP32 4x4 Gemmini configuration should be used (requires building a new bitstream with Gemmini's FP32DefaultConfig).
+TinyMPC kernels (stored under the name `admm-multifunction`) run on an FP32 4x4 Gemmini configuration, which requires building a new FireSim bitstream with Gemmini's FP32DefaultConfig.
 
 ## 📁 Repository Structure
 
