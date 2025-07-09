@@ -66,7 +66,7 @@ TinyMPC kernels (stored under the name `admm-multifunction`) run on an FP32 4x4 
   - `prob.py` - Wrapper for tests (parsed from the `tests/` directory) that edits the test file and appends LLM-generated code in order to test it.
   - `code_repo.py` - Abstraction for managing code candidates generated during optimization.
 - `common/` - Shared utilities and helper functions
-  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Anthropic, and Google Gemini. Implements parallel calls for OpenAI.
+  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Claude, and Gemini. Implements parallel calls for OpenAI.
   - `my_logging.py` - Custom logging functionality.
   - `utils.py` - General utility functions.
 
