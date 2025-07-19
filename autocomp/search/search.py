@@ -5,9 +5,11 @@ import wandb
 
 from autocomp.common import logger
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import LLMAgent, GemminiLLMAgent
+from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
-from autocomp.search.hardware_eval import GemminiHardwareBackend
+from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.gemmini_eval import GemminiHardwareBackend
+from autocomp.backend.kb_eval import CudaHardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
@@ -16,6 +18,7 @@ class SearchStrategy:
     """
     def __init__(self, 
                  output_dir: pathlib.Path,
+                 hw_backend: HardwareBackend,
                  llm: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
@@ -35,19 +38,7 @@ class SearchStrategy:
         self.prob = prob
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        spad_size_kb = 256
-        acc_size_kb = 64
-        if "admm" in prob.prob_type:
-            pe_dim = 4
-        elif "exo" in prob.prob_type or "gemm" in prob.prob_type:
-            pe_dim = 16
-        elif "gpt" in prob.prob_type:
-            pe_dim = 32
-            spad_size_kb = 512
-            acc_size_kb = 128
-        else:
-            raise ValueError(f"Unknown problem type: {prob.prob_type}")
-        self.hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
+        self.hw_backend = hw_backend
         self.metric = metric
         self.simulator = simulator
         self.give_score_feedback = give_score_feedback
@@ -121,11 +112,14 @@ class SearchStrategy:
         Filter and return the top N code candidates based on their score.
         If N (num_to_keep) is not provided, will return all candidates with a higher score than their parent.
         """
+        # Filter out incorrect candidates
+        code_candidates = [c for c in code_candidates if c.score != float("inf")]
+
+        keep_factor = 1
+        if cur_iter is not None and num_iters is not None:
+            if cur_iter <= 2:
+                keep_factor = 1.5
         if num_to_keep is None:
-            keep_factor = 1
-            # if cur_iter is not None and num_iters is not None:
-            #     if cur_iter <= num_iters // 3:
-            #         keep_factor = 1.2
             cur_candidates = []
             for c in code_candidates:
                 if isinstance(c.parent, list):
@@ -146,7 +140,7 @@ class SearchStrategy:
                     cur_candidates.append(cand)
                     continue
                 # Don't keep any candidates with a score same or higher than their parent
-                if cand.score >= cand.parent.score:
+                if cand.score >= cand.parent.score * keep_factor:
                     logger.debug(f"Working candidate has score {cand.score} >= parent score {cand.parent.score}.")
                     logger.debug(f"Candidate plan:\n{cand.plan}")
                     logger.debug(f"Candidate code:\n{cand.code}")
@@ -181,8 +175,7 @@ class SearchStrategy:
                 if not dont_add:
                     cur_candidates.append(cand)
 
-        # Finally, filter incorrect candidates
-        return [candidate for candidate in cur_candidates if candidate.score < float("inf")]
+        return cur_candidates
 
     def init_wandb(self):
         # start a new wandb run to track this script
@@ -270,6 +263,7 @@ class BeamSearchStrategy(SearchStrategy):
     """
     def __init__(self,
                  output_dir: pathlib.Path,
+                 backend: str,
                  llm: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
@@ -293,7 +287,7 @@ class BeamSearchStrategy(SearchStrategy):
                  start_exhaustive_iters: int,
                  prevent_duplicate_level: int,
                 ):
-        super().__init__(output_dir, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level)
+        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -465,7 +459,7 @@ class BeamSearchStrategy(SearchStrategy):
             # else:
             #     cands_to_filter = improving_candidates + current_candidates
             cands_to_filter = improving_candidates + current_candidates
-            candidates_for_next_iter = self.filter_code_candidates(cands_to_filter, num_to_keep=self.beam_size)
+            candidates_for_next_iter = self.filter_code_candidates(cands_to_filter, num_to_keep=self.beam_size, cur_iter=i, num_iters=iterations)
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
             # Step 5: Save the improving candidates and update the repository
@@ -488,24 +482,17 @@ class BeamSearchStrategy(SearchStrategy):
             "best-loss": min([cand.score for cand in last_iter_cands]),
         }})
 
-if __name__ == "__main__":
+def main():
     # Generic search parameters
-    models = ["o3-mini", "gpt-4o"]
+    backend = "cuda"
+    # models = ["o3-mini", "gpt-4o"]
+    models = ["kevin"]
     metric = "latency"
-    simulator = "firesim"
+    simulator = "cuda" # "firesim" or "spike" if backend == "gemmini"; "cuda" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "exo"
-    prob_id = 0
-
-    # Get initial code
-    prob = Prob(prob_type, prob_id)
-    if "admm" in prob_type:
-        with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
-            initial_code = f.read()
-    else:
-        with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
-            initial_code = f.read()
+    prob_type = "kb-level2"
+    prob_id = 3
 
     # Beam search parameters
     num_plan_candidates=6
@@ -513,13 +500,13 @@ if __name__ == "__main__":
     beam_size=6
 
     # Planning prompt knobs
-    dropout_menu_options = 0.3
+    dropout_menu_options = 0.25
     give_score_feedback = 1
     give_util_feedback = 0
-    give_spad_acc_feedback = 1
+    give_spad_acc_feedback = 0
     include_ancestors = False
     plan_icl_examples = False
-    code_icl_examples = True
+    code_icl_examples = False
 
     # Typically not used
     num_analyses=0
@@ -551,19 +538,47 @@ if __name__ == "__main__":
 
     logger.info(f"Output directory: {output_dir}")
 
-    if "admm" in prob.prob_type:
-        pe_dim = 4
-    elif "exo" in prob.prob_type or "gemm" in prob.prob_type:
-        pe_dim = 16
-    elif "gpt" in prob.prob_type:
-        pe_dim = 32
+    # Get initial code
+    prob = Prob(prob_type, prob_id)
+    if backend == "cuda":
+        # Find file matching pattern
+        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            initial_code = f.read()
+    elif backend == "gemmini":
+        if "admm" in prob_type:
+            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
+                initial_code = f.read()
+        else:
+            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
+                initial_code = f.read()
+
+    # Initialize hardware backend and LLM ensemble
+    if backend == "cuda":
+        hw_backend = CudaHardwareBackend()
+        llm = LLMEnsemble([CudaLLMAgent(model) for model in models])
+    elif backend == "gemmini":
+        spad_size_kb = 256
+        acc_size_kb = 64
+        if "admm" in prob.prob_type:
+            pe_dim = 4
+        elif "exo" in prob.prob_type or "gemm" in prob.prob_type:
+            pe_dim = 16
+        elif "gpt" in prob.prob_type:
+            pe_dim = 32
+            spad_size_kb = 512
+            acc_size_kb = 128
+        hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
+        llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
     else:
-        raise ValueError(f"Unknown problem type: {prob.prob_type}")
-    llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
+        raise ValueError(f"Unknown backend: {backend}")
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options)
+        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options)
     elif search_strategy == "beam":
-        optimizer = BeamSearchStrategy(output_dir, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
+        optimizer = BeamSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
@@ -571,3 +586,6 @@ if __name__ == "__main__":
 
     # Start the optimization process
     optimizer.optimize(iterations)
+
+if __name__ == "__main__":
+    main()

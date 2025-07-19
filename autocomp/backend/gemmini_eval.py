@@ -5,11 +5,10 @@ from typing import List
 import time
 import glob
 import shutil
-import os
-import signal
 
 from autocomp.common import logger
 from autocomp.search.prob import Prob
+from autocomp.backend.hardware_backend import HardwareBackend
 
 FP32_4PE_CHIPYARD_PATH = None
 INT8_16PE_CHIPYARD_PATH = None
@@ -314,7 +313,7 @@ def parse_spad_acc_utilization(spike_output: str, pe_dim: int, spad_size_kb: int
     num_acc_rows = (acc_size_kb * 1024 / (pe_dim * 4))
     return len(spad_addresses_used) / num_spad_rows, len(acc_addresses_used) / num_acc_rows
 
-class GemminiHardwareBackend:
+class GemminiHardwareBackend(HardwareBackend):
     def __init__(self, pe_dim: int, spad_size_kb: int=256, acc_size_kb: int=64):
         self.pe_dim = pe_dim
         if pe_dim == 4:

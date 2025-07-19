@@ -46,6 +46,13 @@ def extract(code_str: str) -> str:
     # Remove the function wrapper and return only the body of the function
     if not code_str:
         return code_str
+    
+    if "```python" in code_str:
+        code_str = code_str.split("```python")[1].split("```")[0]
+        return code_str
+    else:
+        return code_str
+
     from_void_test_str = code_str[code_str.find("void test"):]
     # end = from_void_test_str.rfind('}\n')
     # Iterate through all characters until the second time matching curly braces have been found
@@ -105,47 +112,348 @@ class LLMAgent:
         return ["Analysis 1", "Analysis 2", "Analysis 3"]
 
     def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
-                                force_opt_menu_lst: int = None, 
-                                prompt_end: str = "", 
-                                analysis_lst: list[str] = None, 
-                                shuffle_opts: bool = False, 
-                                give_score_feedback: bool = True,
-                                include_ancestors: bool = True,
-                                plan_icl_examples: bool = False,
-                                cur_iter: int = None,
-                                num_iters: int = None,
-                                dropout_menu_options: float = 1,
-                                ) -> list[CodeCandidate]:
-        raise NotImplementedError
+                              prob: Prob,
+                              force_opt_menu_lst: int = None, 
+                              prompt_end: str = "", 
+                              analysis_lst: list[str] = None, 
+                              shuffle_opts: bool = False, 
+                              give_score_feedback: float = 1.0,
+                              give_util_feedback: float = 0.0,
+                              give_spad_acc_feedback: float = 1.0,
+                              include_ancestors: bool = True,
+                              plan_icl_examples: bool = False,
+                              cur_iter: int = None,
+                              num_iters: int = None,
+                              dropout_menu_options: float = 1,
+                             ) -> list[CodeCandidate]:
+        """
+        dropout_menu_options: probability of keeping each menu option
+        """
+        loaded_plans = []
+        not_found = False
+        for c_i in range(len(candidate_lst)):
+            this_cand_loaded_plans = []
+            save_str = save_strs[c_i]
+            for s_i in range(num_plans):
+                path = f"plan{'' if not save_str else '_' + save_str}"
+                if force_opt_menu_lst is not None:
+                    path += "_" + str(force_opt_menu_lst[c_i])
+                path += "_" + str(s_i) + ".txt"
+                path = save_dir / path
+                if path.exists():
+                    with open(path, "r") as f:
+                        plan = f.read()
+                        logger.debug("Loaded optimization plan from %s", path)
+                        this_cand_loaded_plans.append(plan)
+                else:
+                    not_found = True
+                    break
+            if not_found:
+                break
+            loaded_plans.append(this_cand_loaded_plans)
+        else:
+            loaded_cands = []
+            for c_i, this_cand_loaded_plans in enumerate(loaded_plans):
+                for plan in this_cand_loaded_plans:
+                    loaded_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
+            logger.info("Loaded %d optimization plans rather than generating new ones", len(loaded_cands))
+            return loaded_cands
+
+        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_spad_acc_feedback < 1):
+            num_unique_prompts_per_cand = num_plans
+        else:
+            num_unique_prompts_per_cand = 1
+        msgs_lst = []
+        for c_i, candidate in enumerate(candidate_lst):
+            save_str = save_strs[c_i]
+            for p in range(num_unique_prompts_per_cand):
+                # Add the previously iterated plans and code to the prompt
+                analysis = "" if analysis_lst is None else analysis_lst[c_i]
+                force_opt_menu = None if force_opt_menu_lst is None else force_opt_menu_lst[c_i]
+                prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
+                                                                    give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
+                                                                    dropout_menu_options)
+
+                # Save full prompt
+                prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
+                if force_opt_menu_lst is not None:
+                    prompt_path += "_" + str(force_opt_menu_lst[c_i])
+                else:
+                    prompt_path += "_" + str(p)
+                prompt_path += ".txt"
+                prompt_path = save_dir / prompt_path
+
+                with open(prompt_path, "w") as f:
+                    f.write(prompt_text)
+
+                messages = [
+                    # {"role": "system", "content": TEMPLATE_SYS},
+                    {"role": "user", "content": prompt_text},
+                ]
+                msgs_lst.append(messages)
+
+        temperature = 1
+        candidates_to_gen = num_plans // num_unique_prompts_per_cand
+
+        extended_responses = self.llm_client.chat_async(
+            msgs_lst=msgs_lst,
+            num_candidates=candidates_to_gen,  # number of candidates,
+            temperature=temperature
+        )
+        # Need to sort the responses back into a flattened list for each parent candidate
+        responses = [[] for _ in range(len(candidate_lst))]
+        for r_i, per_prompt_responses in enumerate(extended_responses):
+            c_i = r_i // num_unique_prompts_per_cand
+            responses[c_i].extend(per_prompt_responses)
+
+        for c_i in range(len(responses)):
+            save_str = save_strs[c_i]
+            for s_i in range(num_plans):
+                path = f"plan{'' if not save_str else '_' + save_str}"
+                if force_opt_menu_lst is not None:
+                    path += "_" + str(force_opt_menu_lst[c_i])
+                path += "_" + str(s_i) + ".txt"
+                path = save_dir / path
+                with open(path, "w") as f:
+                    f.write(responses[c_i][s_i])
+                logger.debug("Saved optimization plan to %s", path)
+
+        new_cands = []
+        for c_i, cand_resps in enumerate(responses):
+            for plan in cand_resps:
+                new_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
+        return new_cands
 
     def propose_optimizations(self, candidate: CodeCandidate, num_plans: int, save_dir: pathlib.Path, save_str: str, 
+                              prob: Prob,
                               force_opt_menu: int = None, 
                               prompt_end: str = "", 
                               analysis: str = "", 
                               shuffle_opts: bool = False, 
                               give_score_feedback: bool = True,
+                              give_util_feedback: bool = False,
                               include_ancestors: bool = True,
                               plan_icl_examples: bool = False,
                               cur_iter: int = None,
                               num_iters: int = None,
+                              dropout_menu_options: float = 1,
                              ) -> list[CodeCandidate]:
-        # Mock-up method: return some optimization plans
-        return [CodeCandidate(candidate, "Plan A", None), CodeCandidate(candidate, "Plan B", None), CodeCandidate(candidate, "Plan C", None)]
+        """
+        dropout_menu_options: probability of keeping each menu option
+        """
+        loaded_plans = []
+        for c_i in range(num_plans):
+            path = f"plan{'' if not save_str else '_' + save_str}"
+            if force_opt_menu is not None:
+                path += "_" + str(force_opt_menu)
+            path += "_" + str(c_i) + ".txt"
+            path = save_dir / path
+            if path.exists():
+                with open(path, "r") as f:
+                    plan = f.read()
+                    logger.debug("Loaded optimization plan from %s", path)
+                    loaded_plans.append(plan)
+            else:
+                break
+        else:
+            loaded_cands = [CodeCandidate(candidate, plan, None, plan_gen_model=self.llm_client.model) for plan in loaded_plans]
+            logger.info("Loaded %d optimization plans rather than generating new ones", num_plans)
+            return loaded_cands
+
+        responses = []
+        if dropout_menu_options < 1:
+            num_unique_prompts_per_cand = num_plans
+        else:
+            num_unique_prompts_per_cand = 1
+        for p in range(num_unique_prompts_per_cand):
+            # Add the previously iterated plans and code to the prompt
+            prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
+                                                                 give_score_feedback, give_util_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
+                                                                 dropout_menu_options)
+
+            # Save full prompt
+            prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
+            if force_opt_menu is not None:
+                prompt_path += "_" + str(force_opt_menu)
+            else:
+                prompt_path += "_" + str(p)
+            prompt_path += ".txt"
+            prompt_path = save_dir / prompt_path
+
+            with open(prompt_path, "w") as f:
+                f.write(prompt_text)
+
+            messages = [
+                # {"role": "system", "content": TEMPLATE_SYS},
+                {"role": "user", "content": prompt_text},
+            ]
+            temperature = 1
+            candidates_to_gen = num_plans // num_unique_prompts_per_cand
+
+            resp = self.llm_client.chat_async(
+                msgs_lst=[messages],
+                num_candidates=candidates_to_gen,  # number of candidates,
+                temperature=temperature
+            )[0]
+            # resp = self.llm_client.chat(
+            #     messages=messages,
+            #     num_candidates=candidates_to_gen,  # number of candidates,
+            #     temperature=temperature
+            # )
+            responses.extend(resp)
+
+        for c_i, c in enumerate(responses):
+            path = f"plan{'' if not save_str else '_' + save_str}"
+            if force_opt_menu is not None:
+                path += "_" + str(force_opt_menu)
+            path += "_" + str(c_i) + ".txt"
+            path = save_dir / path
+            with open(path, "w") as f:
+                f.write(c)
+            logger.debug("Saved optimization plan to %s", path)
+
+        new_cands = [CodeCandidate(candidate, plan, None, plan_gen_model=self.llm_client.model) for plan in responses]
+        return new_cands
 
     def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
-        raise NotImplementedError
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+        loaded_code = []
+        code_not_found = False
+        for c_i in range(len(candidate_lst)):
+            this_cand_loaded_code = []
+            save_str = save_strs[c_i]
+            for s_i in range(num_samples):
+                path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                if path.exists():
+                    with open(path, "r") as f:
+                        code = extracted_code = extract(f.read())
+                        logger.debug("Loaded optimization plan from %s", path)
+                        this_cand_loaded_code.append(code)
+                else:
+                    code_not_found = True
+                    break
+            if code_not_found:
+                break
+            loaded_code.append(this_cand_loaded_code)
+        else:
+            loaded_candidates = []
+            for c_i in range(len(candidate_lst)):
+                cand = candidate_lst[c_i]
+                for s_i in range(num_samples):
+                    new_cand = copy_candidate(cand)
+                    new_cand.code = loaded_code[c_i][s_i]
+                    new_cand.code_gen_model = self.llm_client.model
+                    loaded_candidates.append(new_cand)
+            logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
+            return loaded_candidates
 
-    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path) -> str:
-        # Mock-up method to implement the code
-        assert num_samples > 0
-        candidates = [candidate]
-        logger.debug(f"Implementing plan:\n{candidate.plan}\nOriginal code:\n{candidate.parent.code}")
-        for i in range(num_samples):
-            if i == 0:
-                candidates[i].code = "Optimized code 0"
+        msgs_lst = []
+        for c_i in range(len(candidate_lst)):
+            prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], code_icl_examples)
+            # Save full prompt
+            prompt_path = save_dir / f"prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
+            with open(prompt_path, "w") as f:
+                f.write(prompt_text)
+            messages = [
+                # {"role": "system", "content": TEMPLATE_SYS},
+                {"role": "user", "content": prompt_text},
+            ]
+            msgs_lst.append(messages)
+
+        temperature = 1
+        responses = self.llm_client.chat_async(
+            msgs_lst,
+            num_candidates=num_samples,  # number of candidates,
+            temperature=temperature
+        )
+
+        candidates: list[CodeCandidate] = [] # Flat list of new implemented candidates
+        for c_i, cand_responses in enumerate(responses):
+            this_plan_cands = []
+            for s_i, sample_response in enumerate(cand_responses):
+                # Save full response
+                full_path = save_dir / f"impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
+                with open(full_path, "w") as f:
+                    f.write(sample_response)
+                # Extract just the code
+                extracted_code = extract(sample_response)
+                if not extracted_code:
+                    logger.warning("Failed to extract code from plan %d response %d, full response was %s", 
+                                   c_i, s_i, sample_response)
+                path = save_dir / f"impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
+                with open(path, "w") as f:
+                    f.writelines(extracted_code)
+                logger.debug("Saved plan %d code impl %d to %s", c_i, s_i, path)
+                # Make a copy of the candidate with the new code impl
+                new_cand = copy_candidate(candidate_lst[c_i])
+                new_cand.code = extracted_code
+                new_cand.code_gen_model = self.llm_client.model
+                this_plan_cands.append(new_cand)
+            candidates.extend(this_plan_cands)
+        return candidates
+
+    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
+        assert num_samples > 0, "Number of samples must be greater than 0"
+
+        loaded_code = []
+        for c_i in range(num_samples):
+            path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}.txt"
+            if path.exists():
+                with open(path, "r") as f:
+                    code = f.read()
+                    logger.debug("Loaded optimization plan from %s", path)
+                    loaded_code.append(code)
             else:
-                candidates.append(CodeCandidate(candidate.parent, candidate.plan, f"Optimized code {i}"))
-            logger.debug(f"Sample {i+1}: {candidate.code}")
+                break
+        else:
+            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
+            candidate.code = loaded_code[0]
+            loaded_candidates = [candidate]
+            for c_i in range(1, num_samples):
+                new_cand = copy_candidate(candidate)
+                new_cand.code = loaded_code[c_i]
+                new_cand.code_gen_model = self.llm_client.model
+                loaded_candidates.append(new_cand)
+            return loaded_candidates
+
+        prompt_text = self._get_implement_code_prompt(candidate)
+        # Save full prompt
+        prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
+        with open(prompt_path, "w") as f:
+            f.write(prompt_text)
+
+        messages = [
+            # {"role": "system", "content": TEMPLATE_SYS},
+            {"role": "user", "content": prompt_text},
+        ]
+        temperature = 1
+        responses = self.llm_client.chat(
+            messages=messages,
+            num_candidates=num_samples,  # number of candidates,
+            temperature=temperature
+        )
+
+        candidates = []
+        for c_i, c in enumerate(responses):
+            # Save full response
+            full_path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}_full.txt"
+            with open(full_path, "w") as f:
+                f.write(c)
+            # Extract just the code
+            extracted_code = extract(c)
+            if not extracted_code:
+                logger.warning("Failed to extract code from response %d, full response was %s", c_i, c)
+            path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}.txt"
+            with open(path, "w") as f:
+                f.writelines(extracted_code)
+            logger.debug("Saved code impl %d to %s", c_i, path)
+
+            # Make a copy of the candidate with the new code impl
+            new_cand = copy_candidate(candidate)
+            new_cand.code = extracted_code
+            new_cand.code_gen_model = self.llm_client.model
+            candidates.append(new_cand)
         return candidates
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
@@ -421,210 +729,6 @@ class GemminiLLMAgent(LLMAgent):
             prompt_text += "\n" + prompt_end
         return prompt_text
 
-    def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
-                              prob: Prob,
-                              force_opt_menu_lst: int = None, 
-                              prompt_end: str = "", 
-                              analysis_lst: list[str] = None, 
-                              shuffle_opts: bool = False, 
-                              give_score_feedback: float = 1.0,
-                              give_util_feedback: float = 0.0,
-                              give_spad_acc_feedback: float = 1.0,
-                              include_ancestors: bool = True,
-                              plan_icl_examples: bool = False,
-                              cur_iter: int = None,
-                              num_iters: int = None,
-                              dropout_menu_options: float = 1,
-                             ) -> list[CodeCandidate]:
-        """
-        dropout_menu_options: probability of keeping each menu option
-        """
-        loaded_plans = []
-        not_found = False
-        for c_i in range(len(candidate_lst)):
-            this_cand_loaded_plans = []
-            save_str = save_strs[c_i]
-            for s_i in range(num_plans):
-                path = f"plan{'' if not save_str else '_' + save_str}"
-                if force_opt_menu_lst is not None:
-                    path += "_" + str(force_opt_menu_lst[c_i])
-                path += "_" + str(s_i) + ".txt"
-                path = save_dir / path
-                if path.exists():
-                    with open(path, "r") as f:
-                        plan = f.read()
-                        logger.debug("Loaded optimization plan from %s", path)
-                        this_cand_loaded_plans.append(plan)
-                else:
-                    not_found = True
-                    break
-            if not_found:
-                break
-            loaded_plans.append(this_cand_loaded_plans)
-        else:
-            loaded_cands = []
-            for c_i, this_cand_loaded_plans in enumerate(loaded_plans):
-                for plan in this_cand_loaded_plans:
-                    loaded_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
-            logger.info("Loaded %d optimization plans rather than generating new ones", len(loaded_cands))
-            return loaded_cands
-
-        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_spad_acc_feedback < 1):
-            num_unique_prompts_per_cand = num_plans
-        else:
-            num_unique_prompts_per_cand = 1
-        msgs_lst = []
-        for c_i, candidate in enumerate(candidate_lst):
-            save_str = save_strs[c_i]
-            for p in range(num_unique_prompts_per_cand):
-                # Add the previously iterated plans and code to the prompt
-                analysis = "" if analysis_lst is None else analysis_lst[c_i]
-                force_opt_menu = None if force_opt_menu_lst is None else force_opt_menu_lst[c_i]
-                prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
-                                                                    give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                    dropout_menu_options)
-
-                # Save full prompt
-                prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
-                if force_opt_menu_lst is not None:
-                    prompt_path += "_" + str(force_opt_menu_lst[c_i])
-                else:
-                    prompt_path += "_" + str(p)
-                prompt_path += ".txt"
-                prompt_path = save_dir / prompt_path
-
-                with open(prompt_path, "w") as f:
-                    f.write(prompt_text)
-
-                messages = [
-                    # {"role": "system", "content": TEMPLATE_SYS},
-                    {"role": "user", "content": prompt_text},
-                ]
-                msgs_lst.append(messages)
-
-        temperature = 1
-        candidates_to_gen = num_plans // num_unique_prompts_per_cand
-
-        extended_responses = self.llm_client.chat_async(
-            msgs_lst=msgs_lst,
-            num_candidates=candidates_to_gen,  # number of candidates,
-            temperature=temperature
-        )
-        # Need to sort the responses back into a flattened list for each parent candidate
-        responses = [[] for _ in range(len(candidate_lst))]
-        for r_i, per_prompt_responses in enumerate(extended_responses):
-            c_i = r_i // num_unique_prompts_per_cand
-            responses[c_i].extend(per_prompt_responses)
-
-        for c_i in range(len(responses)):
-            save_str = save_strs[c_i]
-            for s_i in range(num_plans):
-                path = f"plan{'' if not save_str else '_' + save_str}"
-                if force_opt_menu_lst is not None:
-                    path += "_" + str(force_opt_menu_lst[c_i])
-                path += "_" + str(s_i) + ".txt"
-                path = save_dir / path
-                with open(path, "w") as f:
-                    f.write(responses[c_i][s_i])
-                logger.debug("Saved optimization plan to %s", path)
-
-        new_cands = []
-        for c_i, cand_resps in enumerate(responses):
-            for plan in cand_resps:
-                new_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
-        return new_cands
-
-    def propose_optimizations(self, candidate: CodeCandidate, num_plans: int, save_dir: pathlib.Path, save_str: str, 
-                              prob: Prob,
-                              force_opt_menu: int = None, 
-                              prompt_end: str = "", 
-                              analysis: str = "", 
-                              shuffle_opts: bool = False, 
-                              give_score_feedback: bool = True,
-                              give_util_feedback: bool = False,
-                              include_ancestors: bool = True,
-                              plan_icl_examples: bool = False,
-                              cur_iter: int = None,
-                              num_iters: int = None,
-                              dropout_menu_options: float = 1,
-                             ) -> list[CodeCandidate]:
-        """
-        dropout_menu_options: probability of keeping each menu option
-        """
-        loaded_plans = []
-        for c_i in range(num_plans):
-            path = f"plan{'' if not save_str else '_' + save_str}"
-            if force_opt_menu is not None:
-                path += "_" + str(force_opt_menu)
-            path += "_" + str(c_i) + ".txt"
-            path = save_dir / path
-            if path.exists():
-                with open(path, "r") as f:
-                    plan = f.read()
-                    logger.debug("Loaded optimization plan from %s", path)
-                    loaded_plans.append(plan)
-            else:
-                break
-        else:
-            loaded_cands = [CodeCandidate(candidate, plan, None, plan_gen_model=self.llm_client.model) for plan in loaded_plans]
-            logger.info("Loaded %d optimization plans rather than generating new ones", num_plans)
-            return loaded_cands
-
-        responses = []
-        if dropout_menu_options < 1:
-            num_unique_prompts_per_cand = num_plans
-        else:
-            num_unique_prompts_per_cand = 1
-        for p in range(num_unique_prompts_per_cand):
-            # Add the previously iterated plans and code to the prompt
-            prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
-                                                                 give_score_feedback, give_util_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                 dropout_menu_options)
-
-            # Save full prompt
-            prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
-            if force_opt_menu is not None:
-                prompt_path += "_" + str(force_opt_menu)
-            else:
-                prompt_path += "_" + str(p)
-            prompt_path += ".txt"
-            prompt_path = save_dir / prompt_path
-
-            with open(prompt_path, "w") as f:
-                f.write(prompt_text)
-
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
-            temperature = 1
-            candidates_to_gen = num_plans // num_unique_prompts_per_cand
-
-            resp = self.llm_client.chat_async(
-                msgs_lst=[messages],
-                num_candidates=candidates_to_gen,  # number of candidates,
-                temperature=temperature
-            )[0]
-            # resp = self.llm_client.chat(
-            #     messages=messages,
-            #     num_candidates=candidates_to_gen,  # number of candidates,
-            #     temperature=temperature
-            # )
-            responses.extend(resp)
-
-        for c_i, c in enumerate(responses):
-            path = f"plan{'' if not save_str else '_' + save_str}"
-            if force_opt_menu is not None:
-                path += "_" + str(force_opt_menu)
-            path += "_" + str(c_i) + ".txt"
-            path = save_dir / path
-            with open(path, "w") as f:
-                f.write(c)
-            logger.debug("Saved optimization plan to %s", path)
-
-        new_cands = [CodeCandidate(candidate, plan, None, plan_gen_model=self.llm_client.model) for plan in responses]
-        return new_cands
-
     def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> list[CodeCandidate]:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
@@ -653,146 +757,6 @@ class GemminiLLMAgent(LLMAgent):
 
         return prompt_text
 
-    def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
-        if save_strs is not None:
-            assert len(candidate_lst) == len(save_strs)
-        loaded_code = []
-        code_not_found = False
-        for c_i in range(len(candidate_lst)):
-            this_cand_loaded_code = []
-            save_str = save_strs[c_i]
-            for s_i in range(num_samples):
-                path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
-                if path.exists():
-                    with open(path, "r") as f:
-                        code = extracted_code = extract(f.read())
-                        logger.debug("Loaded optimization plan from %s", path)
-                        this_cand_loaded_code.append(code)
-                else:
-                    code_not_found = True
-                    break
-            if code_not_found:
-                break
-            loaded_code.append(this_cand_loaded_code)
-        else:
-            loaded_candidates = []
-            for c_i in range(len(candidate_lst)):
-                cand = candidate_lst[c_i]
-                for s_i in range(num_samples):
-                    new_cand = copy_candidate(cand)
-                    new_cand.code = loaded_code[c_i][s_i]
-                    new_cand.code_gen_model = self.llm_client.model
-                    loaded_candidates.append(new_cand)
-            logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
-            return loaded_candidates
-
-        msgs_lst = []
-        for c_i in range(len(candidate_lst)):
-            prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], code_icl_examples)
-            # Save full prompt
-            prompt_path = save_dir / f"prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
-            with open(prompt_path, "w") as f:
-                f.write(prompt_text)
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
-            msgs_lst.append(messages)
-
-        temperature = 1
-        responses = self.llm_client.chat_async(
-            msgs_lst,
-            num_candidates=num_samples,  # number of candidates,
-            temperature=temperature
-        )
-
-        candidates: list[CodeCandidate] = [] # Flat list of new implemented candidates
-        for c_i, cand_responses in enumerate(responses):
-            this_plan_cands = []
-            for s_i, sample_response in enumerate(cand_responses):
-                # Save full response
-                full_path = save_dir / f"impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
-                with open(full_path, "w") as f:
-                    f.write(sample_response)
-                # Extract just the code
-                extracted_code = extract(sample_response)
-                if not extracted_code:
-                    logger.warning("Failed to extract code from plan %d response %d, full response was %s", 
-                                   c_i, s_i, sample_response)
-                path = save_dir / f"impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
-                with open(path, "w") as f:
-                    f.writelines(extracted_code)
-                logger.debug("Saved plan %d code impl %d to %s", c_i, s_i, path)
-                # Make a copy of the candidate with the new code impl
-                new_cand = copy_candidate(candidate_lst[c_i])
-                new_cand.code = extracted_code
-                new_cand.code_gen_model = self.llm_client.model
-                this_plan_cands.append(new_cand)
-            candidates.extend(this_plan_cands)
-        return candidates
-
-    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
-        assert num_samples > 0, "Number of samples must be greater than 0"
-
-        loaded_code = []
-        for c_i in range(num_samples):
-            path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}.txt"
-            if path.exists():
-                with open(path, "r") as f:
-                    code = f.read()
-                    logger.debug("Loaded optimization plan from %s", path)
-                    loaded_code.append(code)
-            else:
-                break
-        else:
-            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
-            candidate.code = loaded_code[0]
-            loaded_candidates = [candidate]
-            for c_i in range(1, num_samples):
-                new_cand = copy_candidate(candidate)
-                new_cand.code = loaded_code[c_i]
-                new_cand.code_gen_model = self.llm_client.model
-                loaded_candidates.append(new_cand)
-            return loaded_candidates
-
-        prompt_text = self._get_implement_code_prompt(candidate)
-        # Save full prompt
-        prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
-        with open(prompt_path, "w") as f:
-            f.write(prompt_text)
-
-        messages = [
-            # {"role": "system", "content": TEMPLATE_SYS},
-            {"role": "user", "content": prompt_text},
-        ]
-        temperature = 1
-        responses = self.llm_client.chat(
-            messages=messages,
-            num_candidates=num_samples,  # number of candidates,
-            temperature=temperature
-        )
-
-        candidates = []
-        for c_i, c in enumerate(responses):
-            # Save full response
-            full_path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}_full.txt"
-            with open(full_path, "w") as f:
-                f.write(c)
-            # Extract just the code
-            extracted_code = extract(c)
-            if not extracted_code:
-                logger.warning("Failed to extract code from response %d, full response was %s", c_i, c)
-            path = save_dir / f"impl{'' if not save_str else '_' + save_str}_{c_i}.txt"
-            with open(path, "w") as f:
-                f.writelines(extracted_code)
-            logger.debug("Saved code impl %d to %s", c_i, path)
-
-            # Make a copy of the candidate with the new code impl
-            new_cand = copy_candidate(candidate)
-            new_cand.code = extracted_code
-            new_cand.code_gen_model = self.llm_client.model
-            candidates.append(new_cand)
-        return candidates
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
         loaded_code = []
@@ -855,3 +819,171 @@ class GemminiLLMAgent(LLMAgent):
 
             candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
         return candidates
+
+class CudaLLMAgent(LLMAgent):
+    def __init__(self, model):
+        super().__init__(model)
+
+    def _get_convert_to_cuda_menu_options(self) -> list[str]:
+        return [
+            "Convert PyTorch code to functional PyTorch code",
+            "Convert a PyTorch operation to inline CUDA C++ code",
+        ]
+
+    def get_opt_menu_options(self) -> list[str]:
+        return [
+            # "Convert PyTorch code to functional PyTorch code",
+            "Convert a PyTorch operation to hand-optimized CUDA C++ code",
+            "Reduce PyTorch launch overhead",
+            "Use optimal compilatio flags when compiling CUDA code",
+            # General Kernel and Memory Optimizations
+            "Minimize global memory accesses",
+            "Use shared memory to reduce global memory bandwidth usage",
+            "Use pointers to global memory rather than copying to shared memory",
+            "Coalesce global memory accesses",
+            "Avoid bank conflicts in shared memory",
+            "Use registers efficiently; avoid register spilling",
+            "Minimize divergent branches within warps",
+            "Fuse kernels when possible to reduce kernel launch overhead",
+            "Minimize number of synchronization points",
+            "Store more data and reduce at the end rather than using atomic operations",
+            "Use grid-stride loops",
+            # Thread and Block-Level Optimizations
+            "Maximize occupancy without excessive register usage",
+            "Choose optimal block sizes (typically multiples of 32 threads)",
+            "Use __restrict__ to help compiler with pointer aliasing",
+            "Loop unrolling (#pragma unroll)",
+            # # Tensor and GEMM Specific Optimizations
+            # "Use cuBLAS or cuDNN for GEMM and convolution operations instead of custom kernels",
+            # "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
+            # "Quantize weights or activations where accuracy permits (e.g. INT8 inference)",
+            # "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
+            # Memory Transfer Optimizations
+            "Overlap computation and data transfer using CUDA streams and asynchronous copies",
+            "Use pinned (page-locked) host memory for faster host-device transfers",
+            "Minimize host-device transfer frequency",
+            # # Algorithmic Optimizations
+            # "Choose optimal convolution algorithms (FFT, Winograd, implicit GEMM) based on kernel size",
+            # "Prune unneeded weights for sparse computation",
+            # "Batch inputs to maximize GPU utilization",
+            # "Reuse intermediate results where possible (e.g. shared activations)",
+            "Remove unnecessary code",
+            "Simplify arithmetic and propagate constants to simplify expressions",
+            "Merge low-level operations",
+            "Merge high-level operations",
+            "Reorder operations or blocks of operations",
+            "Hoist redundant operations out of loops",
+            "Substitute operations with equivalent operations that are faster",
+            "Pipeline operations to better overlap computation and data movement",
+            "Minimize data movement",
+            "Use built-in CUDA primitive functions",
+            "Call torch:: functions from C++ rather than from Python",
+            "Simplify operations where possible",
+            "Classical compiler optimizations",
+            "Any other optimizations that you think are relevant",
+        ]
+
+    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
+        return []
+    
+    def _get_prompt_rules(self) -> str:
+        return """
+1. The rewritten program should be semantically equivalent to the original program.
+2. Limit the scope of the plan to the selected optimization.
+3. All generated code should be contained in a single Python file (inline CUDA code is allowed).
+4. Wrap the generated code in ```python at the beginning and ``` at the end.
+5. Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.
+6. When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.
+7. Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.
+"""
+
+    def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
+                                          prob: Prob,
+                                          force_opt_menu: int, 
+                                          prompt_end: str, 
+                                          analysis: str, 
+                                          shuffle_opts: bool, 
+                                          give_score_feedback: float,
+                                          give_util_feedback: float,
+                                          give_spad_acc_feedback: float,
+                                          include_ancestors: bool,
+                                          plan_icl_examples: bool,
+                                          cur_iter: int,
+                                          num_iters: int,
+                                          dropout_menu_options: float,
+                                         ) -> list[str]:
+        # Select which menu options will appear
+        if cur_iter <= 2:
+            opt_lst = self._get_convert_to_cuda_menu_options()
+        else:
+            opt_lst = self.get_opt_menu_options()
+            if dropout_menu_options < 1 and not force_opt_menu:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+            if shuffle_opts:
+                random.shuffle(opt_lst)
+        include_score_feedback = random.random() < give_score_feedback
+
+        parents_prompt = ""
+        cur_cand = candidate
+        while cur_cand is not None:
+            # Go up to each parent and append to front of prompt
+            if include_score_feedback and (cur_cand.score is not None):
+                parents_prompt = f"The latency of this code was {cur_cand.score} seconds.\n" + parents_prompt
+            if not include_ancestors:
+                parents_prompt = "\nThe original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                break # No need to go up past the immediate parent
+            elif cur_cand.plan is not None:
+                parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
+            else:
+                parents_prompt = "The original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+            cur_cand = cur_cand.parent
+
+        if analysis:
+            parents_prompt += "\n" + analysis
+
+        # Initialize the prompt with the parents info
+        prompt_text = parents_prompt
+
+        # Now add the actual planning prompt
+        menu_options_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_options_text += f"{i+1}. {opt}\n"
+        prompt_text += """Please carefully review the program to identify any inefficiencies. 
+Speedup can be increased by using the following optimizations:
+<optimizations>: \n""" + menu_options_text + "\n"
+        
+        if force_opt_menu:
+            prompt_text += "Explain how to apply <optimization> " + str(force_opt_menu) + ": '" + opt_lst[force_opt_menu-1] + "' to the above code to reduce execution time, and explain how it will improve performance."
+        else:
+            prompt_text += "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules()
+
+        if prompt_end:
+            logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
+            prompt_text += "\n" + prompt_end
+        return prompt_text
+
+
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> list[CodeCandidate]:
+        prompt_text = "\nThe original code is as follows:\n```python\n"
+        prompt_text += candidate.parent.code
+        prompt_text += "\n```\nYou are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's optimize the original code based on the following plan:\n"
+        prompt_text += candidate.plan
+
+        # # # TODO: For certain optimizations, add more context helping it implement prompt correctly.
+        # # # e.g. for tiling, add examples of how to tile the code.
+        # if code_icl_examples:
+        #     if "tiling" in candidate.plan:
+        #         prompt_text += "\n" + tiling_example.PROMPT()
+        #     if " gate" in candidate.plan or "Gate" in candidate.plan:
+        #         # prompt_text += "\n" + if_example_matmul.PROMPT()
+        #         prompt_text += "\n" + if_example.PROMPT()
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules()
+
+        prompt_text += "Optimized code:"
+
+        return prompt_text

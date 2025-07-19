@@ -51,8 +51,8 @@ class CodeCandidate:
         if self.plan is None:
             repr_str += "None"
         else:
-            repr_str += f"'''{self.plan}'''"
-        repr_str += f",\ncode='''{self.code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}')"
+            repr_str += f"'''{self.plan.replace('\'', '\\\'')}'''"
+        repr_str += f",\ncode='''{self.code.replace('\'', '\\\'')}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}')"
         return repr_str
 
     def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:
@@ -105,8 +105,13 @@ class CodeRepository:
         candidate_paths = save_dir.glob("candidate_*.txt")
         candidates = []
         for path in candidate_paths:
-            cand = eval(path.read_text())
-            logger.debug("Loaded candidate from %s", path)
-            candidates.append(cand)
+            try:
+                cand = eval(path.read_text())
+                logger.debug("Loaded candidate from %s", path)
+                candidates.append(cand)
+            except Exception as e:
+                logger.error("Error loading candidate from %s: %s", path, e)
+                import pdb; pdb.set_trace()
+                continue
         self.add_candidates(candidates, iteration)
         return len(candidates)

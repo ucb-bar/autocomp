@@ -51,7 +51,7 @@ def completions_with_backoff(client: OpenAI, **kwargs):
 
 async def fetch_completion(semaphore: asyncio.Semaphore, client: OpenAI, messages, **kwargs):
     """Fetches a chat completion with retries and rate limit handling."""
-    max_retries = 6
+    max_retries = 8
     for attempt in range(max_retries):
         try:
             async with semaphore:  # Limits concurrent requests
@@ -76,6 +76,20 @@ async def fetch_completions(client: OpenAI, msgs_lst: list[list[dict]], **kwargs
         [{"role": "user", "content": "What's the capital of France?"}],
         [{"role": "user", "content": "How do I improve memory?"}],
     ]
+
+    returns responses = [
+        [ # msgs_lst[0]
+            "response0",
+            "response1",
+            ...
+        ],
+        [ # msgs_lst[1]
+            "response0",
+            "response1",
+            ...
+        ],
+        ...
+    ]
     """
     MAX_CONCURRENT_REQUESTS = 8
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
@@ -86,26 +100,34 @@ async def fetch_completions(client: OpenAI, msgs_lst: list[list[dict]], **kwargs
     for resp in results:
         this_msg_choices = []
         for c in resp.choices:
-            this_msg_choices.append(c.message.content)
+            if "</think>" in c.message.content:
+                this_msg_choices.append(c.message.content.split("</think>")[1].strip())
+            else:
+                this_msg_choices.append(c.message.content)
         responses.append(this_msg_choices)
     return responses
 
 class LLMClient():
     def __init__(self, model: str):
         self.model = model
+        self.api_model_name = model
         self.async_client = None
         if "gpt" in model or re.search(r"o\d", model):
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
-        elif "llama" in model or "gemma" in model:
+        elif "llama" in model or "gemma" in model or "kevin" in model:
             openai_api_key = "EMPTY"
             openai_api_base = "http://localhost:8000/v1"
-            self.client = OpenAI(
+            self.async_client = AsyncOpenAI(
                 api_key=openai_api_key,
                 base_url=openai_api_base,
             )
-            model = self.client.models.list()
-            self.model = model.data[0].id
+            async def get_model():
+                model = await self.async_client.models.list()
+                return model.data[0].id
+            self.api_model_name = asyncio.run(get_model())
+            # self.client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
+            # self.api_model_name = self.client.models.list().data[0].id
         elif "gemini" in model:
             genai.configure(api_key=gemini_key_str)
             self.client = genai.GenerativeModel(model_name=model)
@@ -116,7 +138,7 @@ class LLMClient():
         if self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
-                "model":self.model,
+                "model":self.api_model_name,
                 "n":num_candidates,
                 "temperature":temperature,
             }
@@ -135,10 +157,11 @@ class LLMClient():
         responses = []
         if isinstance(self.client, OpenAI):
             kwargs = {
-                "model":self.model,
+                "model":self.api_model_name,
                 "messages":messages,
                 "n":num_candidates,
                 "temperature":temperature,
+                "timeout":1200,
             }
             if "o1" in self.model or "o3" in self.model:
                 kwargs["reasoning_effort"] = "high"
