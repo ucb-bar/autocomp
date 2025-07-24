@@ -63,6 +63,8 @@ class SearchStrategy:
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates([orig_code_candidate], 0)  # Add the initial code as the first candidate
             self.repository.save_candidates(0, save_dir)
+        initial_code_candidate: CodeCandidate = self.repository.get_candidates(0)[0]
+        logger.info("Initial code score: %f", initial_code_candidate.score)
 
     def propose_optimizations_iter(self, candidates: list[CodeCandidate], num_plans: int) -> list[CodeCandidate]:
         """
@@ -485,14 +487,14 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "cuda"
-    # models = ["o3-mini", "gpt-4o"]
-    models = ["kevin"]
+    models = ["o3-mini", "gpt-4o"]
+    # models = ["kevin"]
     metric = "latency"
     simulator = "cuda" # "firesim" or "spike" if backend == "gemmini"; "cuda" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
     prob_type = "kb-level2"
-    prob_id = 3
+    prob_id = 10
 
     # Beam search parameters
     num_plan_candidates=6
@@ -500,7 +502,7 @@ def main():
     beam_size=6
 
     # Planning prompt knobs
-    dropout_menu_options = 0.25
+    dropout_menu_options = 0.2
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0

@@ -457,11 +457,57 @@ class LLMAgent:
         return candidates
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
-        # Mock-up method to combine the candidates
-        combined_candidates = []
-        for i in range(num_samples):
-            combined_candidates.append(CodeCandidate(candidates, f"Combined parents", f"Combined code {i}"))
-        return combined_candidates
+        loaded_code = []
+        for c_i in range(num_samples):
+            path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
+            if path.exists():
+                with open(path, "r") as f:
+                    code = f.read()
+                    logger.debug("Loaded optimization plan from %s", path)
+                    loaded_code.append(code)
+            else:
+                break
+        else:
+            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
+            loaded_candidates = []
+            for c_i in range(num_samples):
+                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
+            return loaded_candidates
+
+        prompt_text = self._get_combine_candidates_prompt(candidates)
+
+        # Save full prompt
+        prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
+        with open(prompt_path, "w") as f:
+            f.write(prompt_text)
+        
+        messages = [
+            {"role": "user", "content": prompt_text},
+        ]
+        temperature = 1
+        responses = self.llm_client.chat(
+            messages=messages,
+            num_candidates=num_samples,  # number of candidates,
+            temperature=temperature
+        )
+        candidates = []
+        for c_i, c in enumerate(responses):
+            # Save full response
+            full_path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}_full.txt"
+            with open(full_path, "w") as f:
+                f.write(c)
+            # Extract just the code
+            extracted_code = extract(c)
+            if not extracted_code:
+                logger.warning("Failed to extract code from response %d, full response was %s", c_i, c)
+            path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
+            with open(path, "w") as f:
+                f.writelines(extracted_code)
+            logger.debug("Saved combined code %d to %s", c_i, path)
+
+            candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
+        return candidates
+
 
 class GemminiLLMAgent(LLMAgent):
     def __init__(self, model, pe_dim):
@@ -757,25 +803,7 @@ class GemminiLLMAgent(LLMAgent):
 
         return prompt_text
 
-
-    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
-        loaded_code = []
-        for c_i in range(num_samples):
-            path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
-            if path.exists():
-                with open(path, "r") as f:
-                    code = f.read()
-                    logger.debug("Loaded optimization plan from %s", path)
-                    loaded_code.append(code)
-            else:
-                break
-        else:
-            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
-            loaded_candidates = []
-            for c_i in range(num_samples):
-                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
-            return loaded_candidates
-
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
         elif self.pe_dim == 16:
@@ -787,38 +815,8 @@ class GemminiLLMAgent(LLMAgent):
         prompt_text += "\nMake sure to follow these rules:"
         prompt_text += gemmini_rules.PROMPT()
         prompt_text += "Optimized code:"
+        return prompt_text
 
-        # Save full prompt
-        prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
-        with open(prompt_path, "w") as f:
-            f.write(prompt_text)
-        
-        messages = [
-            {"role": "user", "content": prompt_text},
-        ]
-        temperature = 1
-        responses = self.llm_client.chat(
-            messages=messages,
-            num_candidates=num_samples,  # number of candidates,
-            temperature=temperature
-        )
-        candidates = []
-        for c_i, c in enumerate(responses):
-            # Save full response
-            full_path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}_full.txt"
-            with open(full_path, "w") as f:
-                f.write(c)
-            # Extract just the code
-            extracted_code = extract(c)
-            if not extracted_code:
-                logger.warning("Failed to extract code from response %d, full response was %s", c_i, c)
-            path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
-            with open(path, "w") as f:
-                f.writelines(extracted_code)
-            logger.debug("Saved combined code %d to %s", c_i, path)
-
-            candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
-        return candidates
 
 class CudaLLMAgent(LLMAgent):
     def __init__(self, model):
@@ -833,12 +831,13 @@ class CudaLLMAgent(LLMAgent):
     def get_opt_menu_options(self) -> list[str]:
         return [
             # "Convert PyTorch code to functional PyTorch code",
-            "Convert a PyTorch operation to hand-optimized CUDA C++ code",
+            "Convert a PyTorch operation to optimized CUDA C++ code",
             "Reduce PyTorch launch overhead",
-            "Use optimal compilatio flags when compiling CUDA code",
+            "Use optimal compilation flags when compiling CUDA code",
             # General Kernel and Memory Optimizations
             "Minimize global memory accesses",
             "Use shared memory to reduce global memory bandwidth usage",
+            "Cache redundantly computed data in shared memory",
             "Use pointers to global memory rather than copying to shared memory",
             "Coalesce global memory accesses",
             "Avoid bank conflicts in shared memory",
@@ -867,6 +866,10 @@ class CudaLLMAgent(LLMAgent):
             # "Prune unneeded weights for sparse computation",
             # "Batch inputs to maximize GPU utilization",
             # "Reuse intermediate results where possible (e.g. shared activations)",
+            "Vectorize operations by using wider data types",
+            "Use Tensor core GEMMs for GEMM-like operations",
+            "Convert convolution operations to Tensor core GEMMs",
+            # From Autocomp
             "Remove unnecessary code",
             "Simplify arithmetic and propagate constants to simplify expressions",
             "Merge low-level operations",
@@ -874,8 +877,10 @@ class CudaLLMAgent(LLMAgent):
             "Reorder operations or blocks of operations",
             "Hoist redundant operations out of loops",
             "Substitute operations with equivalent operations that are faster",
+            "Double buffering",
             "Pipeline operations to better overlap computation and data movement",
             "Minimize data movement",
+            # Other random stuff
             "Use built-in CUDA primitive functions",
             "Call torch:: functions from C++ rather than from Python",
             "Simplify operations where possible",
@@ -986,4 +991,14 @@ Speedup can be increased by using the following optimizations:
 
         prompt_text += "Optimized code:"
 
+        return prompt_text
+
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+        prompt_text = "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's combine the following optimized code samples to extract the high-performance characteristics of each:\n"
+        for i, c in enumerate(candidates):
+            prompt_text += f"Sample {i+1}:\n{c.code}\n"
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules()
+        prompt_text += "Optimized code:"
         return prompt_text

@@ -79,20 +79,20 @@ class CodeRepository:
         else:
             self.candidates_per_iteration[iteration].extend(candidates)
 
-    def get_candidates(self, iteration: int) -> list:
+    def get_candidates(self, iteration: int) -> list[CodeCandidate]:
         """Retrieve all candidates for a given iteration."""
         if isinstance(iteration, int):
             return self.candidates_per_iteration[iteration]
         else:
             return self.other_candidates[iteration]
 
-    def display_latest_candidates(self):
+    def display_latest_candidates(self) -> None:
         """Display the code of the latest candidates."""
         if self.candidates_per_iteration:
             for candidate in self.candidates_per_iteration[-1]:
                 logger.info(repr(candidate))
 
-    def save_candidates(self, iteration: int, save_dir: pathlib.Path):
+    def save_candidates(self, iteration: int, save_dir: pathlib.Path) -> None:
         """Save the code of the candidates for a given iteration."""
         for c_i, candidate in enumerate(self.get_candidates(iteration)):
             path = save_dir / f"candidate_{c_i}.txt"
@@ -100,8 +100,8 @@ class CodeRepository:
                 f.write(repr(candidate))
             logger.debug("Saved candidate code to %s", path)
 
-    def load_candidates(self, iteration: int, save_dir: pathlib.Path):
-        """Save the code of the candidates for a given iteration."""
+    def load_candidates(self, iteration: int, save_dir: pathlib.Path) -> int:
+        """Load the code of the candidates to the repository for a given iteration."""
         candidate_paths = save_dir.glob("candidate_*.txt")
         candidates = []
         for path in candidate_paths:

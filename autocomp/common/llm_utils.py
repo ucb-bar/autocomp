@@ -118,16 +118,16 @@ class LLMClient():
         elif "llama" in model or "gemma" in model or "kevin" in model:
             openai_api_key = "EMPTY"
             openai_api_base = "http://localhost:8000/v1"
-            self.async_client = AsyncOpenAI(
-                api_key=openai_api_key,
-                base_url=openai_api_base,
-            )
-            async def get_model():
-                model = await self.async_client.models.list()
-                return model.data[0].id
-            self.api_model_name = asyncio.run(get_model())
-            # self.client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
-            # self.api_model_name = self.client.models.list().data[0].id
+            # self.async_client = AsyncOpenAI(
+            #     api_key=openai_api_key,
+            #     base_url=openai_api_base,
+            # )
+            # async def get_model():
+            #     model = await self.async_client.models.list()
+            #     return model.data[0].id
+            # self.api_model_name = asyncio.run(get_model())
+            self.client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
+            self.api_model_name = self.client.models.list().data[0].id
         elif "gemini" in model:
             genai.configure(api_key=gemini_key_str)
             self.client = genai.GenerativeModel(model_name=model)
@@ -142,6 +142,8 @@ class LLMClient():
                 "n":num_candidates,
                 "temperature":temperature,
             }
+            if "kevin" in self.model:
+                kwargs["max_tokens"] = 16384
             if "o1" in self.model or "o3" in self.model:
                 kwargs["reasoning_effort"] = "high"
             responses = asyncio.run(fetch_completions(self.async_client, msgs_lst, **kwargs))
@@ -161,8 +163,10 @@ class LLMClient():
                 "messages":messages,
                 "n":num_candidates,
                 "temperature":temperature,
-                "timeout":1200,
             }
+            if "kevin" in self.model:
+                kwargs["max_tokens"] = 8192
+                kwargs["timeout"] = 1200
             if "o1" in self.model or "o3" in self.model:
                 kwargs["reasoning_effort"] = "high"
                 # Query 8 plans at a time
