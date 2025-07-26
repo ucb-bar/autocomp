@@ -23,7 +23,9 @@ class CudaHardwareBackend(HardwareBackend):
         ref_file = glob.glob(f"{KERNELBENCH_DIR}/KernelBench/{level_str}/{prob.prob_id}_*.py")[0]
         results = []
         for i, code_str in enumerate(code_strs):
-            test_file = pathlib.Path(__file__).parent / "tmp_files" / f"test_{level_str}_{prob.prob_id}_{i}.py"
+            test_dir = pathlib.Path(__file__).parent / "tmp_files" / f"test_{level_str}_{prob.prob_id}"
+            test_dir.mkdir(parents=True, exist_ok=True)
+            test_file = test_dir / f"code_{i}.py"
             test_file.write_text(code_str)
 
             # # Attempt 3

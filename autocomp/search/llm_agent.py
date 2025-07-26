@@ -833,7 +833,7 @@ class CudaLLMAgent(LLMAgent):
             # "Convert PyTorch code to functional PyTorch code",
             "Convert a PyTorch operation to optimized CUDA C++ code",
             "Reduce PyTorch launch overhead",
-            "Use optimal compilation flags when compiling CUDA code",
+            "Use compilation flags like -O3 and --use_fast_math when compiling CUDA code",
             # General Kernel and Memory Optimizations
             "Minimize global memory accesses",
             "Use shared memory to reduce global memory bandwidth usage",
@@ -883,6 +883,7 @@ class CudaLLMAgent(LLMAgent):
             # Other random stuff
             "Use built-in CUDA primitive functions",
             "Call torch:: functions from C++ rather than from Python",
+            "Use ATen at:: functions rather than PyTorch functions",
             "Simplify operations where possible",
             "Classical compiler optimizations",
             "Any other optimizations that you think are relevant",
@@ -896,10 +897,11 @@ class CudaLLMAgent(LLMAgent):
 1. The rewritten program should be semantically equivalent to the original program.
 2. Limit the scope of the plan to the selected optimization.
 3. All generated code should be contained in a single Python file (inline CUDA code is allowed).
-4. Wrap the generated code in ```python at the beginning and ``` at the end.
+4. Wrap only the generated code with ```python at the beginning and ``` at the end.
 5. Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.
 6. When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.
 7. Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.
+8. Compute data in the correct data type without introducing numeric errors.
 """
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,

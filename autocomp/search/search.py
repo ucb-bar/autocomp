@@ -494,7 +494,7 @@ def main():
     search_strategy = "beam"
     iterations = 10
     prob_type = "kb-level2"
-    prob_id = 10
+    prob_id = 29
 
     # Beam search parameters
     num_plan_candidates=6
