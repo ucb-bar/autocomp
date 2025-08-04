@@ -9,7 +9,8 @@ from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
-from autocomp.backend.kb_eval import CudaHardwareBackend
+from autocomp.backend.kb_eval import KBHardwareBackend
+from autocomp.backend.gpumode_eval import GpuModeHardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
@@ -490,11 +491,11 @@ def main():
     models = ["o3-mini", "gpt-4o"]
     # models = ["kevin"]
     metric = "latency"
-    simulator = "cuda" # "firesim" or "spike" if backend == "gemmini"; "cuda" if backend == "cuda"
+    simulator = "kernelbench" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "kb-level2"
-    prob_id = 29
+    prob_type = "kb-level3"
+    prob_id = 10
 
     # Beam search parameters
     num_plan_candidates=6
@@ -560,7 +561,10 @@ def main():
 
     # Initialize hardware backend and LLM ensemble
     if backend == "cuda":
-        hw_backend = CudaHardwareBackend()
+        if simulator == "kernelbench":
+            hw_backend = KBHardwareBackend()
+        else:
+            hw_backend = GpuModeHardwareBackend()
         llm = LLMEnsemble([CudaLLMAgent(model) for model in models])
     elif backend == "gemmini":
         spad_size_kb = 256

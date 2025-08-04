@@ -14,10 +14,7 @@ from src import eval as kernel_eval
 
 KERNELBENCH_DIR = pathlib.Path("/scratch/charleshong/kernelbench/KernelBench")
 
-class CudaHardwareBackend(HardwareBackend):
-    def __init__(self):
-        pass
-
+class KBHardwareBackend(HardwareBackend):
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
         level_str = prob.prob_type.split("-")[1]
         ref_file = glob.glob(f"{KERNELBENCH_DIR}/KernelBench/{level_str}/{prob.prob_id}_*.py")[0]
@@ -142,6 +139,12 @@ class CudaHardwareBackend(HardwareBackend):
                 latency = float(stdout.split(" runtime_stats={'mean': ")[-1].split(",")[0])
                 logger.info(f"Kernel passed correctness for code {i}, latency: {latency}")
                 results.append({"correct": True, "latency": latency})
+                # torch_eager_time = float(stdout.split("PyTorch Reference Eager exec time: ")[-1].split(" ms")[0])
+                # torch_compile_time = float(stdout.split("PyTorch Reference torch.compile time: ")[-1].split(" ms")[0])
+                # torch_compile_speedup = round(torch_eager_time / torch_compile_time, 2)
+                # logger.info(f"torch_eager_time: {torch_eager_time}")
+                # logger.info(f"torch_compile_time: {torch_compile_time}")
+                # logger.info(f"torch_compile_speedup: {torch_compile_speedup}")
         return results
 
 def main():
@@ -150,7 +153,7 @@ def main():
     prob = Prob(prob_type, prob_id)
     files = glob.glob(str(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"{prob_id}_*.py"))
     code_strs = [pathlib.Path(file).read_text() for file in files]
-    stats = CudaHardwareBackend().evaluate_code(prob, code_strs, "cuda")
+    stats = KBHardwareBackend().evaluate_code(prob, code_strs, "kernelbench")
     print(stats)
 
 if __name__ == "__main__":

@@ -50,38 +50,42 @@ def extract(code_str: str) -> str:
     if "```python" in code_str:
         code_str = code_str.split("```python")[1].split("```")[0]
         return code_str
-    else:
-        return code_str
 
-    from_void_test_str = code_str[code_str.find("void test"):]
-    # end = from_void_test_str.rfind('}\n')
-    # Iterate through all characters until the second time matching curly braces have been found
-    open_braces = 0
-    in_comment = False
-    in_single_line_comment = False
-    for i, char in enumerate(from_void_test_str):
-        if from_void_test_str[i:i+2] == '/*':
-            in_comment = True
-        elif from_void_test_str[i:i+2] == '*/':
-            in_comment = False
-        if from_void_test_str[i:i+2] == '//':
-            in_single_line_comment = True
-        elif char == '\n':
-            in_single_line_comment = False
-        if in_comment or in_single_line_comment:
-            continue
-        if char == '{':
-            open_braces += 1
-        elif char == '}':
-            open_braces -= 1
-            if open_braces == 0:
-                end = i
-                break
-    try:
-        body = from_void_test_str[:end+1]
-    except:
-        return from_void_test_str
-    return body
+    if "void test" in code_str:
+        from_void_test_str = code_str[code_str.find("void test"):]
+        # end = from_void_test_str.rfind('}\n')
+        # Iterate through all characters until matching curly braces have been found
+        # Ignore curly braces in comments
+        open_braces = 0
+        in_comment = False
+        in_single_line_comment = False
+        for i, char in enumerate(from_void_test_str):
+            if from_void_test_str[i:i+2] == '/*':
+                in_comment = True
+            elif from_void_test_str[i:i+2] == '*/':
+                in_comment = False
+            if from_void_test_str[i:i+2] == '//':
+                in_single_line_comment = True
+            elif char == '\n':
+                in_single_line_comment = False
+            if in_comment or in_single_line_comment:
+                continue
+            if char == '{':
+                open_braces += 1
+            elif char == '}':
+                open_braces -= 1
+                if open_braces == 0:
+                    end = i
+                    break
+        try:
+            body = from_void_test_str[:end+1]
+        except:
+            return from_void_test_str
+        return body
+
+    # Fallback: just return the whole thing
+    return code_str
+
     # end = from_void_test_str.find('fence();')
     # find_last_curly = 0
     # last_idx = len(from_void_test_str)
@@ -843,6 +847,7 @@ class CudaLLMAgent(LLMAgent):
             "Avoid bank conflicts in shared memory",
             "Use registers efficiently; avoid register spilling",
             "Minimize divergent branches within warps",
+            "Use CUDA warp-level primitives for synchronization",
             "Fuse kernels when possible to reduce kernel launch overhead",
             "Minimize number of synchronization points",
             "Store more data and reduce at the end rather than using atomic operations",
@@ -853,22 +858,23 @@ class CudaLLMAgent(LLMAgent):
             "Use __restrict__ to help compiler with pointer aliasing",
             "Loop unrolling (#pragma unroll)",
             # # Tensor and GEMM Specific Optimizations
-            # "Use cuBLAS or cuDNN for GEMM and convolution operations instead of custom kernels",
-            # "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
-            # "Quantize weights or activations where accuracy permits (e.g. INT8 inference)",
-            # "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
+            "Use cuBLAS or cuDNN for GEMM and convolution operations instead of custom kernels",
+            "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
+            "Quantize weights or activations where accuracy permits (e.g. INT8 inference)",
+            "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
             # Memory Transfer Optimizations
             "Overlap computation and data transfer using CUDA streams and asynchronous copies",
             "Use pinned (page-locked) host memory for faster host-device transfers",
             "Minimize host-device transfer frequency",
             # # Algorithmic Optimizations
-            # "Choose optimal convolution algorithms (FFT, Winograd, implicit GEMM) based on kernel size",
-            # "Prune unneeded weights for sparse computation",
-            # "Batch inputs to maximize GPU utilization",
-            # "Reuse intermediate results where possible (e.g. shared activations)",
+            "Choose optimal convolution algorithms (FFT, Winograd, implicit GEMM) based on kernel size",
+            "Prune unneeded weights for sparse computation",
+            "Batch inputs to maximize GPU utilization",
+            "Reuse intermediate results where possible (e.g. shared activations)",
             "Vectorize operations by using wider data types",
             "Use Tensor core GEMMs for GEMM-like operations",
             "Convert convolution operations to Tensor core GEMMs",
+            # "Convert to a lower precision",
             # From Autocomp
             "Remove unnecessary code",
             "Simplify arithmetic and propagate constants to simplify expressions",
@@ -884,6 +890,9 @@ class CudaLLMAgent(LLMAgent):
             "Use built-in CUDA primitive functions",
             "Call torch:: functions from C++ rather than from Python",
             "Use ATen at:: functions rather than PyTorch functions",
+            "Use CUDA graph capture",
+            "Use dedicated CUDA streams",
+            "Profile the code and capture CUDA graphs in the __init__ function",
             "Simplify operations where possible",
             "Classical compiler optimizations",
             "Any other optimizations that you think are relevant",
@@ -901,7 +910,6 @@ class CudaLLMAgent(LLMAgent):
 5. Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.
 6. When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.
 7. Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.
-8. Compute data in the correct data type without introducing numeric errors.
 """
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
