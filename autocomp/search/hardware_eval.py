@@ -12,7 +12,7 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 
 FP32_4PE_CHIPYARD_PATH = None
-INT8_16PE_CHIPYARD_PATH = None
+INT8_16PE_CHIPYARD_PATH = "/scratch/charleshong/chipyard"
 INT8_32PE_CHIPYARD_PATH = None
 
 def clean_code(code_str: str) -> str:
@@ -426,7 +426,7 @@ class GemminiHardwareBackend:
                     this_batch_firesim_output = None
                 else:
                     this_batch_firesim_output = run_firesim([first_test.get_test_code(working_code_strs[batch_start_idx:batch_end_idx], error_on_incorrect=False, repeat_iters=1)], 
-                                                            self.gemmini_path, self.firesim_path, timeout=600)[0]
+                                                            self.gemmini_path, self.firesim_path, timeout=300)[0]
                 if not this_batch_firesim_output:
                     if self.pe_dim != 4:
                         logger.warning("Code hang on batch, running individually")
@@ -435,7 +435,7 @@ class GemminiHardwareBackend:
                                                                  self.gemmini_path, self.firesim_path, timeout=180)
                     else:
                         individual_firesim_outputs = run_firesim([first_test.get_test_code([working_code_strs[idx]], error_on_incorrect=False, repeat_iters=1) for idx in range(batch_start_idx, batch_end_idx)], 
-                                                                 self.gemmini_path, self.firesim_path, timeout=60)
+                                                                 self.gemmini_path, self.firesim_path, timeout=120)
                     for idx, output in enumerate(individual_firesim_outputs):
                         orig_idx = working_code_idxs[batch_start_idx+idx]
                         if not output:

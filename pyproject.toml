@@ -16,6 +16,8 @@ dependencies = [
     "pandas",
     "wandb",
     "backoff",
+    "mistralai[gcp]>=1.0.0",
+    "together",
 ]
 
 [project.urls]

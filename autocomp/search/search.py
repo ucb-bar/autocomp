@@ -536,6 +536,10 @@ if __name__ == "__main__":
     # 2: prevent candidates with any parents in common (any nodes below root have branching factor 1)
     prevent_duplicate_level = 0
 
+    # Sanitize model names for file system compatibility
+    for i in range(len(models)):
+        models[i] = models[i].replace("/", "_")
+
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
     for model in models:
         output_str += f"_{model}"

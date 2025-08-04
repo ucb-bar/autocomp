@@ -1,15 +1,16 @@
 import os
 import re
-
-import openai
-from openai import OpenAI
-import google.generativeai as genai
-import anthropic
-import backoff
-
 import asyncio
 import random
-from openai import AsyncOpenAI, RateLimitError, APITimeoutError, InternalServerError
+
+import backoff
+import openai
+from openai import OpenAI, AsyncOpenAI, RateLimitError, APITimeoutError, InternalServerError
+from google import genai
+from google.genai import types
+import anthropic
+from together import Together, AsyncTogether
+from mistralai_gcp import MistralGoogleCloud
 
 from autocomp.common import logger
 
@@ -41,6 +42,26 @@ if not gemini_key_str:
         logger.info("No Gemini key found in env or import. Continuing with empty key.")
         gemini_key_str = "EMPTY"
 
+together_key_str = os.environ.get("TOGETHER_API_KEY")
+if not together_key_str:
+    try:
+        import autocomp.common.together_key as together_key
+        together_key_str = together_key.key
+    except ImportError:
+        logger.info("No Together key found in env or import. Continuing with empty key.")
+        together_key_str = "EMPTY"
+
+google_cloud_region = os.environ.get("GOOGLE_CLOUD_REGION")
+google_cloud_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
+google_cloud_project_id = os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
+if google_cloud_region is None:
+    google_cloud_region = "us-central1" # your region here
+if google_cloud_location is None:
+    google_cloud_location = "global" # your location here
+if google_cloud_project_id is None:
+    google_cloud_project_id = None # your project ID here
+
+
 def extract(s):
     # return [x for x in re.findall(r"```(?:python|Python)?(.*)```", s, re.DOTALL)]
     return [x for x in re.findall(r"```(?:c|c\+\+|cpp)?\n(void test\(.*}\n.*)```", s, re.DOTALL)]
@@ -58,7 +79,9 @@ async def fetch_completion(semaphore: asyncio.Semaphore, client: OpenAI, message
                 response = await client.chat.completions.create(messages=messages, **kwargs)
             return response
         
-        except (RateLimitError, APITimeoutError, InternalServerError):
+        # except (RateLimitError, APITimeoutError, InternalServerError):
+        except Exception as e:
+            logger.info(f"Error: {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
             logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
             await asyncio.sleep(wait_time)
@@ -94,10 +117,20 @@ class LLMClient():
     def __init__(self, model: str):
         self.model = model
         self.async_client = None
-        if "gpt" in model or re.search(r"o\d", model):
+        if "gpt" in model or re.search(r"o\d", model[:2]):
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
-        elif "llama" in model or "gemma" in model:
+        elif "gemini" in model:
+            # genai.configure(api_key=gemini_key_str)
+            # self.client = genai.GenerativeModel(model_name=model)
+            self.client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
+        elif "claude" in model:
+            self.client = anthropic.Anthropic(api_key=anthropic_key_str)
+        elif "Qwen" in model or "llama" in model:
+            self.async_client = AsyncTogether(api_key=together_key_str)
+        elif "mistral" in model or "mixtral" in model:
+            self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
+        elif "gemma" in model:
             openai_api_key = "EMPTY"
             openai_api_base = "http://localhost:8000/v1"
             self.client = OpenAI(
@@ -106,17 +139,12 @@ class LLMClient():
             )
             model = self.client.models.list()
             self.model = model.data[0].id
-        elif "gemini" in model:
-            genai.configure(api_key=gemini_key_str)
-            self.client = genai.GenerativeModel(model_name=model)
-        elif "claude" in model:
-            self.client = anthropic.Anthropic(api_key=anthropic_key_str)
 
     def chat_async(self, msgs_lst: list[list[dict]], num_candidates=10, temperature=0.7) -> list[list[str]]:
         if self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
-                "model":self.model,
+                "model":self.model.replace("_", "/"),
                 "n":num_candidates,
                 "temperature":temperature,
             }
@@ -133,9 +161,9 @@ class LLMClient():
 
     def chat(self, messages: list, num_candidates=10, temperature=0.7):
         responses = []
-        if isinstance(self.client, OpenAI):
+        if isinstance(self.client, OpenAI) or isinstance(self.client, Together):
             kwargs = {
-                "model":self.model,
+                "model":self.model.replace("_", "/"),
                 "messages":messages,
                 "n":num_candidates,
                 "temperature":temperature,
@@ -152,32 +180,28 @@ class LLMClient():
                 openai_response = completions_with_backoff(self.client, **kwargs)
                 for c in openai_response.choices:
                     responses.append(c.message.content)
-        elif "gemini" in self.model:
-            user_messages = []
-            model_messages = []
-            for d in messages:
-                if d["role"] in {"user", "system"}:
-                    user_messages.append(d["content"])
-                elif d["role"] == "assistant":
-                    model_messages.append(d["content"])
-            gemini_messages = []
-            if len(user_messages) > 0:
-                gemini_messages.append({"role": "user", "parts": user_messages})
-            if len(model_messages) > 0:
-                gemini_messages.append({"role": "model", "parts": model_messages})
-            
-            # call separately since candidates are limited to 8
+        elif isinstance(self.client, MistralGoogleCloud):
             for _ in range(num_candidates):
-                gemini_response = self.client.generate_content(
-                    gemini_messages,
-                    generation_config={
-                        "candidate_count": 1, # only up to 8?
-                        "temperature": temperature,
-                    }
+                mistral_response = self.client.chat.complete(
+                    model=self.model,
+                    messages=messages,
+                    n=1,
+                    temperature=temperature,
                 )
-                for c in gemini_response.candidates:
-                    responses.append(c.content.parts[0].text)
-        elif "claude" in self.model:
+                responses.append(mistral_response.choices[0].message.content)
+        elif isinstance(self.client, genai.Client):
+            # call separately since candidates are limited to 8
+            gemini_response = self.client.models.generate_content(
+                model=self.model,
+                contents="\n".join([dic["content"] for dic in messages]),
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    candidate_count=num_candidates,
+                ),
+            )
+            for c in gemini_response.candidates:
+                responses.append(c.content.parts[0].text)
+        elif isinstance(self.client, anthropic.Anthropic):
             for _ in range(num_candidates):
                 claude_response = self.client.messages.create(
                     model=self.model,
@@ -192,7 +216,3 @@ class LLMClient():
                 responses.append(claude_response.content[-1].text)
 
         return responses
-
-
-
-
