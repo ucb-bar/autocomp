@@ -62,11 +62,14 @@ TinyMPC kernels (stored under the name `admm-multifunction`) run on an FP32 4x4 
   - `search.py` - Main search algorithm implementation. Implements the beam search described in the paper. Change search parameters within this file.
   - `llm_agent.py` - LLM agents for planning and code optimization. Implements the two prompt phases described in the paper. The optimization menu is defined within this file.
   - `llm_ensemble.py` - Wrapper around LLM agents that enables calls to be split between multiple agents.
-  - `hardware_eval.py` - Hardware evaluation utilities for Gemmini. Must configure paths to Chipyard/FireSim/Gemmini here.
   - `prob.py` - Wrapper for tests (parsed from the `tests/` directory) that edits the test file and appends LLM-generated code in order to test it.
   - `code_repo.py` - Abstraction for managing code candidates generated during optimization.
+- `backend/` - Hardware evaluation utilities for different backends.
+  - `hardware_backend.py` - Base class for hardware backends.
+  - `gemmini_eval.py` - Hardware evaluation utilities for Gemmini. Must configure paths to Chipyard/FireSim/Gemmini here.
+  - `kb_eval.py` - Hardware evaluation utilities for KernelBench.
 - `common/` - Shared utilities and helper functions
-  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Claude, and Gemini. Implements parallel calls for OpenAI.
+  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Claude, Gemini, Together. Implements parallel calls for OpenAI and Together.
   - `my_logging.py` - Custom logging functionality.
   - `utils.py` - General utility functions.
 
