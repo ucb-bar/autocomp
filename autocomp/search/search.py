@@ -10,7 +10,6 @@ from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kb_eval import KBHardwareBackend
-from autocomp.backend.gpumode_eval import GpuModeHardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
