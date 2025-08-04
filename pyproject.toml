@@ -1,6 +1,6 @@
 [project]
-name = "auto-comp"
-version = "0.1"
+name = "autocomp"
+version = "0.1.1"
 authors = [
     { name="charleshong3", email="charleshong@berkeley.edu" },
 ]
@@ -16,10 +16,12 @@ dependencies = [
     "pandas",
     "wandb",
     "backoff",
+    "mistralai[gcp]>=1.0.0",
+    "together",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/charleshong3/auto-comp"
+"Homepage" = "https://github.com/ucb-bar/autocomp"
 
 [build-system]
 requires = ["setuptools", "wheel"]
