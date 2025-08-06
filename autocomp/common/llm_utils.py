@@ -54,12 +54,12 @@ if not together_key_str:
 google_cloud_region = os.environ.get("GOOGLE_CLOUD_REGION")
 google_cloud_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
 google_cloud_project_id = os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
-if google_cloud_region is None:
+if not google_cloud_region:
     google_cloud_region = "us-central1" # your region here
-if google_cloud_location is None:
+if not google_cloud_location:
     google_cloud_location = "global" # your location here
-if google_cloud_project_id is None:
-    google_cloud_project_id = None # your project ID here
+if not google_cloud_project_id:
+    google_cloud_project_id = "" # your project ID here
 
 
 def extract(s):
@@ -70,13 +70,23 @@ def extract(s):
 def completions_with_backoff(client: OpenAI, **kwargs):
     return client.chat.completions.create(**kwargs)
 
-async def fetch_completion(semaphore: asyncio.Semaphore, client: OpenAI, messages, **kwargs):
+async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | AsyncTogether | genai.Client, messages, **kwargs):
     """Fetches a chat completion with retries and rate limit handling."""
     max_retries = 8
     for attempt in range(max_retries):
         try:
             async with semaphore:  # Limits concurrent requests
-                response = await client.chat.completions.create(messages=messages, **kwargs)
+                if isinstance(client, AsyncOpenAI) or isinstance(client, AsyncTogether):
+                    response = await client.chat.completions.create(messages=messages, **kwargs)
+                elif isinstance(client, genai.Client):
+                    response = await client.aio.models.generate_content(
+                        model=kwargs["model"],
+                        contents="\n".join([dic["content"] for dic in messages]),
+                        config=types.GenerateContentConfig(
+                            temperature=kwargs["temperature"],
+                            candidate_count=kwargs["n"],
+                        ),
+                    )
             return response
         
         # except (RateLimitError, APITimeoutError, InternalServerError):
@@ -89,7 +99,7 @@ async def fetch_completion(semaphore: asyncio.Semaphore, client: OpenAI, message
     print("Max retries reached, request failed.")
     return None
 
-async def fetch_completions(client: OpenAI, msgs_lst: list[list[dict]], **kwargs) -> list[list[str]]:
+async def fetch_completions(client: AsyncOpenAI | AsyncTogether | genai.Client, msgs_lst: list[list[dict]], **kwargs) -> list[list[str]]:
     """
     e.g.
     msgs_lst = [
@@ -114,7 +124,7 @@ async def fetch_completions(client: OpenAI, msgs_lst: list[list[dict]], **kwargs
         ...
     ]
     """
-    MAX_CONCURRENT_REQUESTS = 8
+    MAX_CONCURRENT_REQUESTS = 9
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     responses = []
@@ -122,11 +132,16 @@ async def fetch_completions(client: OpenAI, msgs_lst: list[list[dict]], **kwargs
     results = await asyncio.gather(*tasks)
     for resp in results:
         this_msg_choices = []
-        for c in resp.choices:
-            if "</think>" in c.message.content:
-                this_msg_choices.append(c.message.content.split("</think>")[1].strip())
+        if isinstance(client, genai.Client):
+            choices = [c.content.parts[0].text for c in resp.candidates]
+        else: # OpenAI API
+            choices = [resp.choices[i].message.content for i in range(len(resp.choices))]
+
+        for c in choices:
+            if "</think>" in c:
+                this_msg_choices.append(c.split("</think>")[-1].strip())
             else:
-                this_msg_choices.append(c.message.content)
+                this_msg_choices.append(c)
         responses.append(this_msg_choices)
     return responses
 
@@ -141,10 +156,10 @@ class LLMClient():
         elif "gemini" in model:
             # genai.configure(api_key=gemini_key_str)
             # self.client = genai.GenerativeModel(model_name=model)
-            self.client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
+            self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
         elif "claude" in model:
             self.client = anthropic.Anthropic(api_key=anthropic_key_str)
-        elif "Qwen" in model or "llama" in model:
+        elif "Qwen" in model or "llama" in model or "deepseek" in model:
             self.async_client = AsyncTogether(api_key=together_key_str)
         elif "mistral" in model or "mixtral" in model:
             self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
