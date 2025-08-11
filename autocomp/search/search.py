@@ -5,11 +5,12 @@ import wandb
 
 from autocomp.common import logger
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent
+from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, RVVLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kb_eval import KBHardwareBackend
+from autocomp.backend.k230_eval import K230HardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
@@ -486,15 +487,15 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "cuda"
+    backend = "rvv" # "cuda" or "gemmini" or "rvv"
     models = ["o3-mini", "gpt-4o"]
     # models = ["kevin"]
     metric = "latency"
-    simulator = "kernelbench" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
+    simulator = "k230" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
     search_strategy = "beam"
-    iterations = 10
-    prob_type = "kb-level3"
-    prob_id = 10
+    iterations = 15
+    prob_type = "rvv"
+    prob_id = 2
 
     # Beam search parameters
     num_plan_candidates=6
@@ -561,6 +562,9 @@ def main():
         else:
             with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 initial_code = f.read()
+    elif backend == "rvv":
+        with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"{prob_id}.c") as f:
+            initial_code = f.read()
 
     # Initialize hardware backend and LLM ensemble
     if backend == "cuda":
@@ -582,6 +586,9 @@ def main():
             acc_size_kb = 128
         hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
         llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
+    elif backend == "rvv":
+        hw_backend = K230HardwareBackend()
+        llm = LLMEnsemble([RVVLLMAgent(model) for model in models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
     if search_strategy == "exhaustive":
