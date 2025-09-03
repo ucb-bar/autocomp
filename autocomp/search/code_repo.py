@@ -51,8 +51,10 @@ class CodeCandidate:
         if self.plan is None:
             repr_str += "None"
         else:
-            repr_str += f"'''{self.plan.replace('\'', '\\\'')}'''"
-        repr_str += f",\ncode='''{self.code.replace('\'', '\\\'')}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}')"
+            escaped_plan = self.plan.replace('\'', '\\\'')
+            repr_str += f"'''{escaped_plan}'''"
+        escaped_code = self.code.replace('\'', '\\\'')
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}')"
         return repr_str
 
     def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:
