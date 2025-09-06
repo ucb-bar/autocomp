@@ -3,7 +3,7 @@ void test(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
   config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
   config_ld((256), 1.0f, 16, 2);
   config_ld((64), 1.0f, 16, 1);
-  config_ld(0, 1.0f, 0, 0);
+  config_ld(0, 1.0f, 16, 0);
 
   uint32_t a = 0;
   uint32_t b = 16 * 16 * 4 * 1 * 196 * sizeof(int8_t) / 16;
