@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import random
+import time
 
 import backoff
 import openai
@@ -13,6 +14,7 @@ from together import Together, AsyncTogether
 from mistralai_gcp import MistralGoogleCloud
 
 from autocomp.common import logger
+from autocomp.common.llm_queue import LLMRequestWriter
 
 # Try environment variable first, then fallback to import
 openai_key_str = os.environ.get("OPENAI_API_KEY")
@@ -146,35 +148,96 @@ async def fetch_completions(client: AsyncOpenAI | AsyncTogether | genai.Client, 
     return responses
 
 class LLMClient():
-    def __init__(self, model: str):
+    def __init__(self, model: str, use_queue: bool = False):
         self.model = model
-        self.api_model_name = model
         self.async_client = None
-        if "gpt" in model or re.search(r"o\d", model[:2]):
-            self.client = OpenAI(api_key=openai_key_str)
-            self.async_client = AsyncOpenAI(api_key=openai_key_str)
-        elif "gemini" in model:
-            # genai.configure(api_key=gemini_key_str)
-            # self.client = genai.GenerativeModel(model_name=model)
-            self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
-        elif "claude" in model:
-            self.client = anthropic.Anthropic(api_key=anthropic_key_str)
-        elif "Qwen" in model or "llama" in model or "deepseek" in model:
-            self.async_client = AsyncTogether(api_key=together_key_str)
-        elif "mistral" in model or "mixtral" in model:
-            self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
-        elif "gemma" in model:
-            openai_api_key = "EMPTY"
-            openai_api_base = "http://localhost:8000/v1"
-            self.client = OpenAI(
-                api_key=openai_api_key,
-                base_url=openai_api_base,
-            )
-            model = self.client.models.list()
-            self.model = model.data[0].id
+        self.use_queue = use_queue
+        if not use_queue:
+            if "gpt" in model or re.search(r"o\d", model[:2]):
+                self.client = OpenAI(api_key=openai_key_str)
+                self.async_client = AsyncOpenAI(api_key=openai_key_str)
+            elif "gemini" in model:
+                # genai.configure(api_key=gemini_key_str)
+                # self.client = genai.GenerativeModel(model_name=model)
+                self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
+            elif "claude" in model:
+                self.client = anthropic.Anthropic(api_key=anthropic_key_str)
+            elif "Qwen" in model or "llama" in model or "deepseek" in model:
+                self.async_client = AsyncTogether(api_key=together_key_str)
+            elif "mistral" in model or "mixtral" in model:
+                self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
+            elif "gemma" in model:
+                openai_api_key = "EMPTY"
+                openai_api_base = "http://localhost:8000/v1"
+                self.client = OpenAI(
+                    api_key=openai_api_key,
+                    base_url=openai_api_base,
+                )
+                model = self.client.models.list()
+                self.model = model.data[0].id
 
     def chat_async(self, msgs_lst: list[list[dict]], num_candidates=10, temperature=0.7) -> list[list[str]]:
-        if self.async_client is not None:
+        if self.use_queue:
+            # Initialize queue writer with default queue directory
+            queue_dir = os.environ.get("LLM_QUEUE_DIR", "/tmp/llm_queue")
+            writer = LLMRequestWriter(queue_dir)
+            
+            # Submit requests for each message list and each candidate
+            all_request_ids = []
+            for messages in msgs_lst:
+                msg_request_ids = []
+                for _ in range(num_candidates):
+                    request_id = writer.submit_request(
+                        messages=messages,
+                        model=self.model.replace("_", "/"),
+                        temperature=temperature
+                    )
+                    msg_request_ids.append(request_id)
+                all_request_ids.append(msg_request_ids)
+            
+            # Poll for responses
+            responses = []
+            max_wait_time = 300  # 5 minutes timeout
+            poll_interval = 0.5  # Poll every 500ms
+            
+            for msg_request_ids in all_request_ids:
+                msg_responses = []
+                start_time = time.time()
+                
+                while len(msg_responses) < len(msg_request_ids) and (time.time() - start_time) < max_wait_time:
+                    for request_id in msg_request_ids:
+                        if request_id not in [r[1] for r in msg_responses]:  # Not already collected
+                            status = writer.get_request_status(request_id)
+                            if status == "completed":
+                                response_obj = writer.get_response(request_id)
+                                if response_obj and not response_obj.error:
+                                    content = response_obj.response
+                                    if "</think>" in content:
+                                        content = content.split("</think>")[-1].strip()
+                                    msg_responses.append((content, request_id))
+                                elif response_obj and response_obj.error:
+                                    logger.error(f"Request {request_id} failed: {response_obj.error}")
+                                    msg_responses.append(("", request_id))  # Empty response for failed requests
+                            elif status == "failed":
+                                logger.error(f"Request {request_id} failed")
+                                msg_responses.append(("", request_id))  # Empty response for failed requests
+                    
+                    if len(msg_responses) < len(msg_request_ids):
+                        time.sleep(poll_interval)
+                
+                # Extract just the response content, maintaining order
+                ordered_responses = [""] * len(msg_request_ids)
+                for content, request_id in msg_responses:
+                    try:
+                        idx = msg_request_ids.index(request_id)
+                        ordered_responses[idx] = content
+                    except ValueError:
+                        pass  # Request ID not found, skip
+                
+                responses.append(ordered_responses)
+            
+            return responses
+        elif self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
                 "model":self.model.replace("_", "/"),
