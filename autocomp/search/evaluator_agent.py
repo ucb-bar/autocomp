@@ -5,9 +5,15 @@ from autocomp.common import LLMClient, logger
 from autocomp.search.code_repo import CodeCandidate
 
 class EvaluatorAgent:
-    def __init__(self, model):
+    def __init__(self, model, use_queue: bool = False, queue_dir: str = None):
+        logger.debug(f"Initializing EvaluatorAgent with model {model} and use_queue {use_queue}")
         self.model = model
-        self.llm_client = LLMClient(model)
+        self.use_queue = use_queue
+        self.queue_dir = queue_dir
+        self.llm_client = LLMClient(model, use_queue, queue_dir)
+
+    def __repr__(self):
+        return f"EvaluatorAgent({self.model}, {self.use_queue}, {self.queue_dir})"
 
     def _extract_score_robust(self, response: str) -> float:
         """
@@ -26,6 +32,7 @@ class EvaluatorAgent:
             r"Score\s*:\s*(\d+(?:\.\d+)?)",
             r"score:\s*(\d+(?:\.\d+)?)",
             r"score\s*:\s*(\d+(?:\.\d+)?)",
+            r"\*\*Score\*\*:\s*(\d+(?:\.\d+)?)",
         ]
         
         for pattern in score_patterns:
@@ -121,7 +128,7 @@ class EvaluatorAgent:
         for i, (orig_code, plan) in enumerate(zip(orig_codes, plans)):
             prompt = f"""You are an evaluator for a tensor processing optimization plan.
 You will be given a code implementation of a tensor processing operation and a plan to optimize it.
-Your task is to evaluate the plan and return a score between 0 and 100.
+Your task is to evaluate the plan and return a score between 0 (does not improve performance) and 100 (significant improvement).
 The score should be based on the following criteria:
 1. The plan is valid and can be applied to the code to improve performance.
 2. The plan is efficient and reduces the execution time of the code.

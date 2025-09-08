@@ -532,7 +532,7 @@ def main():
     num_plan_candidates=6
     num_code_candidates=2
     beam_size=6
-    num_plans_to_keep = 3
+    num_plans_to_keep=3
 
     # Planning prompt knobs
     dropout_menu_options = 0.2
@@ -618,7 +618,7 @@ def main():
     else:
         raise ValueError(f"Unknown backend: {backend}")
     if num_plans_to_keep:
-        evaluator_agent = EvaluatorAgent("gpt-5-mini")
+        evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
                                              evaluator_agent)
