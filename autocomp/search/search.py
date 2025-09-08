@@ -11,6 +11,7 @@ from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kb_eval import KBHardwareBackend
 from autocomp.search.prob import Prob
+from autocomp.search.evaluator_agent import EvaluatorAgent
 
 class SearchStrategy:
     """
@@ -32,6 +33,7 @@ class SearchStrategy:
                  code_icl_examples: bool,
                  dropout_menu_options: float,
                  prevent_duplicate_level: int,
+                 evaluator_agent: EvaluatorAgent,
                 ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.llm = llm  # The LLM used to propose and evaluate optimizations
@@ -49,6 +51,7 @@ class SearchStrategy:
         self.code_icl_examples = code_icl_examples
         self.dropout_menu_options = dropout_menu_options
         self.prevent_duplicate_level = prevent_duplicate_level
+        self.evaluator_agent = evaluator_agent
 
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -108,6 +111,26 @@ class SearchStrategy:
                 logger.debug("Adding feedback to candidate %d: %s", cand_i, feedback)
                 candidates[cand_i].update_spad_acc_stats(feedback)
         return candidates
+
+    def filter_plan_only_candidates(self, keep_plans_per_parent: int, plan_only_candidates: list[CodeCandidate], save_dir: pathlib.Path) -> list[CodeCandidate]:
+        """
+        Filter and return the top N plan only candidates based on their score.
+        """
+        if keep_plans_per_parent > 0:
+            cands_to_keep = []
+            for parent in set([c.parent for c in plan_only_candidates]):
+                # Keep the top N plans for each parent
+                this_parent_cands = [c for c in plan_only_candidates if c.parent == parent]
+                orig_codes = [c.parent.code for c in this_parent_cands]
+                plans = [c.plan for c in this_parent_cands]
+                plan_scores = self.evaluator_agent.evaluate_plans(orig_codes, plans, save_dir)
+                for c, plan_score in zip(this_parent_cands, plan_scores):
+                    c.plan_score = plan_score
+                this_parent_cands.sort(key=lambda c: c.plan_score, reverse=True)
+                cands_to_keep.extend(this_parent_cands[:keep_plans_per_parent])
+            return cands_to_keep
+        else:
+            return plan_only_candidates
 
     def filter_code_candidates(self, code_candidates: list[CodeCandidate], num_to_keep: int | None = None, cur_iter: int = None, num_iters: int = None) -> list:
         """
@@ -288,8 +311,10 @@ class BeamSearchStrategy(SearchStrategy):
                  trigger_exhaustive_iters: int,
                  start_exhaustive_iters: int,
                  prevent_duplicate_level: int,
+                 num_plans_to_keep: int,
+                 evaluator_agent: EvaluatorAgent,
                 ):
-        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level)
+        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, evaluator_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -299,6 +324,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_threshold = trigger_exhaustive_threshold
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
+        self.num_plans_to_keep = num_plans_to_keep
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -427,19 +453,25 @@ class BeamSearchStrategy(SearchStrategy):
                                                                    exhaustive=exhaustive, dropout_menu_options=self.dropout_menu_options)
             logger.info(f"Proposed {len(plan_only_candidates)} new optimizations.")
 
+            # Step 1.5: Evaluate the plans
+            save_dir = self.output_dir / f"evaluated-plans-iter-{i}"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            filtered_plan_only_candidates = self.filter_plan_only_candidates(self.num_plans_to_keep, plan_only_candidates, save_dir)
+            logger.info(f"Kept {len(filtered_plan_only_candidates)} out of {len(plan_only_candidates)} plans.")
+
             # Step 2: Generate code candidates for each optimization plan
             save_dir = self.output_dir / f"generated-code-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
             # impl_candidates = []
-            # for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
+            # for plan_idx, plan_only_cand in enumerate(filtered_plan_only_candidates):
             #     parent_idx = current_candidates.index(plan_only_cand.parent)
             #     this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, self.num_code_candidates, save_dir, save_str=f"{parent_idx}_{plan_idx}")
             #     impl_candidates.extend(this_plan_impl_candidates)
             save_strs = []
-            for cand_idx, cand in enumerate(plan_only_candidates):
+            for cand_idx, cand in enumerate(filtered_plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
+            impl_candidates = self.llm.implement_code_parallel(filtered_plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
@@ -486,20 +518,21 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "cuda"
+    backend = "gemmini" # "cuda" or "gemmini"
     models = ["o3-mini", "gpt-4o"]
     # models = ["kevin"]
     metric = "latency"
-    simulator = "kernelbench" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
+    simulator = "firesim" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "kb-level3"
-    prob_id = 10
+    prob_type = "exo"
+    prob_id = 0
 
     # Beam search parameters
     num_plan_candidates=6
     num_code_candidates=2
     beam_size=6
+    num_plans_to_keep = 3
 
     # Planning prompt knobs
     dropout_menu_options = 0.2
@@ -534,7 +567,7 @@ def main():
         output_str += f"_{model}"
     output_str += f"_dropout{dropout_menu_options}"
     if search_strategy == "beam":
-        output_str += f"_analyses{num_analyses}_plan{num_plan_candidates}_code{num_code_candidates}_beam{beam_size}"
+        output_str += f"_analyses{num_analyses}_plan{num_plan_candidates}_code{num_code_candidates}_beam{beam_size}_keepplan{num_plans_to_keep}"
     output_str += f"_score{give_score_feedback}_util{give_util_feedback}_spadacc{give_spad_acc_feedback}_ancestors{int(include_ancestors)}_preventdupe{prevent_duplicate_level}_planicl{int(plan_icl_examples)}_codeicl{int(code_icl_examples)}"
     output_dir = pathlib.Path("output/" + output_str)
 
@@ -584,14 +617,17 @@ def main():
         llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
+    if num_plans_to_keep:
+        evaluator_agent = EvaluatorAgent("gpt-5-mini")
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options)
+        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
+                                             evaluator_agent)
     elif search_strategy == "beam":
         optimizer = BeamSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level)
+                                       prevent_duplicate_level=prevent_duplicate_level, num_plans_to_keep=num_plans_to_keep, evaluator_agent=evaluator_agent)
 
     # Start the optimization process
     optimizer.optimize(iterations)
