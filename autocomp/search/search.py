@@ -525,7 +525,7 @@ def main():
     simulator = "firesim" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "exo"
+    prob_type = "gemm"
     prob_id = 0
 
     # Beam search parameters
@@ -617,6 +617,7 @@ def main():
         llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
+    evaluator_agent = None
     if num_plans_to_keep:
         evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
     if search_strategy == "exhaustive":
