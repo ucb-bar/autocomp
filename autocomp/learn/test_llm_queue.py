@@ -81,10 +81,13 @@ def main():
     
     # Example 1: Submit a simple request
     print("1️⃣ Submitting simple optimization request...")
+    
+    model_name = "/nscratch/charleshong/autocomp/model/"
+
     request_id = submit_simple_request(
         queue_dir=queue_dir,
         prompt="Hello, how are you?",
-        model="/scratch/charleshong/autocomp/autocomp/learn/model",
+        model=model_name,
         # model="openai/gpt-oss-20b",
         temperature=0.6,
     )
@@ -104,7 +107,7 @@ def main():
     
     complex_request_id = writer.submit_request(
         messages=messages,
-        model="/scratch/charleshong/autocomp/autocomp/learn/model",
+        model=model_name,  # Use the same model from API
         temperature=0.6,  # Lower temperature for more focused code optimization
         # max_tokens=1000,
     )

@@ -27,7 +27,7 @@ class CodeCandidate:
     Represents a single version of the code with an associated optimization plan.
     """
     def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, spad_acc_stats: list[str]=None,
-                 plan_gen_model=None, code_gen_model=None):
+                 plan_gen_model=None, code_gen_model=None, plan_score: float=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
@@ -45,6 +45,7 @@ class CodeCandidate:
 
         self.plan_gen_model = plan_gen_model
         self.code_gen_model = code_gen_model
+        self.plan_score = plan_score
 
     def __repr__(self):
         repr_str = f"CodeCandidate(parent={repr(self.parent)},\nplan="

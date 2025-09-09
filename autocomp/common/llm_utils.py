@@ -148,10 +148,11 @@ async def fetch_completions(client: AsyncOpenAI | AsyncTogether | genai.Client, 
     return responses
 
 class LLMClient():
-    def __init__(self, model: str, use_queue: bool = False):
+    def __init__(self, model: str, use_queue: bool = False, queue_dir: str = None):
         self.model = model
         self.async_client = None
         self.use_queue = use_queue
+        self.queue_dir = queue_dir
         if not use_queue:
             if "gpt" in model or re.search(r"o\d", model[:2]):
                 self.client = OpenAI(api_key=openai_key_str)
@@ -179,8 +180,7 @@ class LLMClient():
     def chat_async(self, msgs_lst: list[list[dict]], num_candidates=10, temperature=0.7) -> list[list[str]]:
         if self.use_queue:
             # Initialize queue writer with default queue directory
-            queue_dir = os.environ.get("LLM_QUEUE_DIR", "/tmp/llm_queue")
-            writer = LLMRequestWriter(queue_dir)
+            writer = LLMRequestWriter(self.queue_dir)
             
             # Submit requests for each message list and each candidate
             all_request_ids = []
