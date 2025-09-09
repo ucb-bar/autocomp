@@ -123,46 +123,66 @@ class EvaluatorAgent:
         logger.error(f"Failed to extract score from response: {response_clean[:200]}...")
         return 0.0
 
-    def evaluate_plans(self, orig_codes: list[str], plans: list[str], save_dir: pathlib.Path) -> list[float]:
+    def evaluate_plans(self, orig_codes: list[str], plans: list[str], save_dir: pathlib.Path, save_str: str, feedbacks: list[str] = None) -> list[float]:
         messages = []
-        for i, (orig_code, plan) in enumerate(zip(orig_codes, plans)):
+        if not feedbacks:
+            feedbacks = [None] * len(orig_codes)
+        for i, (orig_code, feedback, plan) in enumerate(zip(orig_codes, feedbacks, plans)):
             prompt = f"""You are an evaluator for a tensor processing optimization plan.
 You will be given a code implementation of a tensor processing operation and a plan to optimize it.
 Your task is to evaluate the plan and return a score between 0 (does not improve performance) and 100 (significant improvement).
 The score should be based on the following criteria:
 1. The plan is valid and can be applied to the code to improve performance.
 2. The plan is efficient and reduces the execution time of the code.
-3. The plan is optimal and there is no better plan that can be applied to the code to improve performance.
 
-The code implementation is as follows:
+Original code:
 {orig_code}
-
-The plan is as follows:
+"""
+            if feedback:
+                prompt += f"""
+Feedback:
+{feedback}
+"""
+            prompt += f"""
+Plan:
 {plan}
 
-IMPORTANT: Please provide your reasoning, then clearly state your final score in this exact format:
+Provide your reasoning, then clearly state your final score in this format:
 Score: [your numeric score between 0 and 100]
 """
-            prompt_path = save_dir / f"prompt_{i}_{self.model}.txt"
+            prompt_path = save_dir / f"prompt_{save_str}_{i}_{self.model}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt)
             messages.append([{"role": "user", "content": prompt}])
+
+        # Read responses from save_dir if they exist
+        responses = []
+        responses_found = True
+        for i in range(len(orig_codes)):
+            response_path = save_dir / f"response_{save_str}_{i}_{self.model}.txt"
+            if response_path.exists():
+                with open(response_path, "r") as f:
+                    responses.append(f.read())
+            else:
+                responses_found = False
+            if responses_found:
+                logger.info(f"Loaded evaluator responses from {save_dir}")
         
-        try:
-            responses = self.llm_client.chat_async(messages, num_candidates=1, temperature=1)
-            scores = []
-            for i, response in enumerate(responses):
-                response_path = save_dir / f"response_{i}_{self.model}.txt"
+        scores = []
+        if not responses_found:
+            responses = []
+            chat_output = self.llm_client.chat_async(messages, num_candidates=1, temperature=1)
+            for i, response_in_list in enumerate(chat_output):
+                response = response_in_list[0]
+                response_path = save_dir / f"response_{save_str}_{i}_{self.model}.txt"
                 with open(response_path, "w") as f:
-                    f.write(response[0])
-                score = self._extract_score_robust(response[0])
-                scores.append(score)
-                if score == 0.0:
-                    logger.warning(f"Score extraction failed for plan {i}, using 0.0 as fallback")
-            
-            return scores
-            
-        except Exception as e:
-            logger.error(f"Error in evaluate_plans: {e}")
-            # Return zero scores as fallback
-            return [0.0] * len(orig_codes)
+                    f.write(response)
+                responses.append(response)
+
+        for i, response in enumerate(responses):
+            score = self._extract_score_robust(response)
+            scores.append(score)
+            if score == 0.0:
+                logger.warning(f"Score extraction failed for plan {i}, using 0.0 as fallback")
+        
+        return scores

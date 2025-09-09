@@ -118,12 +118,17 @@ class SearchStrategy:
         """
         if keep_plans_per_parent > 0:
             cands_to_keep = []
-            for parent in set([c.parent for c in plan_only_candidates]):
+            for i, parent in enumerate(set([c.parent for c in plan_only_candidates])):
                 # Keep the top N plans for each parent
                 this_parent_cands = [c for c in plan_only_candidates if c.parent == parent]
                 orig_codes = [c.parent.code for c in this_parent_cands]
+                try:
+                    feedbacks = [c.spad_acc_stats for c in this_parent_cands]
+                except:
+                    feedbacks = None
                 plans = [c.plan for c in this_parent_cands]
-                plan_scores = self.evaluator_agent.evaluate_plans(orig_codes, plans, save_dir)
+                save_str = f"cand{i}"
+                plan_scores = self.evaluator_agent.evaluate_plans(orig_codes, plans, save_dir, save_str, feedbacks=feedbacks)
                 for c, plan_score in zip(this_parent_cands, plan_scores):
                     c.plan_score = plan_score
                 this_parent_cands.sort(key=lambda c: c.plan_score, reverse=True)
@@ -205,9 +210,9 @@ class SearchStrategy:
     def init_wandb(self):
         # start a new wandb run to track this script
         wandb.init(
-            entity=None,
+            entity="charleshong3-team",
             # set the wandb project where this run will be logged
-            project=None,
+            project="autocomp",
             # track hyperparameters and run metadata
             config=vars(self),
         )
@@ -538,7 +543,7 @@ def main():
     dropout_menu_options = 0.2
     give_score_feedback = 1
     give_util_feedback = 0
-    give_spad_acc_feedback = 0
+    give_spad_acc_feedback = 0.5
     include_ancestors = False
     plan_icl_examples = False
     code_icl_examples = False
