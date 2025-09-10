@@ -17,11 +17,18 @@ The script includes a configurable performance level classification system with 
 - significantly_degraded: < -10% improvement
 
 You can customize these levels using the update_performance_levels() method.
+
+Incorrect Sample Filtering:
+The script supports filtering incorrect samples using the --keep-incorrect-probability parameter.
+By default (0.0), all incorrect samples are filtered out. Setting this to 1.0 keeps all incorrect
+samples. Values between 0.0 and 1.0 randomly keep that fraction of incorrect samples, which can
+be useful for training models on both positive and negative examples.
 """
 
 import json
 import argparse
 import logging
+import random
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import pickle
@@ -37,18 +44,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DatasetTransformer:
-    def __init__(self, input_file: str, output_file: str = "fine_tuning_dataset.json"):
+    def __init__(self, input_file: str, output_file: str = "fine_tuning_dataset.json", 
+                 keep_incorrect_probability: float = 0.0):
         """
         Initialize the dataset transformer.
         
         Args:
             input_file: Path to the rerun_results.json file
             output_file: Path for the output dataset file
+            keep_incorrect_probability: Probability (0.0-1.0) of keeping incorrect samples.
+                                      0.0 means no incorrect samples are kept,
+                                      1.0 means all incorrect samples are kept.
         """
         self.input_file = Path(input_file)
         self.output_file = Path(output_file)
+        self.keep_incorrect_probability = max(0.0, min(1.0, keep_incorrect_probability))
         self.data = []
         self.transformed_data = []
+        self.filtered_stats = {'total_processed': 0, 'incorrect_filtered': 0, 'incorrect_kept': 0}
         
         # Configure performance improvement levels
         self.performance_levels = {
@@ -386,13 +399,28 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
         return transformed_entry
     
     def transform_dataset(self):
-        """Transform all entries in the dataset."""
+        """Transform all entries in the dataset, filtering incorrect samples based on probability."""
         logger.info("Starting dataset transformation...")
+        logger.info(f"Keep incorrect probability: {self.keep_incorrect_probability}")
         
         for i, entry in enumerate(self.data):
             try:
                 transformed_entry = self.transform_entry(entry)
-                self.transformed_data.append(transformed_entry)
+                self.filtered_stats['total_processed'] += 1
+                
+                # Check if this is an incorrect sample
+                is_correct = transformed_entry['metadata']['performance_info']['is_correct']
+                
+                if is_correct:
+                    # Always keep correct samples
+                    self.transformed_data.append(transformed_entry)
+                else:
+                    # For incorrect samples, keep based on probability
+                    if random.random() < self.keep_incorrect_probability:
+                        self.transformed_data.append(transformed_entry)
+                        self.filtered_stats['incorrect_kept'] += 1
+                    else:
+                        self.filtered_stats['incorrect_filtered'] += 1
                 
                 if (i + 1) % 100 == 0:
                     logger.info(f"Processed {i + 1}/{len(self.data)} entries")
@@ -401,7 +429,9 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
                 logger.error(f"Error transforming entry {i}: {e}")
                 continue
         
-        logger.info(f"Transformation complete. {len(self.transformed_data)} entries transformed.")
+        logger.info(f"Transformation complete. {len(self.transformed_data)} entries kept out of {self.filtered_stats['total_processed']} processed.")
+        if self.filtered_stats['incorrect_filtered'] > 0 or self.filtered_stats['incorrect_kept'] > 0:
+            logger.info(f"Incorrect samples: {self.filtered_stats['incorrect_kept']} kept, {self.filtered_stats['incorrect_filtered']} filtered")
     
     def save_dataset(self):
         """Save the transformed dataset."""
@@ -447,7 +477,8 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
             return
         
         total_entries = len(self.transformed_data)
-        correct_entries = sum(1 for entry in self.transformed_data if entry['final'])
+        correct_entries = sum(1 for entry in self.transformed_data 
+                            if entry['metadata']['performance_info']['is_correct'])
         
         # Performance improvement statistics
         improvements = []
@@ -463,18 +494,32 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
             prob_types[prob_type] = prob_types.get(prob_type, 0) + 1
         
         logger.info(f"\n=== DATASET STATISTICS ===")
-        logger.info(f"Total entries: {total_entries}")
+        logger.info(f"Total entries in final dataset: {total_entries}")
         logger.info(f"Correct implementations: {correct_entries}")
+        logger.info(f"Incorrect implementations: {total_entries - correct_entries}")
         logger.info(f"Success rate: {correct_entries/total_entries*100:.1f}%")
+        
+        # Show filtering statistics
+        if self.filtered_stats['total_processed'] > 0:
+            logger.info(f"\n=== FILTERING STATISTICS ===")
+            logger.info(f"Total entries processed: {self.filtered_stats['total_processed']}")
+            logger.info(f"Entries kept in final dataset: {total_entries}")
+            logger.info(f"Keep incorrect probability: {self.keep_incorrect_probability}")
+            if self.filtered_stats['incorrect_filtered'] > 0 or self.filtered_stats['incorrect_kept'] > 0:
+                total_incorrect = self.filtered_stats['incorrect_filtered'] + self.filtered_stats['incorrect_kept']
+                logger.info(f"Total incorrect samples processed: {total_incorrect}")
+                logger.info(f"Incorrect samples kept: {self.filtered_stats['incorrect_kept']} ({self.filtered_stats['incorrect_kept']/total_incorrect*100:.1f}%)")
+                logger.info(f"Incorrect samples filtered out: {self.filtered_stats['incorrect_filtered']} ({self.filtered_stats['incorrect_filtered']/total_incorrect*100:.1f}%)")
         
         if improvements:
             avg_improvement = sum(improvements) / len(improvements)
             positive_improvements = sum(1 for x in improvements if x > 0)
+            logger.info(f"\n=== PERFORMANCE STATISTICS ===")
             logger.info(f"Entries with performance metrics: {len(improvements)}")
             logger.info(f"Average performance improvement: {avg_improvement:.2f}%")
             logger.info(f"Entries with positive improvement: {positive_improvements}/{len(improvements)} ({positive_improvements/len(improvements)*100:.1f}%)")
         
-        logger.info(f"\nProblem type distribution:")
+        logger.info(f"\n=== PROBLEM TYPE DISTRIBUTION ===")
         for prob_type, count in sorted(prob_types.items()):
             logger.info(f"  {prob_type}: {count} ({count/total_entries*100:.1f}%)")
     
@@ -492,11 +537,19 @@ def main():
     parser.add_argument("input_file", help="Path to rerun_results.json or rerun_results.pkl file")
     parser.add_argument("--output-file", default="fine_tuning_dataset.json",
                        help="Output file path (default: fine_tuning_dataset.json)")
+    parser.add_argument("--keep-incorrect-probability", type=float, default=0.0,
+                       help="Probability (0.0-1.0) of keeping incorrect samples in the dataset. "
+                            "0.0 means no incorrect samples are kept (default), "
+                            "1.0 means all incorrect samples are kept.")
     
     args = parser.parse_args()
     
+    # Validate keep_incorrect_probability
+    if not (0.0 <= args.keep_incorrect_probability <= 1.0):
+        parser.error("--keep-incorrect-probability must be between 0.0 and 1.0")
+    
     # Create and run the transformer
-    transformer = DatasetTransformer(args.input_file, args.output_file)
+    transformer = DatasetTransformer(args.input_file, args.output_file, args.keep_incorrect_probability)
     transformer.run()
 
 

@@ -12,7 +12,7 @@ def main():
     output_file = "fine_tuning_dataset.json"
     
     # Create transformer
-    transformer = DatasetTransformer(input_file, output_file)
+    transformer = DatasetTransformer(input_file, output_file, 0.3)
     
     # Run transformation
     transformer.run()

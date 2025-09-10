@@ -190,7 +190,8 @@ class LLMClient():
                     request_id = writer.submit_request(
                         messages=messages,
                         model=self.model.replace("_", "/"),
-                        temperature=temperature
+                        temperature=temperature,
+                        max_tokens=2048,
                     )
                     msg_request_ids.append(request_id)
                 all_request_ids.append(msg_request_ids)
