@@ -540,13 +540,13 @@ def main():
     num_plans_to_keep=3
 
     # Planning prompt knobs
-    dropout_menu_options = 0.2
+    dropout_menu_options = 0.3
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0.5
     include_ancestors = False
     plan_icl_examples = False
-    code_icl_examples = False
+    code_icl_examples = True
 
     # Typically not used
     num_analyses=0
@@ -624,7 +624,8 @@ def main():
         raise ValueError(f"Unknown backend: {backend}")
     evaluator_agent = None
     if num_plans_to_keep:
-        evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
+        # evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
+        evaluator_agent = EvaluatorAgent("_scratch_charleshong_autocomp_autocomp_learn_axolotl_outputs_out_merged_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
                                              evaluator_agent)
