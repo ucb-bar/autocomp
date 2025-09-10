@@ -171,7 +171,7 @@ Score: [your numeric score between 0 and 100]
         scores = []
         if not responses_found:
             responses = []
-            chat_output = self.llm_client.chat_async(messages, num_candidates=1, temperature=1)
+            chat_output = self.llm_client.chat_async(messages, num_candidates=1, temperature=0.3)
             for i, response_in_list in enumerate(chat_output):
                 response = response_in_list[0]
                 response_path = save_dir / f"response_{save_str}_{i}_{self.model}.txt"
