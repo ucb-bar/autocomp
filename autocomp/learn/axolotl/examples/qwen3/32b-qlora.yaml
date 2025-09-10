@@ -1,4 +1,4 @@
-base_model: Qwen/Qwen3-8B
+base_model: Qwen/Qwen3-32B
 # Automatically upload checkpoint and final model to HF
 # hub_model_id: username/custom_model_name
 
@@ -20,6 +20,7 @@ output_dir: ./outputs/out
 dataset_prepared_path: last_run_prepared
 
 sequence_len: 5120
+excess_length_strategy: truncate
 sample_packing: true
 eval_sample_packing: true
 
@@ -46,7 +47,7 @@ wandb_name:
 wandb_log_model:
 
 gradient_accumulation_steps: 2
-micro_batch_size: 4
+micro_batch_size: 8
 num_epochs: 1
 optimizer: adamw_torch_4bit
 lr_scheduler: cosine
