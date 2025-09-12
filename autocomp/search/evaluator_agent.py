@@ -18,7 +18,7 @@ class EvaluatorAgent:
     def _extract_score_robust(self, response: str) -> float:
         """
         Robustly extract a score from LLM response using multiple fallback methods.
-        Returns a float between 0 and 100, or 0.0 if parsing fails completely.
+        Returns a float (any numeric value), or 0.0 if parsing fails completely.
         """
         if not response or not isinstance(response, str):
             logger.warning("Empty or invalid response received")
@@ -40,17 +40,14 @@ class EvaluatorAgent:
             if matches:
                 try:
                     score = float(matches[-1])  # Take the last match
-                    if 0 <= score <= 100:
-                        return score
-                    # If score is out of range, clamp it
-                    return max(0.0, min(100.0, score))
+                    return score
                 except ValueError:
                     continue
         
         # Method 2: Look for standalone numbers that could be scores
         # Find all numbers in the response
         number_patterns = [
-            r"\b(\d{1,3}(?:\.\d+)?)\b",  # 1-3 digit numbers (likely scores)
+            r"\b(\d+(?:\.\d+)?)\b",  # Any digit numbers (scores can be any value)
         ]
         
         for pattern in number_patterns:
@@ -58,9 +55,8 @@ class EvaluatorAgent:
             for num_str in reversed(numbers):  # Check from end backwards
                 try:
                     num = float(num_str)
-                    if 0 <= num <= 100:
-                        logger.info(f"Extracted score {num} using fallback number pattern")
-                        return num
+                    logger.info(f"Extracted score {num} using fallback number pattern")
+                    return num
                 except ValueError:
                     continue
         
@@ -78,14 +74,8 @@ class EvaluatorAgent:
             if matches:
                 try:
                     score = float(matches[-1])
-                    if 0 <= score <= 100:
-                        logger.info(f"Extracted score {score} using expression pattern")
-                        return score
-                    # Convert percentage if needed
-                    if score > 100:
-                        score = score / 100.0 * 100.0
-                        if 0 <= score <= 100:
-                            return score
+                    logger.info(f"Extracted score {score} using expression pattern")
+                    return score
                 except ValueError:
                     continue
         
@@ -95,9 +85,8 @@ class EvaluatorAgent:
             for num_str in reversed(all_numbers):
                 try:
                     num = float(num_str)
-                    if 0 <= num <= 100:
-                        logger.warning(f"Using last valid number {num} as fallback score")
-                        return num
+                    logger.warning(f"Using last valid number {num} as fallback score")
+                    return num
                 except ValueError:
                     continue
         
@@ -113,9 +102,8 @@ class EvaluatorAgent:
                         numbers = re.findall(r"\d+(?:\.\d+)?", line)
                         if numbers:
                             score = float(numbers[0])
-                            if 0 <= score <= 100:
-                                logger.warning(f"Using original split method, extracted {score}")
-                                return score
+                            logger.warning(f"Using original split method, extracted {score}")
+                            return score
         except (ValueError, IndexError):
             pass
         
@@ -130,8 +118,8 @@ class EvaluatorAgent:
         for i, (orig_code, feedback, plan) in enumerate(zip(orig_codes, feedbacks, plans)):
             prompt = f"""You are an evaluator for a tensor processing optimization plan.
 You will be given a code implementation of a tensor processing operation and a plan to optimize it.
-Your task is to evaluate the plan and return a score between 0 (does not improve performance) and 100 (significant improvement).
-The score should be based on the following criteria:
+Your task is to evaluate the plan and predict the performance improvement it will achieve.
+The prediction should be based on the following criteria:
 1. The plan is valid and can be applied to the code to improve performance.
 2. The plan is efficient and reduces the execution time of the code.
 
@@ -147,8 +135,8 @@ Feedback:
 Plan:
 {plan}
 
-Provide your reasoning, then clearly state your final score in this format:
-Score: [your numeric score between 0 and 100]
+Provide your reasoning, then clearly state your final prediction in this format:
+Prediction: [your numeric prediction]
 """
             prompt_path = save_dir / f"prompt_{save_str}_{i}_{self.model}.txt"
             with open(prompt_path, "w") as f:
@@ -171,7 +159,11 @@ Score: [your numeric score between 0 and 100]
         scores = []
         if not responses_found:
             responses = []
-            chat_output = self.llm_client.chat_async(messages, num_candidates=1, temperature=0.3)
+            if "scratch" in self.model:
+                temperature = 0.3
+            else:
+                temperature = 1
+            chat_output = self.llm_client.chat_async(messages, num_candidates=1, temperature=temperature)
             for i, response_in_list in enumerate(chat_output):
                 response = response_in_list[0]
                 response_path = save_dir / f"response_{save_str}_{i}_{self.model}.txt"
