@@ -625,8 +625,9 @@ def main():
         raise ValueError(f"Unknown backend: {backend}")
     evaluator_agent = None
     if num_plans_to_keep:
-        evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_qwen3-8b-model-axolotl_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue_v2")
+        evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_qwen3-14b-model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
         # evaluator_agent = EvaluatorAgent("_scratch_charleshong_autocomp_autocomp_learn_axolotl_outputs_out_merged_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
+        # evaluator_agent = EvaluatorAgent("gpt-5-mini")
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
                                              evaluator_agent)

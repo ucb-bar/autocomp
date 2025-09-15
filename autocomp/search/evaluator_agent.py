@@ -32,7 +32,7 @@ class EvaluatorAgent:
             r"Prediction\s*:\s*(-?\d+(?:\.\d+)?)",
             r"prediction:\s*(-?\d+(?:\.\d+)?)",
             r"prediction\s*:\s*(-?\d+(?:\.\d+)?)",
-            r"\*\*Prediction\*\*:\s*(-?\d+(?:\.\d+)?)",
+            r"Prediction\*?\*?:\s*\*?\*?(-?\d+(?:\.\d+)?)",
         ]
         
         for pattern in score_patterns:
@@ -176,7 +176,5 @@ Prediction: [your numeric prediction]%
         for i, response in enumerate(responses):
             score = self._extract_score_robust(response)
             scores.append(score)
-            if score == 0.0:
-                logger.warning(f"Score extraction failed for plan {i}, using 0.0 as fallback")
         
         return scores
