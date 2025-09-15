@@ -7,16 +7,22 @@ The output dataset has columns: ['reasoning_language', 'developer', 'user', 'ana
 Each entry's messages contain the parent_code, plan, and performance change information.
 
 Performance Classification:
-The script includes a configurable performance level classification system with the following default levels:
-- significantly_improved: >= 10% improvement
-- moderately_improved: >= 5% improvement  
-- slightly_improved: >= 1% improvement
-- maintained: >= -1% improvement
-- slightly_degraded: >= -5% improvement
-- moderately_degraded: >= -10% improvement
-- significantly_degraded: < -10% improvement
+The script includes a configurable performance level classification system with default levels:
+- significantly_improved (≥25.0% improvement)
+- moderately_improved (≥5.0% improvement)  
+- slightly_improved (≥1.0% improvement)
+- maintained (≥-1.0% change)
+- slightly_degraded (≥-5.0% change)
+- moderately_degraded (≥-10.0% change)
+- significantly_degraded (<-10.0% change)
 
 You can customize these levels using the update_performance_levels() method.
+
+Dataset Balancing:
+The script supports balancing the dataset by performance levels using the --balance-performance-levels flag.
+When enabled, it will sample from each performance level to match the number of 'moderately improved' 
+samples, ensuring even distribution across all performance levels. This can help prevent model bias 
+towards more common performance outcomes.
 
 Incorrect Sample Filtering:
 The script supports filtering incorrect samples using the --keep-incorrect-probability parameter.
@@ -45,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 class DatasetTransformer:
     def __init__(self, input_file: str, output_file: str = "fine_tuning_dataset.json", 
-                 keep_incorrect_probability: float = 0.0):
+                 keep_incorrect_probability: float = 0.0, balance_performance_levels: bool = False):
         """
         Initialize the dataset transformer.
         
@@ -55,10 +61,13 @@ class DatasetTransformer:
             keep_incorrect_probability: Probability (0.0-1.0) of keeping incorrect samples.
                                       0.0 means no incorrect samples are kept,
                                       1.0 means all incorrect samples are kept.
+            balance_performance_levels: Whether to balance the dataset by performance levels
+                                      to match the count of 'moderately improved' samples.
         """
         self.input_file = Path(input_file)
         self.output_file = Path(output_file)
         self.keep_incorrect_probability = max(0.0, min(1.0, keep_incorrect_probability))
+        self.balance_performance_levels = balance_performance_levels
         self.data = []
         self.transformed_data = []
         self.filtered_stats = {'total_processed': 0, 'incorrect_filtered': 0, 'incorrect_kept': 0}
@@ -398,29 +407,93 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
         
         return transformed_entry
     
+    def analyze_performance_distribution(self, entries: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Analyze the distribution of performance levels in the dataset.
+        
+        Args:
+            entries: List of transformed entries
+            
+        Returns:
+            Dictionary mapping performance level descriptions to lists of entries
+        """
+        performance_distribution = {}
+        
+        for entry in entries:
+            perf_info = entry['metadata']['performance_info']
+            if perf_info['is_correct'] and perf_info['performance_improvement'] is not None:
+                performance_level = self.classify_performance_improvement(perf_info['performance_improvement'])
+                if performance_level not in performance_distribution:
+                    performance_distribution[performance_level] = []
+                performance_distribution[performance_level].append(entry)
+        
+        return performance_distribution
+    
+    def balance_dataset_by_performance_level(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Balance the dataset to match the number of 'moderately improved' samples.
+        
+        Args:
+            entries: List of all transformed entries
+            
+        Returns:
+            Balanced list of entries
+        """
+        # Separate correct and incorrect entries
+        correct_entries = [entry for entry in entries if entry['metadata']['performance_info']['is_correct']]
+        incorrect_entries = [entry for entry in entries if not entry['metadata']['performance_info']['is_correct']]
+        
+        # Analyze performance distribution for correct entries
+        performance_distribution = self.analyze_performance_distribution(correct_entries)
+        
+        # Find the target count (number of moderately improved samples)
+        target_count = len(performance_distribution.get('moderately improved', []))
+        
+        if target_count == 0:
+            logger.warning("No 'moderately improved' samples found. Using original dataset.")
+            return entries
+        
+        logger.info(f"Target count for balancing: {target_count} (based on 'moderately improved' samples)")
+        
+        # Balance each performance level
+        balanced_entries = []
+        
+        for performance_level, level_entries in performance_distribution.items():
+            current_count = len(level_entries)
+            
+            if current_count <= target_count:
+                # Keep all entries if we have fewer than target
+                balanced_entries.extend(level_entries)
+                logger.info(f"'{performance_level}': keeping all {current_count} samples")
+            else:
+                # Randomly sample to match target count
+                sampled_entries = random.sample(level_entries, target_count)
+                balanced_entries.extend(sampled_entries)
+                logger.info(f"'{performance_level}': sampled {target_count} from {current_count} samples")
+        
+        # Add incorrect entries based on keep_incorrect_probability
+        for entry in incorrect_entries:
+            if random.random() < self.keep_incorrect_probability:
+                balanced_entries.append(entry)
+                self.filtered_stats['incorrect_kept'] += 1
+            else:
+                self.filtered_stats['incorrect_filtered'] += 1
+        
+        return balanced_entries
+
     def transform_dataset(self):
         """Transform all entries in the dataset, filtering incorrect samples based on probability."""
         logger.info("Starting dataset transformation...")
         logger.info(f"Keep incorrect probability: {self.keep_incorrect_probability}")
         
+        # First pass: transform all entries
+        all_transformed_entries = []
+        
         for i, entry in enumerate(self.data):
             try:
                 transformed_entry = self.transform_entry(entry)
+                all_transformed_entries.append(transformed_entry)
                 self.filtered_stats['total_processed'] += 1
-                
-                # Check if this is an incorrect sample
-                is_correct = transformed_entry['metadata']['performance_info']['is_correct']
-                
-                if is_correct:
-                    # Always keep correct samples
-                    self.transformed_data.append(transformed_entry)
-                else:
-                    # For incorrect samples, keep based on probability
-                    if random.random() < self.keep_incorrect_probability:
-                        self.transformed_data.append(transformed_entry)
-                        self.filtered_stats['incorrect_kept'] += 1
-                    else:
-                        self.filtered_stats['incorrect_filtered'] += 1
                 
                 if (i + 1) % 100 == 0:
                     logger.info(f"Processed {i + 1}/{len(self.data)} entries")
@@ -428,6 +501,24 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
             except Exception as e:
                 logger.error(f"Error transforming entry {i}: {e}")
                 continue
+        
+        # Second pass: balance the dataset if requested
+        if self.balance_performance_levels:
+            logger.info("Balancing dataset by performance levels...")
+            self.transformed_data = self.balance_dataset_by_performance_level(all_transformed_entries)
+        else:
+            # Apply filtering for incorrect samples without balancing
+            self.transformed_data = []
+            for entry in all_transformed_entries:
+                is_correct = entry['metadata']['performance_info']['is_correct']
+                if is_correct:
+                    self.transformed_data.append(entry)
+                else:
+                    if random.random() < self.keep_incorrect_probability:
+                        self.transformed_data.append(entry)
+                        self.filtered_stats['incorrect_kept'] += 1
+                    else:
+                        self.filtered_stats['incorrect_filtered'] += 1
         
         logger.info(f"Transformation complete. {len(self.transformed_data)} entries kept out of {self.filtered_stats['total_processed']} processed.")
         if self.filtered_stats['incorrect_filtered'] > 0 or self.filtered_stats['incorrect_kept'] > 0:
@@ -519,6 +610,27 @@ The optimization {self.classify_performance_improvement(perf_info['performance_i
             logger.info(f"Average performance improvement: {avg_improvement:.2f}%")
             logger.info(f"Entries with positive improvement: {positive_improvements}/{len(improvements)} ({positive_improvements/len(improvements)*100:.1f}%)")
         
+        # Performance level distribution
+        correct_entries = [entry for entry in self.transformed_data 
+                         if entry['metadata']['performance_info']['is_correct']]
+        if correct_entries:
+            performance_distribution = self.analyze_performance_distribution(correct_entries)
+            logger.info(f"\n=== PERFORMANCE LEVEL DISTRIBUTION ===")
+            total_with_perf = sum(len(entries) for entries in performance_distribution.values())
+            
+            # Sort by performance level thresholds (best to worst)
+            sorted_levels = []
+            for level_name, level_info in sorted(self.performance_levels.items(), 
+                                               key=lambda x: x[1]['threshold'], reverse=True):
+                level_desc = level_info['description']
+                if level_desc in performance_distribution:
+                    count = len(performance_distribution[level_desc])
+                    sorted_levels.append((level_desc, count))
+            
+            for level_desc, count in sorted_levels:
+                percentage = count / total_with_perf * 100 if total_with_perf > 0 else 0
+                logger.info(f"  {level_desc}: {count} ({percentage:.1f}%)")
+        
         logger.info(f"\n=== PROBLEM TYPE DISTRIBUTION ===")
         for prob_type, count in sorted(prob_types.items()):
             logger.info(f"  {prob_type}: {count} ({count/total_entries*100:.1f}%)")
@@ -541,6 +653,10 @@ def main():
                        help="Probability (0.0-1.0) of keeping incorrect samples in the dataset. "
                             "0.0 means no incorrect samples are kept (default), "
                             "1.0 means all incorrect samples are kept.")
+    parser.add_argument("--balance-performance-levels", action="store_true",
+                       help="Balance the dataset by performance levels to match the number of "
+                            "'moderately improved' samples. This ensures even distribution "
+                            "across all performance levels.")
     
     args = parser.parse_args()
     
@@ -549,7 +665,12 @@ def main():
         parser.error("--keep-incorrect-probability must be between 0.0 and 1.0")
     
     # Create and run the transformer
-    transformer = DatasetTransformer(args.input_file, args.output_file, args.keep_incorrect_probability)
+    transformer = DatasetTransformer(
+        args.input_file, 
+        args.output_file, 
+        args.keep_incorrect_probability,
+        args.balance_performance_levels
+    )
     transformer.run()
 
 
