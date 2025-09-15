@@ -17,22 +17,22 @@ class EvaluatorAgent:
 
     def _extract_score_robust(self, response: str) -> float:
         """
-        Robustly extract a score from LLM response using multiple fallback methods.
+        Robustly extract a prediction from LLM response using multiple fallback methods.
         Returns a float (any numeric value), or 0.0 if parsing fails completely.
         """
         if not response or not isinstance(response, str):
             logger.warning("Empty or invalid response received")
             return 0.0
         
-        response_clean = response.strip()
+        response_clean = response.strip().replace("*", "")
         
-        # Method 1: Look for "Score:" followed by a number (most common format)
+        # Method 1: Look for "Prediction:" followed by a number (most common format)
         score_patterns = [
-            r"Score:\s*(\d+(?:\.\d+)?)",
-            r"Score\s*:\s*(\d+(?:\.\d+)?)",
-            r"score:\s*(\d+(?:\.\d+)?)",
-            r"score\s*:\s*(\d+(?:\.\d+)?)",
-            r"\*\*Score\*\*:\s*(\d+(?:\.\d+)?)",
+            r"Prediction:\s*(-?\d+(?:\.\d+)?)",
+            r"Prediction\s*:\s*(-?\d+(?:\.\d+)?)",
+            r"prediction:\s*(-?\d+(?:\.\d+)?)",
+            r"prediction\s*:\s*(-?\d+(?:\.\d+)?)",
+            r"\*\*Prediction\*\*:\s*(-?\d+(?:\.\d+)?)",
         ]
         
         for pattern in score_patterns:
@@ -47,7 +47,7 @@ class EvaluatorAgent:
         # Method 2: Look for standalone numbers that could be scores
         # Find all numbers in the response
         number_patterns = [
-            r"\b(\d+(?:\.\d+)?)\b",  # Any digit numbers (scores can be any value)
+            r"\b(-?\d+(?:\.\d+)?)\b",  # Any digit numbers including negative (scores can be any value)
         ]
         
         for pattern in number_patterns:
@@ -55,18 +55,18 @@ class EvaluatorAgent:
             for num_str in reversed(numbers):  # Check from end backwards
                 try:
                     num = float(num_str)
-                    logger.info(f"Extracted score {num} using fallback number pattern")
+                    logger.info(f"Extracted prediction {num} using fallback number pattern")
                     return num
                 except ValueError:
                     continue
         
         # Method 3: Look for common score expressions
         expression_patterns = [
-            r"(\d+(?:\.\d+)?)\s*(?:out of|/)\s*100",
-            r"(\d+(?:\.\d+)?)\s*points?",
-            r"(\d+(?:\.\d+)?)\s*%",
-            r"rating.*?(\d+(?:\.\d+)?)",
-            r"evaluate.*?(\d+(?:\.\d+)?)",
+            r"(-?\d+(?:\.\d+)?)\s*(?:out of|/)\s*100",
+            r"(-?\d+(?:\.\d+)?)\s*points?",
+            r"(-?\d+(?:\.\d+)?)\s*%",
+            r"rating.*?(-?\d+(?:\.\d+)?)",
+            r"evaluate.*?(-?\d+(?:\.\d+)?)",
         ]
         
         for pattern in expression_patterns:
@@ -74,32 +74,32 @@ class EvaluatorAgent:
             if matches:
                 try:
                     score = float(matches[-1])
-                    logger.info(f"Extracted score {score} using expression pattern")
+                    logger.info(f"Extracted prediction {score} using expression pattern")
                     return score
                 except ValueError:
                     continue
         
         # Method 4: Try to find the last number in the response that could be a score
-        all_numbers = re.findall(r"\d+(?:\.\d+)?", response_clean)
+        all_numbers = re.findall(r"-?\d+(?:\.\d+)?", response_clean)
         if all_numbers:
             for num_str in reversed(all_numbers):
                 try:
                     num = float(num_str)
-                    logger.warning(f"Using last valid number {num} as fallback score")
+                    logger.warning(f"Using last valid number {num} as fallback prediction")
                     return num
                 except ValueError:
                     continue
         
         # Method 5: Parse split method (original approach) as final fallback
         try:
-            if "Score:" in response_clean:
-                score_part = response_clean.split("Score:")[-1]
+            if "Prediction:" in response_clean:
+                score_part = response_clean.split("Prediction:")[-1]
                 # Try different ways to extract the number
                 for line in score_part.split("\n"):
                     line = line.strip()
                     if line:
                         # Extract first number from the line
-                        numbers = re.findall(r"\d+(?:\.\d+)?", line)
+                        numbers = re.findall(r"-?\d+(?:\.\d+)?", line)
                         if numbers:
                             score = float(numbers[0])
                             logger.warning(f"Using original split method, extracted {score}")
@@ -108,23 +108,22 @@ class EvaluatorAgent:
             pass
         
         # If all methods fail, log the response and return 0
-        logger.error(f"Failed to extract score from response: {response_clean[:200]}...")
+        logger.error(f"Failed to extract prediction from response: {response_clean[:200]}...")
         return 0.0
 
-    def evaluate_plans(self, orig_codes: list[str], plans: list[str], save_dir: pathlib.Path, save_str: str, feedbacks: list[str] = None) -> list[float]:
+    def evaluate_plans(self, orig_codes: list[str], orig_code_latencies: list[float], plans: list[str], save_dir: pathlib.Path, save_str: str, feedbacks: list[str] = None) -> list[float]:
         messages = []
         if not feedbacks:
             feedbacks = [None] * len(orig_codes)
-        for i, (orig_code, feedback, plan) in enumerate(zip(orig_codes, feedbacks, plans)):
+        for i, (orig_code, orig_code_latency, feedback, plan) in enumerate(zip(orig_codes, orig_code_latencies, feedbacks, plans)):
             prompt = f"""You are an evaluator for a tensor processing optimization plan.
 You will be given a code implementation of a tensor processing operation and a plan to optimize it.
-Your task is to evaluate the plan and predict the performance improvement it will achieve.
-The prediction should be based on the following criteria:
-1. The plan is valid and can be applied to the code to improve performance.
-2. The plan is efficient and reduces the execution time of the code.
+Your task is to evaluate the plan and predict the performance improvement or degradation in percentage it will achieve.
+Predict 0 if the plan will result in incorrect code.
 
 Original code:
 {orig_code}
+Original code latency: {orig_code_latency} cycles
 """
             if feedback:
                 prompt += f"""
@@ -136,12 +135,15 @@ Plan:
 {plan}
 
 Provide your reasoning, then clearly state your final prediction in this format:
-Prediction: [your numeric prediction]
+Prediction: [your numeric prediction]%
 """
             prompt_path = save_dir / f"prompt_{save_str}_{i}_{self.model}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt)
-            messages.append([{"role": "user", "content": prompt}])
+            messages.append([
+                {"role": "system", "content": "/nothink You are an expert programmer of the Gemmini deep learning accelerator."},
+                {"role": "user", "content": prompt}
+            ])
 
         # Read responses from save_dir if they exist
         responses = []

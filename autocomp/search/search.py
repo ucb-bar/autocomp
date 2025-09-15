@@ -122,13 +122,14 @@ class SearchStrategy:
                 # Keep the top N plans for each parent
                 this_parent_cands = [c for c in plan_only_candidates if c.parent == parent]
                 orig_codes = [c.parent.code for c in this_parent_cands]
+                orig_code_latencies = [c.parent.score for c in this_parent_cands]
                 try:
                     feedbacks = [c.spad_acc_stats for c in this_parent_cands]
                 except:
                     feedbacks = None
                 plans = [c.plan for c in this_parent_cands]
                 save_str = f"cand{i}"
-                plan_scores = self.evaluator_agent.evaluate_plans(orig_codes, plans, save_dir, save_str, feedbacks=feedbacks)
+                plan_scores = self.evaluator_agent.evaluate_plans(orig_codes, orig_code_latencies, plans, save_dir, save_str, feedbacks=feedbacks)
                 for c, plan_score in zip(this_parent_cands, plan_scores):
                     c.plan_score = plan_score
                 this_parent_cands.sort(key=lambda c: c.plan_score, reverse=True)
@@ -530,8 +531,8 @@ def main():
     simulator = "firesim" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "gemm"
-    prob_id = 0
+    prob_type = "exo"
+    prob_id = 2
 
     # Beam search parameters
     num_plan_candidates=6
@@ -624,8 +625,8 @@ def main():
         raise ValueError(f"Unknown backend: {backend}")
     evaluator_agent = None
     if num_plans_to_keep:
-        # evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_model_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
-        evaluator_agent = EvaluatorAgent("_scratch_charleshong_autocomp_autocomp_learn_axolotl_outputs_out_merged_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
+        evaluator_agent = EvaluatorAgent("_nscratch_charleshong_autocomp_qwen3-8b-model-axolotl_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue_v2")
+        # evaluator_agent = EvaluatorAgent("_scratch_charleshong_autocomp_autocomp_learn_axolotl_outputs_out_merged_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
                                              evaluator_agent)
