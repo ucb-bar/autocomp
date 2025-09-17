@@ -3,6 +3,7 @@ import pathlib
 
 from autocomp.common import LLMClient, logger
 from autocomp.search.code_repo import CodeCandidate
+from prompts import isa_prompt_conv
 
 class EvaluatorAgent:
     def __init__(self, model, use_queue: bool = False, queue_dir: str = None):
@@ -116,7 +117,8 @@ class EvaluatorAgent:
         if not feedbacks:
             feedbacks = [None] * len(orig_codes)
         for i, (orig_code, orig_code_latency, feedback, plan) in enumerate(zip(orig_codes, orig_code_latencies, feedbacks, plans)):
-            prompt = f"""You are an evaluator for a tensor processing optimization plan.
+            prompt = isa_prompt_conv.PROMPT(16) + "\n"
+            prompt += f"""You are an evaluator for a tensor processing optimization plan.
 You will be given a code implementation of a tensor processing operation and a plan to optimize it.
 Your task is to evaluate the plan and predict the performance improvement or degradation in percentage it will achieve.
 Predict 0 if the plan will result in incorrect code.

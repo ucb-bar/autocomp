@@ -20,7 +20,8 @@ class SearchStrategy:
     def __init__(self, 
                  output_dir: pathlib.Path,
                  hw_backend: HardwareBackend,
-                 llm: LLMEnsemble,
+                 plan_llm: LLMEnsemble,
+                 code_llm: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
                  metric: str,
@@ -34,9 +35,10 @@ class SearchStrategy:
                  dropout_menu_options: float,
                  prevent_duplicate_level: int,
                  evaluator_agent: EvaluatorAgent,
-                ):
+               ):
         self.repository = CodeRepository()  # Stores the code candidates
-        self.llm = llm  # The LLM used to propose and evaluate optimizations
+        self.plan_llm = plan_llm  # The LLM ensemble used for plan generation
+        self.code_llm = code_llm  # The LLM ensemble used for code implementation
         self.prob = prob
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -231,8 +233,8 @@ class ExhaustiveSearchStrategy(SearchStrategy):
         """
         unimplemented_candidates = []
         for candidate in parent_candidates:
-            for opt_menu_option in range(len(self.llm.get_opt_menu_options())):
-                new_cand = self.llm.propose_optimizations(candidate, num_plans=1, save_dir=save_dir, save_str=None, prob=self.prob, force_opt_menu=opt_menu_option)[0]
+            for opt_menu_option in range(len(self.plan_llm.get_opt_menu_options())):
+                new_cand = self.plan_llm.propose_optimizations(candidate, num_plans=1, save_dir=save_dir, save_str=None, prob=self.prob, force_opt_menu=opt_menu_option)[0]
                 unimplemented_candidates.append(new_cand)
         return unimplemented_candidates
 
@@ -261,7 +263,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             impl_candidates = []
             for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(plan_only_cand.parent)
-                this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}")
+                this_plan_impl_candidates = self.code_llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}")
                 impl_candidates.extend(this_plan_impl_candidates)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
@@ -295,7 +297,8 @@ class BeamSearchStrategy(SearchStrategy):
     def __init__(self,
                  output_dir: pathlib.Path,
                  backend: str,
-                 llm: LLMEnsemble,
+                 plan_llm: LLMEnsemble,
+                 code_llm: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
                  metric: str,
@@ -319,8 +322,8 @@ class BeamSearchStrategy(SearchStrategy):
                  prevent_duplicate_level: int,
                  num_plans_to_keep: int,
                  evaluator_agent: EvaluatorAgent,
-                ):
-        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, evaluator_agent)
+               ):
+        super().__init__(output_dir, backend, plan_llm, code_llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, evaluator_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -381,8 +384,8 @@ class BeamSearchStrategy(SearchStrategy):
         if exhaustive:
             # A bit of a hack: make a list pointing many times to each parent candidate so we can 
             # use propose_optimizations_parallel to parallelize requests for different menu options
-            kwargs["num_plans"] = len(self.llm.llms) # Exhaustive on each LLM in the ensemble
-            menu_options_lst = list(range(1, len(self.llm.get_opt_menu_options())+1))
+            kwargs["num_plans"] = len(self.plan_llm.llms) # Exhaustive on each LLM in the ensemble
+            menu_options_lst = list(range(1, len(self.plan_llm.get_opt_menu_options())+1))
             duplicated_parent_candidates: list[CodeCandidate] = []
             duplicated_save_strs: list[str] = []
             duplicated_force_opt_menu: list[int] = []
@@ -395,7 +398,7 @@ class BeamSearchStrategy(SearchStrategy):
             kwargs["save_strs"] = duplicated_save_strs
             kwargs["force_opt_menu_lst"] = duplicated_force_opt_menu
         
-        new_cands = self.llm.propose_optimizations_parallel(**kwargs)
+        new_cands = self.plan_llm.propose_optimizations_parallel(**kwargs)
         return new_cands
 
     def combine_parents(self, parent_candidates: list[CodeCandidate], num_pairs: int, num_to_gen: int, save_dir: pathlib.Path) -> list[CodeCandidate]:
@@ -414,7 +417,7 @@ class BeamSearchStrategy(SearchStrategy):
         for i, j in pairs:
             parent_i = parent_candidates[i]
             parent_j = parent_candidates[j]
-            this_pair_combined_candidates = self.llm.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}")
+            this_pair_combined_candidates = self.code_llm.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}")
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
@@ -477,7 +480,7 @@ class BeamSearchStrategy(SearchStrategy):
             for cand_idx, cand in enumerate(filtered_plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.llm.implement_code_parallel(filtered_plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
+            impl_candidates = self.code_llm.implement_code_parallel(filtered_plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
@@ -525,7 +528,8 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "gemmini" # "cuda" or "gemmini"
-    models = ["o3-mini", "gpt-4o"]
+    plan_models = ["o3-mini", "gpt-4o"]
+    code_models = ["gpt-4o-mini"]
     # models = ["kevin"]
     metric = "latency"
     simulator = "firesim" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
@@ -538,7 +542,7 @@ def main():
     num_plan_candidates=6
     num_code_candidates=2
     beam_size=6
-    num_plans_to_keep=3
+    num_plans_to_keep=0
 
     # Planning prompt knobs
     dropout_menu_options = 0.3
@@ -565,11 +569,17 @@ def main():
     prevent_duplicate_level = 0
 
     # Sanitize model names for file system compatibility
-    for i in range(len(models)):
-        models[i] = models[i].replace("/", "_")
+    for i in range(len(plan_models)):
+        plan_models[i] = plan_models[i].replace("/", "_")
+    for i in range(len(code_models)):
+        code_models[i] = code_models[i].replace("/", "_")
 
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
-    for model in models:
+    output_str += f"_plan"
+    for model in plan_models:
+        output_str += f"_{model}"
+    output_str += f"_code"
+    for model in code_models:
         output_str += f"_{model}"
     output_str += f"_dropout{dropout_menu_options}"
     if search_strategy == "beam":
@@ -601,13 +611,14 @@ def main():
             with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 initial_code = f.read()
 
-    # Initialize hardware backend and LLM ensemble
+    # Initialize hardware backend and LLM ensembles
     if backend == "cuda":
         if simulator == "kernelbench":
             hw_backend = KBHardwareBackend()
         else:
             hw_backend = GpuModeHardwareBackend()
-        llm = LLMEnsemble([CudaLLMAgent(model) for model in models])
+        plan_llm = LLMEnsemble([CudaLLMAgent(model) for model in plan_models])
+        code_llm = LLMEnsemble([CudaLLMAgent(model) for model in code_models])
     elif backend == "gemmini":
         spad_size_kb = 256
         acc_size_kb = 64
@@ -620,7 +631,8 @@ def main():
             spad_size_kb = 512
             acc_size_kb = 128
         hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
-        llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
+        plan_llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in plan_models])
+        code_llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in code_models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
     evaluator_agent = None
@@ -629,10 +641,10 @@ def main():
         # evaluator_agent = EvaluatorAgent("_scratch_charleshong_autocomp_autocomp_learn_axolotl_outputs_out_merged_", use_queue=True, queue_dir="/nscratch/charleshong/autocomp/llm_queue")
         # evaluator_agent = EvaluatorAgent("gpt-5-mini")
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
+        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, plan_llm, code_llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options,
                                              evaluator_agent)
     elif search_strategy == "beam":
-        optimizer = BeamSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
+        optimizer = BeamSearchStrategy(output_dir, hw_backend, plan_llm, code_llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
