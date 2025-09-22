@@ -9,9 +9,9 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2505.18574-b31b1b.svg)](https://arxiv.org/abs/2505.18574)
 [![Blog Post](https://img.shields.io/badge/Blog-github.io-blue)](https://charleshong3.github.io/blog/autocomp.html)
 
-Welcome to the code repository of **Autocomp**. Check out our introductory 📝 [blog post](https://charleshong3.github.io/blog/autocomp.html)!
+Welcome to the code repository of **Autocomp**. Check out our introductory [📝 blog post](https://charleshong3.github.io/blog/autocomp.html)!
 
-**Update (9/22/2025)**: Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out 📝 [blog post 2](https://charleshong3.github.io/blog/autocomp.html) for more details.
+**Update (9/22/2025)**: Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out [📝 blog post 2](https://charleshong3.github.io/blog/autocomp.html) for more details.
 
 **📚 Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
