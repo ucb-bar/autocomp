@@ -2,7 +2,7 @@
 
 ## KernelBench
 
-First, clone [KernelBench](https://github.com/ScalingIntelligence/KernelBench). The baseline code in `sols/kb-level{1,2,3,4}` currently reflects the version of KernelBench we used.
+First, clone [KernelBench](https://github.com/ScalingIntelligence/KernelBench). The baseline code in `sols/kb-level{1,2,3,4}` currently reflects the version of KernelBench we used, so you should either update these files (copy them over from KernelBench and run `sols/process_kb.py`) or use the same version of KernelBench.
 
 ```sh
 git clone https://github.com/ScalingIntelligence/KernelBench
