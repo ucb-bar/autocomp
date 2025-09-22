@@ -11,6 +11,8 @@
 
 Welcome to the code repository of **Autocomp**. Check out our introductory 📝 [blog post](https://charleshong3.github.io/blog/autocomp.html)!
 
+**Update (9/22/2025)**: Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out [blog post 2](https://charleshong3.github.io/blog/autocomp.html) for more details.
+
 **📚 Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
@@ -20,6 +22,9 @@ Welcome to the code repository of **Autocomp**. Check out our introductory 📝 
 Currently supported backends:
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
+
+Partially supported backends:
+- RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the current implementation is very hacky, we do not currently recommend using this backend.
 
 ## 🚀 Usage
 
