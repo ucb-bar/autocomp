@@ -32,7 +32,7 @@ Partially supported backends:
 
 Notable parameters:
 - `backend`: The hardware backend to use. Currently supported backends are `cuda` and `gemmini`.
-- `models`: The models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints (OpenAI, Anthropic, Gemini, Together) are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
+- `models`: The list of models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints (OpenAI, Anthropic, Gemini, Together) are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
 - `simulator`: The evaluation method to use.
   - For CUDA,`kernelbench`
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
