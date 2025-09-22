@@ -15,45 +15,28 @@ Welcome to the code repository of **Autocomp**. Check out our introductory 📝 
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
 
-Note that this repository is still under construction.
+# ⚙️ Setup
 
-## ⚙️ Setup
-
-[Chipyard](https://chipyard.readthedocs.io/en/latest/) and [FireSim](https://docs.fires.im/en/1.20.1/) are needed to replicate experiments with Gemmini (you can also set `"simulator"` in `search.py` to `"spike"`, but this will only optimize instruction counts, not cycle counts).
-
-### Chipyard
-
-First, clone [Chipyard](https://github.com/ucb-bar/chipyard) and check out commit `dbc082e2206f787c3aba12b9b171e1704e15b707`. Then, run Chipyard's setup script as described in the Chipyard docs, and `source` the created environment.
-
-### FireSim
-
-Next, make sure FireSim is set up and ready to run. FireSim has already been cloned as a submodule of Chipyard, but requires some additional setup as described in the [FireSim docs](https://docs.fires.im/en/1.20.1/). Within the `firesim` directory, you will need to run `firesim managerinit --platform <your_platform>` and configure files such as `firesim/deploy/config_hwdb.yaml` and `firesim/deploy/config_runtime.yaml`. Make sure to use a FireSim bitstream for your FPGA platform with the Gemmini configuration you want to use. You will also need to set up a FireSim workload `json` file with `"benchmark_name": "gemmini"`. An example of files we used is [here](https://github.com/charleshong3/auto-comp-firesim-files). 
-
-Under `firesim/deploy/workloads`, create a directory called `gemmini`. This will be pointed to by `config_runtime.yaml` and `autocomp/search/hardware_eval.py` within Autocomp.
-
-### Gemmini
-The last dependency is [Gemmini](https://github.com/ucb-bar/gemmini), which has already been cloned as a Chipyard submodule. Navigate to `chipyard/generators/gemmini/software/gemmini-rocc-tests` and check out branch `auto-comp-v2`.
-
-In order to collect scratchpad/accumulator utilization stats, you will need to use our modifications to Spike (the RISC-V ISA simulator). Navigate to `chipyard/generators/gemmini/software/libgemmini` and check out branch `auto-comp`. Then, run the following:
-```sh
-make
-make install
-```
-
-### Autocomp
-Finally, set up Autocomp and its Python dependencies: ``pip install -e .``
-
-In `autocomp/backend/gemmini_eval.py`, you will need to update at least one of the paths at the top of the file. By default, you will have set up Gemmini's "default" int8, 16x16 systolic array configuration, in which case you can set `INT8_16PE_CHIPYARD_PATH` to point to your Chipyard directory.
-
-### Note for AWS F1 users
-The instruction above have been confirmed to work on a machine with a local Xilinx Alveo U250 FPGA. Due to the upcoming deprecation of AWS F1 instances, FireSim support for AWS is spotty at the moment, but we have confirmed that some configurations work with FireSim-as-top with older versions (such as [this one](https://github.com/charleshong3/firesim-dosa)). However, there may be version mismatches (for example with Gemmini software) if you check out old versions of FireSim, so proceed with caution.
+Currently supported backends:
+- CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
+- Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
 
 ## 🚀 Usage
 
-`autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
+`autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as backend, models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
-### TinyMPC
-TinyMPC kernels (stored under the name `admm-multifunction`) run on an FP32 4x4 Gemmini configuration, which requires building a new FireSim bitstream with Gemmini's FP32DefaultConfig.
+Notable parameters:
+- `backend`: The hardware backend to use. Currently supported backends are `cuda` and `gemmini`.
+- `models`: The models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
+- `simulator`: The evaluation method to use.
+  - For CUDA,`kernelbench`
+  - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
+- `iterations`: The number of iterations to run.
+- `search_strategy`: The search strategy to use. Currently only `beam` is supported.
+- `prob_type`: The problem type to use.
+  - For CUDA, `kb-level1`, `kb-level3`, or `kb-level4`.
+  - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
+- `prob_id`: The problem ID to use.
 
 ## 📁 Repository Structure
 
