@@ -39,7 +39,7 @@ Notable parameters:
 - `iterations`: The number of iterations to run.
 - `search_strategy`: The search strategy to use. Currently only `beam` is supported.
 - `prob_type`: The problem type to use.
-  - For CUDA, `kb-level1`, `kb-level3`, or `kb-level4`.
+  - For CUDA, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
 - `prob_id`: The problem ID to use.
 
