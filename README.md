@@ -24,7 +24,7 @@ Currently supported backends:
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
 
 Partially supported backends:
-- RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the current implementation is very hacky, we do not currently recommend using this backend.
+- RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this backend.
 
 ## 🚀 Usage
 
