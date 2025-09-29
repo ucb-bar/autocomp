@@ -528,8 +528,8 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "gemmini" # "cuda" or "gemmini"
-    plan_models = ["o3-mini", "gpt-4o"]
-    code_models = ["gpt-4o-mini"]
+    plan_models = ["gpt-4o-mini", "meta-llama/Llama-4-Scout-17B-16E-Instruct", "gpt-5-nano"]
+    code_models = ["o3-mini", "gpt-4o"]
     # models = ["kevin"]
     metric = "latency"
     simulator = "firesim" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
