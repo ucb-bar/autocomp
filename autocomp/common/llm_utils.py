@@ -154,7 +154,9 @@ class LLMClient():
         self.use_queue = use_queue
         self.queue_dir = queue_dir
         if not use_queue:
-            if "gpt" in model or re.search(r"o\d", model[:2]):
+            if "Qwen" in model or "llama" in model or "deepseek" in model or "gpt-oss" in model:
+                self.async_client = AsyncTogether(api_key=together_key_str)
+            elif "gpt" in model or re.search(r"o\d", model[:2]):
                 self.client = OpenAI(api_key=openai_key_str)
                 self.async_client = AsyncOpenAI(api_key=openai_key_str)
             elif "gemini" in model:
@@ -163,8 +165,6 @@ class LLMClient():
                 self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
             elif "claude" in model:
                 self.client = anthropic.Anthropic(api_key=anthropic_key_str)
-            elif "Qwen" in model or "llama" in model or "deepseek" in model or "gpt-oss" in model:
-                self.async_client = AsyncTogether(api_key=together_key_str)
             elif "mistral" in model or "mixtral" in model:
                 self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
             elif "gemma" in model:
