@@ -6,6 +6,7 @@ from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
 # from autocomp.search.annotate_perf import GemminiCode
 from prompts import isa_prompt_conv, isa_prompt_admm
+from prompts.trn.nki_isa_generator import NkiIsaGenerator
 from prompts.opt_system import plan_prompt, gemmini_rules, tiling_example, if_example, if_example_matmul
 
 prob_macs_map = {
@@ -1011,4 +1012,175 @@ Speedup can be increased by using the following optimizations:
         prompt_text += "\nMake sure to follow these rules:"
         prompt_text += self._get_prompt_rules()
         prompt_text += "Optimized code:"
+        return prompt_text
+
+class TrnLLMAgent(LLMAgent):
+    def __init__(self, model):
+        super().__init__(model)
+        self.nki_isa_generator = NkiIsaGenerator()
+
+    def __repr__(self):
+        return f"TrnLLMAgent({self.llm_client.model})"
+
+    def get_opt_menu_options(self, prob: Prob):
+        """Get optimization menu options for NKI/Trainium kernels"""
+        return [
+            "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
+            "Add additional loop levels so larger blocks of data can be loaded",
+            "modify loop tiling and tile sizes",
+            # "loop reordering and restructuring",
+            # "optimize memory buffer allocation (sbuf, psum, hbm)",
+            # "improve data layout and access patterns",
+            # "reduce data movement between memory hierarchies",
+            # "improve load/store patterns and coalescing",
+            # "optimize matrix multiplication blocking strategies",
+            # "reduce redundant memory operations",
+            # "pipeline operations for better overlap",
+            # "optimize accumulation patterns in psum",
+            # "optimize for specific tensor shapes and sizes",
+            # "double buffering",
+            # "Balance work partitioning across neuron cores",
+            # "Overlap DMA transfers (HBM to/from SBUF) with compute, hiding memory latency behind matmul execution.",
+            # "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
+            # "Use lower-precision datatypes like bf16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
+            # "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
+            # "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
+            # "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            # "Block all dimensions (M, N, K) to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
+            # "Group multiple output tiles (TILES_IN_BLOCK_M/N) to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
+            # "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
+            # "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
+            # "use a simpler nisa primitive if an nl operation does unnecessary work",
+            # "other methods not listed here.",
+        ]
+
+    def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
+                                          prob: Prob,
+                                          force_opt_menu: int, 
+                                          prompt_end: str, 
+                                          analysis: str, 
+                                          shuffle_opts: bool, 
+                                          give_score_feedback: float,
+                                          give_util_feedback: float,
+                                          give_spad_acc_feedback: float,
+                                          include_ancestors: bool,
+                                          plan_icl_examples: bool,
+                                          cur_iter: int,
+                                          num_iters: int,
+                                          dropout_menu_options: float,
+                                         ) -> str:
+        # Select which menu options will appear
+        menu_options_text = ""
+        opt_lst = self.get_opt_menu_options(prob)
+        # TODO delete
+        dropout_menu_options = 1
+        if dropout_menu_options < 1 and not force_opt_menu:
+            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+        if shuffle_opts:
+            random.shuffle(opt_lst)
+        include_score_feedback = random.random() < give_score_feedback
+
+        parents_prompt = ""
+        cur_cand = candidate
+        while cur_cand is not None:
+            # Go up to each parent and append to front of prompt
+            if include_score_feedback and (cur_cand.score is not None):
+                parents_prompt = f"The latency of this code was {cur_cand.score} ms.\n" + parents_prompt
+            if not include_ancestors:
+                parents_prompt = "\nThe original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                break # No need to go up past the immediate parent
+            elif cur_cand.plan is not None:
+                parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
+            else:
+                parents_prompt = "The original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+            cur_cand = cur_cand.parent
+
+        if analysis:
+            parents_prompt += "\n" + analysis
+
+        # Initialize the prompt with NKI context
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
+        prompt_text += self.nki_isa_generator.generate_gemm_isa()
+        
+        prompt_text += parents_prompt
+
+        # Now add the actual planning prompt
+        for i, opt in enumerate(opt_lst):
+            menu_options_text += f"{i+1}. {opt}\n"
+        
+        prompt_text += "Please carefully review the NKI code to identify any inefficiencies. "
+        prompt_text += "Performance can be improved by using the following optimizations:\n"
+        prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
+        
+        if force_opt_menu:
+            prompt_text += "Explain how to apply <optimization> " + str(force_opt_menu) + ": '" + opt_lst[force_opt_menu-1] + "' to the above code to reduce execution time, and explain how it will improve performance."
+        else:
+            prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
+
+            # TODO make it a parameter
+            choose_or_invent = random.random()
+            if choose_or_invent < 0.1:
+                # Prompt to invent a new optimization inspired by the <optimizations>
+                prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+            elif choose_or_invent < 0.2:
+                # Prompt to invent a new optimization different from the <optimizations>
+                prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+            else:
+                prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
+
+        # TODO make it a parameter
+        if random.random() < 0.5:
+            prompt_text += "You do not need to implement the code."
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=True, coding=False)
+
+        if prompt_end:
+            logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
+            prompt_text += "\n" + prompt_end
+        return prompt_text
+
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> str:
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
+        prompt_text += self.nki_isa_generator.generate_gemm_isa()
+
+        prompt_text += "The original code is as follows:\n"
+        prompt_text += candidate.parent.code
+        prompt_text += "\nYou are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
+        prompt_text += "Let's optimize the original code based on the following plan:\n"
+        prompt_text += candidate.plan
+
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += "\nOptimized NKI code:"
+
+        return prompt_text
+
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
+        prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
+        prompt_text += "Let's combine the following optimized NKI code samples to extract the high-performance characteristics of each:\n"
+        for i, c in enumerate(candidates):
+            prompt_text += f"Sample {i+1}:\n{c.code}\n"
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += "\nOptimized combined NKI code:"
+        return prompt_text
+
+    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
+        rules = ["The rewritten program should be semantically equivalent to the original program.",
+                 "Use proper NKI syntax and decorators (@nki.jit).",
+                 "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+                 "Maintain correct tensor shapes and indexing patterns.",
+                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
+                 ]
+        if planning:
+            rules.append("Limit the scope of the plan to the selected optimization.")
+        if coding:
+            rules.append("Optimize the test() function and do not change its name.")
+            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
+        rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
+        prompt_text = ""
+        for i, rule in enumerate(rules):
+            prompt_text += f"{i+1}. {rule}\n"
         return prompt_text

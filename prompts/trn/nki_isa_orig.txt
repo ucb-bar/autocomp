@@ -1,0 +1,420 @@
+TEMPLATE_TEXT = """
+#defined functions
+
+
+{
+  "activation": {
+    "function": "nki.isa.activation",
+    "description": "Apply an activation function on an input tile using the Scalar Engine, with optional scale, bias, and reduction.",
+    "args": {
+      "op": "activation_function",
+      "data": "tile[SBUF|PSUM]",
+      "bias": "tile[vector](optional, default:None)",
+      "scale": "scalar|tile[vector](optional, default:1.0)",
+      "reduce_op": "reduce_function(optional, default:None)",
+      "reduce_res": "tile[vector](optional, default:None)",
+      "reduce_cmd": "nisa.reduce_cmd(optional, default:idle)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (same shape as data)"
+  },
+  "activation_reduce": {
+    "function": "nki.isa.activation_reduce",
+    "description": "Performs activation and reduction on a tile using the Scalar Engine. (Legacy, prefer nisa.activation)",
+    "args": {
+      "op": "activation_function",
+      "data": "tile[SBUF|PSUM]",
+      "reduce_op": "reduce_function",
+      "reduce_res": "tile[vector]",
+      "bias": "tile[vector](optional, default:None)",
+      "scale": "scalar|tile[vector](optional, default:1.0)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (same shape as data)"
+  },
+  "affine_select": {
+    "function": "nki.isa.affine_select",
+    "description": "Selects elements between a tile and a scalar based on a compile-time affine predicate using the GpSimd Engine.",
+    "args": {
+      "pred": "affine_expression",
+      "on_true_tile": "tile",
+      "on_false_value": "scalar",
+      "dtype": "nki_dtype(optional, default:on_true_tile.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (same shape as on_true_tile)"
+  },
+  "bn_aggr": {
+    "function": "nki.isa.bn_aggr",
+    "description": "Aggregates bn_stats outputs to generate mean and variance per partition using the Vector Engine.",
+    "args": {
+      "data": "tile (output from bn_stats)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (shape: [par_dim, 2])"
+  },
+  "bn_stats": {
+    "function": "nki.isa.bn_stats",
+    "description": "Computes mean/variance-related statistics for each partition of a tile using the Vector Engine.",
+    "args": {
+      "data": "tile (<= 512 elements per partition)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (shape: [par_dim, 6])"
+  },
+  "dma_copy": {
+    "function": "nki.isa.dma_copy",
+    "description": "Copies data between device memory (HBM) and on-chip SRAM (SBUF) using the DMA engine.",
+    "args": {
+      "dst": "tile[HBM|SBUF]",
+      "src": "tile[HBM|SBUF]",
+      "dst_rmw_op": "rmw_op(optional, default:None, supported:np.add)",
+      "oob_mode": "nisa.oob_mode(optional, default:error)",
+      "dge_mode": "nisa.dge_mode(optional, default:unknown)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "None (in-place operation on dst)"
+  },
+  "dma_transpose": {
+    "function": "nki.isa.dma_transpose",
+    "description": "Performs a transpose on an input tile from HBM or SBUF using the DMA Engine.",
+    "args": {
+      "src": "tile[HBM|SBUF]",
+      "axes": "tuple(optional, default:auto, supported:(1,0), (2,1,0), (3,1,2,0))",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (transposed)"
+  },
+  "dropout": {
+    "function": "nki.isa.dropout",
+    "description": "Randomly zeros elements of an input tile based on probabilities using the Vector Engine.",
+    "args": {
+      "data": "tile",
+      "prob": "scalar|tile[vector]",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (same shape as data)"
+  },
+  "get_nc_version": {
+    "function": "nki.isa.get_nc_version",
+    "description": "Returns the nc_version of the current target context.",
+    "args": {},
+    "returns": "nisa.nc_version"
+  },
+  "iota": {
+    "function": "nki.isa.iota",
+    "description": "Builds a constant literal in SBUF from an affine expression using the GpSimd Engine.",
+    "args": {
+      "expr": "affine_expression",
+      "dtype": "nki_dtype",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile[SBUF]"
+  },
+  "local_gather": {
+    "function": "nki.isa.local_gather",
+    "description": "Gathers data from an SBUF buffer using an index tile on the GpSimd Engine.",
+    "args": {
+      "src_buffer": "tile[SBUF]",
+      "index": "tile[SBUF](dtype:uint16)",
+      "num_elem_per_idx": "int(optional, default:1, supported:[1,2,4,8,16,32])",
+      "num_valid_indices": "int(optional, default:None)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (gathered data)"
+  },
+  "max8": {
+    "function": "nki.isa.max8",
+    "description": "Finds the 8 largest values in each partition of the source tile.",
+    "args": {
+      "src": "tile",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (shape: [par_dim, 8])"
+  },
+  "memset": {
+    "function": "nki.isa.memset",
+    "description": "Initializes a tile with a compile-time constant value using the Vector or GpSimd Engine.",
+    "args": {
+      "shape": "tuple",
+      "value": "scalar",
+      "dtype": "nki_dtype",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile"
+  },
+  "nc_find_index8": {
+    "function": "nki.isa.nc_find_index8",
+    "description": "Finds indices of 8 given values in each partition of a data tensor.",
+    "args": {
+      "data": "tile",
+      "vals": "tile (shape: [par_dim, 8])",
+      "dtype": "nki_dtype(optional, default:uint32, supported:[uint16, uint32])",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (shape: [par_dim, 8])"
+  },
+  "nc_match_replace8": {
+    "function": "nki.isa.nc_match_replace8",
+    "description": "Replaces the first occurrence of each of 8 values with a constant in a data tensor using the Vector Engine.",
+    "args": {
+      "data": "tile",
+      "vals": "tile (shape: [par_dim, 8])",
+      "imm": "scalar(float32)",
+      "dst_idx": "tile(optional, default:None)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (modified data tensor)"
+  },
+  "nc_matmul": {
+    "function": "nki.isa.nc_matmul",
+    "description": "Computes matrix multiplication (stationary.T @ moving) using the Tensor Engine.",
+    "args": {
+      "stationary": "tile[SBUF](shape:(K<=128, M<=128))",
+      "moving": "tile[SBUF](shape:(K<=128, N<=512))",
+      "is_stationary_onezero": "bool(optional, default:False)",
+      "is_moving_onezero": "bool(optional, default:False)",
+      "is_transpose": "bool(optional, default:False)",
+      "tile_position": "tuple(optional, default:())",
+      "tile_size": "tuple(optional, default:())",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile[PSUM](shape:(M, N))"
+  },
+  "nc_stream_shuffle": {
+    "function": "nki.isa.nc_stream_shuffle",
+    "description": "Performs cross-partition data movement within 32-partition quadrants using the Vector Engine.",
+    "args": {
+      "src": "tile[SBUF|PSUM]",
+      "dst": "tile[SBUF|PSUM]",
+      "shuffle_mask": "list(len:32)",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "None (in-place operation on dst)"
+  },
+  "nc_transpose": {
+    "function": "nki.isa.nc_transpose",
+    "description": "Performs a 2D transpose between partition and free axes (PF-transpose) using the Tensor or Vector Engine.",
+    "args": {
+      "data": "tile",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (transposed)"
+  },
+  "range_select": {
+    "function": "nki.isa.range_select",
+    "description": "Selects elements from a tile based on free-dimension index comparison using the Vector Engine (NC-v3+).",
+    "args": {
+      "on_true_tile": "tile",
+      "comp_op0": "comparison_op",
+      "comp_op1": "comparison_op",
+      "bound0": "tile[vector]",
+      "bound1": "tile[vector]",
+      "on_false_value": "scalar(optional, default:fp32.min)",
+      "range_start": "int(optional, default:0)",
+      "reduce_op": "reduce_function(optional, default:np.amax, supported:[np.amax])",
+      "reduce_res": "tile[vector](optional, default:None)",
+      "reduce_cmd": "nisa.reduce_cmd(optional, default:idle)",
+      "dtype": "nki_dtype(optional, default:on_true_tile.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (selected elements)"
+  },
+  "reciprocal": {
+    "function": "nki.isa.reciprocal",
+    "description": "Computes the reciprocal of each element in a tile using the Vector Engine.",
+    "args": {
+      "data": "tile",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (reciprocal results)"
+  },
+  "scalar_tensor_tensor": {
+    "function": "nki.isa.scalar_tensor_tensor",
+    "description": "Applies two math ops: `(data <op0> operand0) <op1> operand1`, where operand0 is a vector and operand1 is a tensor, using the Vector Engine.",
+    "args": {
+      "data": "tile",
+      "op0": "binary_op",
+      "operand0": "scalar|tile[vector]",
+      "op1": "binary_op",
+      "operand1": "tile (same shape as data)",
+      "reverse0": "bool(optional, default:False)",
+      "reverse1": "bool(optional, default:False)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (computation result)"
+  },
+  "select_reduce": {
+    "function": "nki.isa.select_reduce",
+    "description": "Selectively copies elements from `on_true` or `on_false` based on a `predicate`, with optional max reduction, using the Vector Engine.",
+    "args": {
+      "dst": "tile",
+      "predicate": "tile",
+      "on_true": "tile",
+      "on_false": "scalar|tile[vector]",
+      "reduce_res": "tile[vector](optional, default:None)",
+      "reduce_cmd": "nisa.reduce_cmd(optional, default:idle)",
+      "reduce_op": "reduce_function(optional, default:np.amax, supported:[np.amax])",
+      "reverse_pred": "bool(optional, default:False)",
+      "dtype": "nki_dtype(optional, default:on_true.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "None (in-place operation on dst)"
+  },
+  "sequence_bounds": {
+    "function": "nki.isa.sequence_bounds",
+    "description": "Computes sequence start and end indices for a given tile of segment IDs using the GpSIMD Engine.",
+    "args": {
+      "segment_ids": "tile(shape: (1, N))",
+      "dtype": "nki_dtype(optional, default:segment_ids.dtype, supported:[float32, int32])"
+    },
+    "returns": "tile (shape: (1, 2, N))"
+  },
+  "tensor_copy": {
+    "function": "nki.isa.tensor_copy",
+    "description": "Copies a tile within on-chip SRAMs (SBUF/PSUM) using the Vector, Scalar, or GpSimd Engine.",
+    "args": {
+      "src": "tile[SBUF|PSUM]",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (copy of src)"
+  },
+  "tensor_copy_dynamic_dst": {
+    "function": "nki.isa.tensor_copy_dynamic_dst",
+    "description": "Copies a source tile to a destination with a dynamic offset within each partition.",
+    "args": {
+      "dst": "tile (dynamically indexed)",
+      "src": "tile",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "None (in-place operation on dst)"
+  },
+  "tensor_copy_dynamic_src": {
+    "function": "nki.isa.tensor_copy_dynamic_src",
+    "description": "Copies a tile from a source with a dynamic offset within each partition.",
+    "args": {
+      "src": "tile (dynamically indexed)",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (copy of src)"
+  },
+  "tensor_copy_predicated": {
+    "function": "nki.isa.tensor_copy_predicated",
+    "description": "Conditionally copies elements from a source to a destination based on a predicate using the Vector Engine.",
+    "args": {
+      "src": "tile|scalar",
+      "dst": "tile",
+      "predicate": "tile(dtype:uint)",
+      "reverse_pred": "bool(optional, default:False)",
+      "dtype": "nki_dtype(optional, default:src.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "None (in-place operation on dst)"
+  },
+  "tensor_partition_reduce": {
+    "function": "nki.isa.tensor_partition_reduce",
+    "description": "Applies a reduction operation across partitions of an input tile using the GpSimd Engine.",
+    "args": {
+      "op": "reduce_function(supported:[add, max, bitwise_or, bitwise_and])",
+      "data": "tile",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (reduced result)"
+  },
+  "tensor_reduce": {
+    "function": "nki.isa.tensor_reduce",
+    "description": "Applies a reduction operation to the free axes of an input tile using the Vector Engine.",
+    "args": {
+      "op": "reduce_function",
+      "data": "tile",
+      "axis": "int|tuple",
+      "negate": "bool(optional, default:False)",
+      "keepdims": "bool(optional, default:False)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (reduced result)"
+  },
+  "tensor_scalar": {
+    "function": "nki.isa.tensor_scalar",
+    "description": "Applies up to two math ops with scalar/vector broadcasting: `(data <op0> operand0) <op1> operand1`.",
+    "args": {
+      "data": "tile",
+      "op0": "binary_op",
+      "operand0": "scalar|tile[vector]",
+      "reverse0": "bool(optional, default:False)",
+      "op1": "binary_op(optional, default:None)",
+      "operand1": "scalar|tile[vector](optional, default:None)",
+      "reverse1": "bool(optional, default:False)",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (computation result)"
+  },
+  "tensor_scalar_reduce": {
+    "function": "nki.isa.tensor_scalar_reduce",
+    "description": "Performs a tensor-scalar operation followed by a reduction along the free dimension using the Vector Engine.",
+    "args": {
+      "data": "tile",
+      "op0": "binary_op",
+      "operand0": "scalar|tile[vector]",
+      "reduce_op": "reduce_function",
+      "reduce_res": "tile[vector]",
+      "reverse0": "bool(optional, default:False, not supported yet)",
+      "dtype": "nki_dtype(optional, default:data.dtype)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (result of tensor-scalar op)"
+  },
+  "tensor_tensor": {
+    "function": "nki.isa.tensor_tensor",
+    "description": "Performs an element-wise operation on two tiles of the same shape using the Vector or GpSimd Engine.",
+    "args": {
+      "data1": "tile",
+      "data2": "tile",
+      "op": "binary_op",
+      "engine": "nisa.engine(optional, default:unknown)",
+      "dtype": "nki_dtype(optional, default:type promotion)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (element-wise result)"
+  },
+  "tensor_tensor_scan": {
+    "function": "nki.isa.tensor_tensor_scan",
+    "description": "Performs a scan operation over two input tiles using the Vector Engine.",
+    "args": {
+      "data0": "tile",
+      "data1": "tile",
+      "initial": "scalar|tile[vector]",
+      "op0": "binary_op",
+      "op1": "binary_op",
+      "reverse0": "bool(optional, default:False)",
+      "reverse1": "bool(optional, default:False)",
+      "dtype": "nki_dtype(optional, default:type promotion)",
+      "mask": "predicate(optional, default:None)"
+    },
+    "returns": "tile (scan result)"
+  }
+}

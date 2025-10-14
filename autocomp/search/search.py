@@ -5,11 +5,12 @@ import wandb
 
 from autocomp.common import logger
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent
+from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, TrnLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kb_eval import KBHardwareBackend
+from autocomp.backend.trn_eval import TrnHardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
@@ -486,23 +487,23 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "cuda"
-    models = ["o3-mini", "gpt-4o"]
+    backend = "trn"  # Options: "cuda", "gemmini", "trn"
+    models = ["o4-mini", "gpt-5"]
     # models = ["kevin"]
     metric = "latency"
-    simulator = "kernelbench" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
+    simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "kb-level3"
-    prob_id = 10
+    prob_type = "trn"  # For trn backend, use "trn"
+    prob_id = 1  # For trn backend, use 0
 
     # Beam search parameters
     num_plan_candidates=6
     num_code_candidates=2
-    beam_size=6
+    beam_size=3
 
     # Planning prompt knobs
-    dropout_menu_options = 0.2
+    dropout_menu_options = 0.3
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0
@@ -561,6 +562,14 @@ def main():
         else:
             with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 initial_code = f.read()
+    elif backend == "trn":
+        # Find file matching pattern for Trainium/NKI kernels
+        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / "trn"
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            initial_code = f.read()
 
     # Initialize hardware backend and LLM ensemble
     if backend == "cuda":
@@ -582,6 +591,9 @@ def main():
             acc_size_kb = 128
         hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
         llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
+    elif backend == "trn":
+        hw_backend = TrnHardwareBackend()
+        llm = LLMEnsemble([TrnLLMAgent(model) for model in models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
     if search_strategy == "exhaustive":
