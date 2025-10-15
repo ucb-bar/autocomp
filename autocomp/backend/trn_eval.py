@@ -76,6 +76,7 @@ class TrnHardwareBackend(HardwareBackend):
                 results.append({"correct": False})
                 continue
             
+            logger.info(f"Code {i} latency: {latency}")
             results.append({
                 "correct": True,
                 "latency": latency,

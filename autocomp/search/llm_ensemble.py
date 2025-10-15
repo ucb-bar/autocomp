@@ -110,22 +110,22 @@ class LLMEnsemble:
                 cands.extend(this_agent_resps)
         return cands
 
-    def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         cands = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
-                this_agent_resps = llm.implement_code_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, save_strs=this_model_save_strs, code_icl_examples=code_icl_examples)
+                this_agent_resps = llm.implement_code_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, save_strs=this_model_save_strs, code_icl_examples=code_icl_examples, prob=prob)
                 cands.extend(this_agent_resps)
         return cands
 
-    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="", code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="", code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         cands = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.implement_code(candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, code_icl_examples=code_icl_examples)
+                this_agent_resps = llm.implement_code(candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, code_icl_examples=code_icl_examples, prob=prob)
                 cands.extend(this_agent_resps)
         return cands
 

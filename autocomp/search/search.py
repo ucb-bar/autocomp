@@ -233,7 +233,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             impl_candidates = []
             for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(plan_only_cand.parent)
-                this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}")
+                this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}", prob=self.prob)
                 impl_candidates.extend(this_plan_impl_candidates)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
@@ -440,7 +440,7 @@ class BeamSearchStrategy(SearchStrategy):
             for cand_idx, cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
+            impl_candidates = self.llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
@@ -495,7 +495,7 @@ def main():
     search_strategy = "beam"
     iterations = 10
     prob_type = "trn"  # For trn backend, use "trn"
-    prob_id = 1  # For trn backend, use 0
+    prob_id = 2
 
     # Beam search parameters
     num_plan_candidates=6

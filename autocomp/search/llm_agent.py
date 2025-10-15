@@ -320,7 +320,7 @@ class LLMAgent:
         new_cands = [CodeCandidate(candidate, plan, None, plan_gen_model=self.llm_client.model) for plan in responses]
         return new_cands
 
-    def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
         loaded_code = []
@@ -355,7 +355,7 @@ class LLMAgent:
 
         msgs_lst = []
         for c_i in range(len(candidate_lst)):
-            prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], code_icl_examples)
+            prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], prob, code_icl_examples)
             # Save full prompt
             prompt_path = save_dir / f"prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
@@ -398,7 +398,7 @@ class LLMAgent:
             candidates.extend(this_plan_cands)
         return candidates
 
-    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
+    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         assert num_samples > 0, "Number of samples must be greater than 0"
 
         loaded_code = []
@@ -422,7 +422,7 @@ class LLMAgent:
                 loaded_candidates.append(new_cand)
             return loaded_candidates
 
-        prompt_text = self._get_implement_code_prompt(candidate)
+        prompt_text = self._get_implement_code_prompt(candidate, prob)
         # Save full prompt
         prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
         with open(prompt_path, "w") as f:
@@ -780,7 +780,7 @@ class GemminiLLMAgent(LLMAgent):
             prompt_text += "\n" + prompt_end
         return prompt_text
 
-    def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
         elif self.pe_dim == 16:
@@ -982,7 +982,7 @@ Speedup can be increased by using the following optimizations:
         return prompt_text
 
 
-    def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
         prompt_text = "\nThe original code is as follows:\n```python\n"
         prompt_text += candidate.parent.code
         prompt_text += "\n```\nYou are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's optimize the original code based on the following plan:\n"
@@ -1018,6 +1018,11 @@ class TrnLLMAgent(LLMAgent):
     def __init__(self, model):
         super().__init__(model)
         self.nki_isa_generator = NkiIsaGenerator()
+        self.prob_id_to_name = {
+            0: "gemm",
+            1: "gemm",
+            2: "layernorm",
+        }
 
     def __repr__(self):
         return f"TrnLLMAgent({self.llm_client.model})"
@@ -1028,30 +1033,31 @@ class TrnLLMAgent(LLMAgent):
             "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
             "Add additional loop levels so larger blocks of data can be loaded",
             "modify loop tiling and tile sizes",
-            # "loop reordering and restructuring",
-            # "optimize memory buffer allocation (sbuf, psum, hbm)",
-            # "improve data layout and access patterns",
-            # "reduce data movement between memory hierarchies",
-            # "improve load/store patterns and coalescing",
-            # "optimize matrix multiplication blocking strategies",
-            # "reduce redundant memory operations",
-            # "pipeline operations for better overlap",
-            # "optimize accumulation patterns in psum",
-            # "optimize for specific tensor shapes and sizes",
-            # "double buffering",
-            # "Balance work partitioning across neuron cores",
-            # "Overlap DMA transfers (HBM to/from SBUF) with compute, hiding memory latency behind matmul execution.",
-            # "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
-            # "Use lower-precision datatypes like bf16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
-            # "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
-            # "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
-            # "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
-            # "Block all dimensions (M, N, K) to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
-            # "Group multiple output tiles (TILES_IN_BLOCK_M/N) to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
-            # "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
-            # "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
-            # "use a simpler nisa primitive if an nl operation does unnecessary work",
-            # "other methods not listed here.",
+            "loop reordering and restructuring",
+            "optimize memory buffer allocation (sbuf, psum, hbm)",
+            "improve data layout and access patterns",
+            "reduce data movement between memory hierarchies",
+            "improve load/store patterns and coalescing",
+            "optimize matrix multiplication blocking strategies",
+            "reduce redundant memory operations",
+            "fuse operations",
+            "pipeline operations for better overlap",
+            "optimize accumulation patterns in psum",
+            "optimize for specific tensor shapes and sizes",
+            "double buffering",
+            "Balance work partitioning across neuron cores",
+            "Overlap DMA transfers (HBM to/from SBUF) with compute, hiding memory latency behind matmul execution.",
+            "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
+            "Use lower-precision datatypes like bf16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
+            "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
+            "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
+            "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            "Block all dimensions (M, N, K) to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
+            "Group multiple output tiles (TILES_IN_BLOCK_M/N) to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
+            "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
+            "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
+            "use a simpler nisa primitive if an nl operation does unnecessary work",
+            "other methods not listed here.",
         ]
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
@@ -1072,8 +1078,6 @@ class TrnLLMAgent(LLMAgent):
         # Select which menu options will appear
         menu_options_text = ""
         opt_lst = self.get_opt_menu_options(prob)
-        # TODO delete
-        dropout_menu_options = 1
         if dropout_menu_options < 1 and not force_opt_menu:
             opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
         if shuffle_opts:
@@ -1100,7 +1104,8 @@ class TrnLLMAgent(LLMAgent):
 
         # Initialize the prompt with NKI context
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prompt_text += self.nki_isa_generator.generate_gemm_isa()
+        prob_name = self.prob_id_to_name[prob.prob_id]
+        prompt_text += self.nki_isa_generator.generate_isa(prob_name)
         
         prompt_text += parents_prompt
 
@@ -1139,9 +1144,12 @@ class TrnLLMAgent(LLMAgent):
             prompt_text += "\n" + prompt_end
         return prompt_text
 
-    def _get_implement_code_prompt(self, candidate: CodeCandidate, code_icl_examples: bool = True) -> str:
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prompt_text += self.nki_isa_generator.generate_gemm_isa()
+        if prob is None:
+            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+        prob_name = self.prob_id_to_name[prob.prob_id]
+        prompt_text += self.nki_isa_generator.generate_isa(prob_name)
 
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
@@ -1171,7 +1179,7 @@ class TrnLLMAgent(LLMAgent):
         rules = ["The rewritten program should be semantically equivalent to the original program.",
                  "Use proper NKI syntax and decorators (@nki.jit).",
                  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
-                 "Maintain correct tensor shapes and indexing patterns.",
+                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
                  ]
         if planning:
