@@ -1018,11 +1018,6 @@ class TrnLLMAgent(LLMAgent):
     def __init__(self, model):
         super().__init__(model)
         self.nki_isa_generator = NkiIsaGenerator()
-        self.prob_id_to_name = {
-            0: "gemm",
-            1: "gemm",
-            2: "layernorm",
-        }
 
     def __repr__(self):
         return f"TrnLLMAgent({self.llm_client.model})"
@@ -1045,15 +1040,15 @@ class TrnLLMAgent(LLMAgent):
             "optimize accumulation patterns in psum",
             "optimize for specific tensor shapes and sizes",
             "double buffering",
-            "Balance work partitioning across neuron cores",
+            "Scan carry-over to parallelize the scan operation",
             "Overlap DMA transfers (HBM to/from SBUF) with compute, hiding memory latency behind matmul execution.",
             "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
             "Use lower-precision datatypes like bf16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
             "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
             "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
-            "Block all dimensions (M, N, K) to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
-            "Group multiple output tiles (TILES_IN_BLOCK_M/N) to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
+            "Block all dimensions to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
+            "Group multiple output tiles to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
             "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
             "use a simpler nisa primitive if an nl operation does unnecessary work",
@@ -1104,8 +1099,7 @@ class TrnLLMAgent(LLMAgent):
 
         # Initialize the prompt with NKI context
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prob_name = self.prob_id_to_name[prob.prob_id]
-        prompt_text += self.nki_isa_generator.generate_isa(prob_name)
+        prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
         
         prompt_text += parents_prompt
 
@@ -1148,8 +1142,7 @@ class TrnLLMAgent(LLMAgent):
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
-        prob_name = self.prob_id_to_name[prob.prob_id]
-        prompt_text += self.nki_isa_generator.generate_isa(prob_name)
+        prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
 
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
@@ -1181,6 +1174,7 @@ class TrnLLMAgent(LLMAgent):
                  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
+                 "Try to use the nki.language and nki.isa functions defined above.",
                  ]
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")

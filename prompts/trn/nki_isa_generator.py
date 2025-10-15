@@ -22,9 +22,9 @@ Layout constraints:
     [LC#2] Non-matmul ops: parallel axis → P dim.
 
 Tile-size constraints:
-    [TC#1] P ≤ 128 (SBUF/PSUM).
-    [TC#2] PSUM F ≤ 512.
-    [TC#3] Matmul: LHS F ≤ 128, RHS F ≤ 512.
+    [TC#1] partition dimension P ≤ 128 (SBUF/PSUM).
+    [TC#2] PSUM combined free dimensions ≤ 512.
+    [TC#3] Matmul: LHS free dimension ≤ 128, RHS free dimension ≤ 512.
     limit of 192KB per partition on SBUF buffer.
 
 Indexing:
@@ -33,15 +33,84 @@ Indexing:
     Advanced indexing via nl.arange enables efficient striding along F dim (not P).
     List indices must be integers or slices. They cannot be computed from affine_range loop variables.
     Slice with variable size is not supported.
+    Tile on SBUF/PSUM must have at least 2 dimensions as described here. If using a 1D tile on SBUF/PSUM, users may get an “Insufficient rank” error. Workaround this by creating a 2D tile, e.g.,
+    buf = nl.zeros((128, ), dtype=dtype, buffer=nl.sbuf)  # this won't work
+    buf = nl.zeros((128, 1), dtype=dtype, buffer=nl.sbuf) # this works
+    Users must index their [N, 1] or [1, M] shaped 2D buffers with both indices, do my_sbuf[0:N, 0] or my_sbuf[0, 0:M] to access them, since accessing in 1D my_sbuf[0:N] won’t work.
+    Use nl.arange for indirect load/store access indexing, nl.mgrid won’t work. See code examples in nl.load and nl.store.
+    If indexing with [0, 0] gets internal errors, try using [0:1, 0:1] or nl.mgrid[0:1, 0:1] instead.
+    If indexing with [0:1, ...] gets internal errors, try using [0, ...] instead.
 
 Performance tip:
     Access HBM sequentially; only F-dim striding is hardware-efficient.
+
+Scope rules:
+    Tensors in NKI are not allowed to be used outside of their parent scope.
+    Tensors in NKI have a stricter scope rules than Python. In NKI, control blocks in if/else/for statements will introduce their own scope for tensors. A tensor defined in if/else/for control blocks are not allowed to be used outside of the scope.
+
+    for i in range(4):
+    if i < 2:
+        tmp = nl.load(a)
+    else:
+        tmp = nl.load(b)
+    nl.store(c, tmp) # Error: Local variable 'tmp' is referenced outside of its parent scope ...
+
+    To fix the problem, you can rewrite the above code as:
+
+    for i in range(4):
+    tmp = nl.ndarray(shape=a.shape, dtype=a.dtype)
+    if i < 2:
+        tmp[...] = nl.load(a)
+    else:
+        tmp[...] = nl.load(b)
+    nl.store(c, tmp)
 
 Other constraints:
     & is not supported for scalar.
 """,
     },
     "ElementWiseMath": [
+        {"header": "nl.add(x: tile | scalar, y: tile | scalar)", "description": "Element-wise addition. x.shape and y.shape must be broadcastable to a common shape, that will become the shape of the output.", "examples": """a = nl.load(a_tensor[0:128, 0:512])
+b = nl.load(b_tensor[0:128, 0:512])
+# add a and b element-wise and store in c[128, 512]
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)
+
+a = nl.load(a_tensor[0:128, 0:512])
+b = 2.2
+# add constant b to each element in a
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)
+
+a = nl.load(a_tensor[0:128, 0:512])
+b = nl.load(b_tensor[0:128, 0:1])
+# broadcast on free dimension -- [128, 1] is broadcasted to [128, 512]
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)
+
+a = nl.load(a_tensor[0:128, 0:512])
+b = nl.load(b_tensor[0:1, 0:512])
+# broadcast on partition dimension -- [1, 512] is broadcasted to [128, 512]
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)
+
+a = nl.load(a_tensor[0:128, 0:512])
+b = nl.load(b_tensor[0:1, 0:1])
+# broadcast on both dimensions -- [1, 1] is broadcasted to [128, 512]
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)
+
+a = nl.load(a_tensor[0:128, 0:1])
+b = nl.load(b_tensor[0:1, 0:512])
+# broadcast on each dimensions -- [128, 1] and [1, 512] are broadcasted to [128, 512]
+c = nl.add(a, b)
+nl.store(c_tensor[0:128, 0:512], c)"""},
+        {"header": "nl.subtract(x: tile | scalar, y: tile | scalar)", "description": "Element-wise subtraction."},
+        {"header": "nl.multiply(x: tile | scalar, y: tile | scalar)", "description": "Element-wise multiplication."},
+        {"header": "nl.divide(x: tile | scalar, y: tile | scalar)", "description": "Element-wise division."},
+        {"header": "nl.power(x: tile | scalar, y: tile | scalar)", "description": "Elements of x raised to powers of y, element-wise."},
+        {"header": "nl.maximum(x: tile | scalar, y: tile | scalar)", "description": "Maximum of the inputs, element-wise."},
+        {"header": "nl.minimum(x: tile | scalar, y: tile | scalar)", "description": "Minimum of the inputs, element-wise."},
         {"header": "nl.abs(x: tile)", "description": "Element-wise absolute value."},
         {"header": "nl.exp(x: tile)", "description": "Element-wise exponential (e**x)."},
         {"header": "nl.log(x: tile)", "description": "Element-wise natural logarithm."},
@@ -54,7 +123,9 @@ Other constraints:
         {"header": "nl.tanh(x: tile)", "description": "Element-wise hyperbolic tangent."},
         {"header": "nl.ceil(x: tile)", "description": "Element-wise ceiling."},
         {"header": "nl.floor(x: tile)", "description": "Element-wise floor."},
-        {"header": "nl.sign(x: tile)", "description": "Element-wise sign of a number."}
+        {"header": "nl.sign(x: tile)", "description": "Element-wise sign of a number."},
+        {"header": "nl.negative(x: tile)", "description": "Element-wise negative."},
+        {"header": "nl.trunc(x: tile)", "description": "Element-wise truncation."},
     ],
     "ActivationFunctions": [
         {"header": "nl.relu(x: tile)", "description": "Rectified Linear Unit."},
@@ -64,11 +135,13 @@ Other constraints:
         {"header": "nl.silu(x: tile)", "description": "Sigmoid Linear Unit (Swish)."}
     ],
     "ReductionOperations": [
-        {"header": "nl.sum(x: tile, axis: int|tuple, keepdims: bool=False)", "description": "Sum of elements along a specified free axis."},
-        {"header": "nl.max(x: tile, axis: int|tuple, keepdims: bool=False)", "description": "Maximum of elements along a specified free axis."},
-        {"header": "nl.min(x: tile, axis: int|tuple, keepdims: bool=False)", "description": "Minimum of elements along a specified free axis."},
-        {"header": "nl.mean(x: tile, axis: int|tuple, keepdims: bool=False)", "description": "Mean of elements along a specified free axis."},
-        {"header": "nl.all_reduce(x: tile, op: binary_op, program_axes: int|tuple)", "description": "Performs a reduction (e.g., sum, max) across multiple SPMD programs."}
+        {"header": "nl.sum(x: tile, axis: int|tuple, keepdims=False)", "description": "Sum of elements along a specified free axis."},
+        {"header": "nl.prod(x: tile, axis: int|tuple, keepdims=False)", "description": "Product of elements along the specified axis (or axes) of the input."},
+        {"header": "nl.all(x: tile, axis: int|tuple, keepdims=False)", "description": "Product of elements along the specified axis (or axes) of the input."},
+        {"header": "nl.max(x: tile, axis: int|tuple, keepdims=False)", "description": "Maximum of elements along a specified free axis."},
+        {"header": "nl.min(x: tile, axis: int|tuple, keepdims=False)", "description": "Minimum of elements along a specified free axis."},
+        {"header": "nl.mean(x: tile, axis: int|tuple, keepdims=False)", "description": "Mean of elements along a specified free axis."},
+        # {"header": "nl.all_reduce(x: tile, op: binary_op, program_axes: int|tuple)", "description": "Performs a reduction (e.g., sum, max) across multiple SPMD programs."}
     ],
     "LogicalBitwise": [
         {"header": "nl.equal(x: tile|scalar, y: tile|scalar)", "description": "Element-wise comparison (x == y)."},
@@ -639,29 +712,112 @@ g = nisa.tensor_scalar(e[i_p_ef, i_f_e], op0=np.multiply, operand0=f[i_p_ef, i_f
     },
     "nki.isa.tensor_tensor": {
         "header": "nisa.tensor_tensor(data1: tile, data2: tile, op: binary_op, engine: nisa.engine=unknown, dtype: nki_dtype=type_promotion, mask: predicate=None) -> tile (element-wise result)",
-        "examples": "",
+        "description": """Perform an element-wise operation of input two tiles using Vector Engine or GpSimd Engine. The two tiles must have the same partition axis size and the same number of elements per partition.
+The element-wise operator is specified using the op field and can be any binary operator supported by NKI that runs on the Vector Engine, or it can be power or integer add, multiply, or subtract which run on the GpSimd Engine. For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the element-wise operation in float32 math (unless it is one of the supported integer ops mentioned above). The float32 results are cast to the target data type specified in the dtype field before written into the output tile. If the dtype field is not specified, it is default to be the same as the data type of data1 or data2, whichever has the higher precision.
+Since GpSimd Engine cannot access PSUM, the input or output tiles cannot be in PSUM if op is one of the GpSimd operations mentioned above. (see NeuronCore-v2 Compute Engines for details). Otherwise, the output tile can be in either SBUF or PSUM. However, the two input tiles, data1 and data2 cannot both reside in PSUM. The three legal cases are:
+    Both data1 and data2 are in SBUF.
+    data1 is in SBUF, while data2 is in PSUM.
+    data1 is in PSUM, while data2 is in SBUF.
+Note, if you need broadcasting capability in the free dimension for either input tile, you should consider using nki.isa.tensor_scalar API instead, which has better performance than nki.isa.tensor_tensor in general.
+
+Estimated instruction cost:
+See below table for tensor_tensor performance when it runs on Vector Engine.
+Cost (Vector Engine Cycles)
+max(MIN_II, N), if one input tile is in PSUM and the other is in SBUF
+max(MIN_II, N), if all of the below:
+    both input tiles are in SBUF,
+    input/output data types are all bfloat16,
+    the operator is add, multiply or subtract,
+    Input tensor data is contiguous along the free dimension (that is, stride in each partition is 1 element)
+max(MIN_II, 2N), otherwise
+
+where,
+    N is the number of elements per partition in data1/data2.
+    MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+    data1 – lhs input operand of the element-wise operation
+    data2 – rhs input operand of the element-wise operation
+    op – a binary math operator (see Supported Math Operators for NKI ISA for supported operators)
+    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+    dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+    engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.gpsimd_engine or nki.isa.unknown_engine (default, let compiler select best engine based on the input tile shape).
+Returns:
+    an output tile of the element-wise operation""",
+        "examples": """# Example 1: add two tiles, a and b, of the same
+# shape (128, 512) element-wise and get
+# the addition result in tile c
+a: tensor[128, 512] = nl.load(a_tensor)
+b: tensor[128, 512] = nl.load(b_tensor)
+
+c: tensor[128, 512] = nisa.tensor_tensor(a, b, op=nl.add)""",
     },
     "nki.isa.tensor_tensor_scan": {
         "header": "nisa.tensor_tensor_scan(data0: tile, data1: tile, initial: scalar|tile[vector], op0: binary_op, op1: binary_op, reverse0: bool=False, reverse1: bool=False, dtype: nki_dtype=type_promotion, mask: predicate=None) -> tile (scan result)",
-        "examples": "",
+        "description": """Perform a scan operation of two input tiles using Vector Engine.
+Mathematically, the tensor_tensor_scan instruction on Vector Engine performs the following computation per partition:
+
+# Let's assume we work with numpy, and data0 and data1 are 2D (with shape[0] being the partition axis)
+import numpy as np
+result = np.ndarray(data0.shape, dtype=data0.dtype)
+result[:, 0] = op1(op0(data0[:. 0], initial), data1[:, 0])
+for i in range(1, data0.shape[1]):
+    result[:, i] = op1(op0(data0[:, i], result[:, i-1]), data1[:, i])
+
+The two input tiles (data0 and data1) must have the same partition axis size and the same number of elements per partition. The third input initial can either be a float32 compile-time scalar constant that will be broadcasted in the partition axis of data0/data1, or a tile with the same partition axis size as data0/data1 and one element per partition.
+The two input tiles, data0 and data1 cannot both reside in PSUM. The three legal cases are:
+    Both data1 and data2 are in SBUF.
+    data1 is in SBUF, while data2 is in PSUM.
+    data1 is in PSUM, while data2 is in SBUF.
+The scan operation supported by this API has two programmable math operators in op0 and op1 fields. Both op0 and op1 can be any binary arithmetic operator supported by NKI (see Supported Math Operators for NKI ISA for details). We can optionally reverse the input operands of op0 by setting reverse0 to True (or op1 by setting reverse1). Reversing operands is useful for non-commutative operators, such as subtract.
+
+Input/output data types can be any supported NKI data type (see Supported Data Types), but the engine automatically casts input data types to float32 and performs the computation in float32 math. The float32 results are cast to the target data type specified in the dtype field before written into the output tile. If the dtype field is not specified, it is default to be the same as the data type of data0 or data1, whichever has the highest precision.
+
+Estimated instruction cost:
+max(MIN_II, 2N) Vector Engine cycles, where
+    N is the number of elements per partition in data0/data1.
+    MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+Parameters:
+        data0 – lhs input operand of the scan operation
+        data1 – rhs input operand of the scan operation
+        initial – starting state of the scan; can be a SBUF/PSUM tile with 1 element/partition or a scalar compile-time constant
+        op0 – a binary arithmetic math operator (see Supported Math Operators for NKI ISA for supported operators)
+        op1 – a binary arithmetic math operator (see Supported Math Operators for NKI ISA for supported operators)
+        reverse0 – reverse ordering of inputs to op0; if false, data0 is the lhs of op0; if true, data0 is the rhs of op0
+        reverse1 – reverse ordering of inputs to op1; if false, data1 is the rhs of op1; if true, data1 is the lhs of op1
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+Returns:
+    an output tile of the scan operation""",
+        "examples": """# Example 1: scan two tiles, a and b, of the same
+# shape (128, 1024) using multiply/add and get
+# the scan result in tile c
+c = nl.ndarray(shape=(128, 1024), dtype=nl.float32)
+
+c[:, 0:512] = nisa.tensor_tensor_scan(a[:, 0:512], b[:, 0:512],
+                                      initial=0, op0=np.multiply, op1=np.add)
+
+c[:, 512:1024] = nisa.tensor_tensor_scan(a[:, 512:1024], b[:, 512:1024],
+                                         initial=c[:, 511],
+                                         op0=np.multiply, op1=np.add)""",
     }
 }
 
 kernel_insts_dict = {
-    "gemm": {
-            "architecture",
-            "nki.language.affine_range",
-            "nki.language.sequential_range",
-            "nki.language.mgrid",
-            "nki.language.ndarray",
-            "nki.language.zeros",
-            "nki.language.tile_size",
-            "nki.isa.dma_copy",
-            "nki.isa.nc_matmul",
-            "nki.isa.nc_transpose",
-            "nki.isa.tensor_copy",
-    },
-    "layernorm": {
+    "gemm": [
+        "architecture",
+        "nki.language.affine_range",
+        "nki.language.sequential_range",
+        "nki.language.mgrid",
+        "nki.language.ndarray",
+        "nki.language.zeros",
+        "nki.language.tile_size",
+        "nki.isa.dma_copy",
+        "nki.isa.nc_matmul",
+        "nki.isa.nc_transpose",
+        "nki.isa.tensor_copy",
+    ],
+    "layernorm": [
         "architecture",
         "ElementWiseMath",
         "ShapeAndSelection",
@@ -676,9 +832,34 @@ kernel_insts_dict = {
         "nki.isa.bn_stats",
         "nki.isa.bn_aggr",
         "nki.isa.tensor_scalar",
-    },
+    ],
+    "mamba": [
+        "architecture",
+        "ElementWiseMath",
+        "ShapeAndSelection",
+        "ActivationFunctions",
+        "nki.language.affine_range",
+        "nki.language.sequential_range",
+        "nki.language.mgrid",
+        "nki.language.ndarray",
+        "nki.language.zeros",
+        "nki.language.tile_size",
+        "nki.isa.activation",
+        "nki.isa.dma_copy",
+        "nki.isa.tensor_copy",
+        "nki.isa.tensor_scalar",
+        "nki.isa.tensor_tensor",
+        "nki.isa.tensor_tensor_scan",
+    ],
 }
 workload_to_kernel_dict = {
+}
+
+prob_id_to_name = {
+    0: "gemm",
+    1: "gemm",
+    2: "layernorm",
+    3: "mamba",
 }
 
 class NkiIsaGenerator:
@@ -686,6 +867,7 @@ class NkiIsaGenerator:
         self.isa_dict = nki_isa_dict
         self.kernel_insts_dict = kernel_insts_dict
         self.workload_to_kernel_dict = workload_to_kernel_dict
+        self.prob_id_to_name = prob_id_to_name
 
     def generate_isa_string(self, insts: Iterable[str]):
         # First expand those that are lists into individual dictionaries
@@ -714,12 +896,20 @@ class NkiIsaGenerator:
                 isa_string += examples + "\n"
         return isa_string
 
-    def generate_isa(self, name: str):
+    def generate_isa(self, id_or_name: int | str):
+        if isinstance(id_or_name, int):
+            name = self.prob_id_to_name[id_or_name]
+        else:
+            name = id_or_name
         if name in self.kernel_insts_dict:
             insts = self.kernel_insts_dict[name]
         else:
             kernels = self.workload_to_kernel_dict[name]
-            insts = set()
+            insts = []
+            seen = set()
             for kernel in kernels:
-                insts.update(self.kernel_insts_dict[kernel])
+                for inst in self.kernel_insts_dict[kernel]:
+                    if inst not in seen:
+                        insts.append(inst)
+                        seen.add(inst)
         return self.generate_isa_string(insts)
