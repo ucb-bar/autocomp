@@ -1,5 +1,7 @@
 from typing import Iterable
 
+from autocomp.common import logger
+
 nki_isa_dict = {
     "architecture": {
         "description": """Kernel structure: Each NKI kernel has 3 stages — load data from HBM → SBUF, compute on NeuronCore, store results from SBUF → HBM.
@@ -40,6 +42,15 @@ Indexing:
     Use nl.arange for indirect load/store access indexing, nl.mgrid won’t work. See code examples in nl.load and nl.store.
     If indexing with [0, 0] gets internal errors, try using [0:1, 0:1] or nl.mgrid[0:1, 0:1] instead.
     If indexing with [0:1, ...] gets internal errors, try using [0, ...] instead.
+    nki.language.ds(start, size) constructs a dynamic slice for simple tensor indexing.
+        def example_kernel(in_tensor):
+        out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                                buffer=nl.shared_hbm)
+        for i in nl.affine_range(in_tensor.shape[1] // 512):
+            tile = nl.load(in_tensor[:, (i * 512):((i + 1) * 512)])
+            # Same as above but use ds (dynamic slice) instead of the native
+            # slice syntax
+            tile = nl.load(in_tensor[:, nl.ds(i * 512, 512)])
 
 Performance tip:
     Access HBM sequentially; only F-dim striding is hardware-efficient.
@@ -70,7 +81,11 @@ Other constraints:
 """,
     },
     "ElementWiseMath": [
-        {"header": "nl.add(x: tile | scalar, y: tile | scalar)", "description": "Element-wise addition. x.shape and y.shape must be broadcastable to a common shape, that will become the shape of the output.", "examples": """a = nl.load(a_tensor[0:128, 0:512])
+        {"header": "nl.add(x: tile | scalar, y: tile | scalar, dtype=None)", 
+         "description": """Element-wise addition. 
+x.shape and y.shape must be broadcastable to a common shape, that will become the shape of the output. 
+dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision.""",
+         "examples": """a = nl.load(a_tensor[0:128, 0:512])
 b = nl.load(b_tensor[0:128, 0:512])
 # add a and b element-wise and store in c[128, 512]
 c = nl.add(a, b)
@@ -105,42 +120,42 @@ b = nl.load(b_tensor[0:1, 0:512])
 # broadcast on each dimensions -- [128, 1] and [1, 512] are broadcasted to [128, 512]
 c = nl.add(a, b)
 nl.store(c_tensor[0:128, 0:512], c)"""},
-        {"header": "nl.subtract(x: tile | scalar, y: tile | scalar)", "description": "Element-wise subtraction."},
-        {"header": "nl.multiply(x: tile | scalar, y: tile | scalar)", "description": "Element-wise multiplication."},
-        {"header": "nl.divide(x: tile | scalar, y: tile | scalar)", "description": "Element-wise division."},
-        {"header": "nl.power(x: tile | scalar, y: tile | scalar)", "description": "Elements of x raised to powers of y, element-wise."},
-        {"header": "nl.maximum(x: tile | scalar, y: tile | scalar)", "description": "Maximum of the inputs, element-wise."},
-        {"header": "nl.minimum(x: tile | scalar, y: tile | scalar)", "description": "Minimum of the inputs, element-wise."},
-        {"header": "nl.abs(x: tile)", "description": "Element-wise absolute value."},
-        {"header": "nl.exp(x: tile)", "description": "Element-wise exponential (e**x)."},
-        {"header": "nl.log(x: tile)", "description": "Element-wise natural logarithm."},
-        {"header": "nl.sqrt(x: tile)", "description": "Element-wise non-negative square root."},
-        {"header": "nl.rsqrt(x: tile)", "description": "Element-wise reciprocal of the square root (1/sqrt(x))."},
-        {"header": "nl.square(x: tile)", "description": "Element-wise square (x*x)."},
-        {"header": "nl.reciprocal(x: tile)", "description": "Element-wise reciprocal (1/x)."},
-        {"header": "nl.sin(x: tile)", "description": "Element-wise sine."},
-        {"header": "nl.cos(x: tile)", "description": "Element-wise cosine."},
-        {"header": "nl.tanh(x: tile)", "description": "Element-wise hyperbolic tangent."},
-        {"header": "nl.ceil(x: tile)", "description": "Element-wise ceiling."},
-        {"header": "nl.floor(x: tile)", "description": "Element-wise floor."},
-        {"header": "nl.sign(x: tile)", "description": "Element-wise sign of a number."},
-        {"header": "nl.negative(x: tile)", "description": "Element-wise negative."},
-        {"header": "nl.trunc(x: tile)", "description": "Element-wise truncation."},
+        {"header": "nl.subtract(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Element-wise subtraction."},
+        {"header": "nl.multiply(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Element-wise multiplication."},
+        {"header": "nl.divide(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Element-wise division."},
+        {"header": "nl.power(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Elements of x raised to powers of y, element-wise."},
+        {"header": "nl.maximum(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Maximum of the inputs, element-wise."},
+        {"header": "nl.minimum(x: tile | scalar, y: tile | scalar, dtype=None)", "description": "Minimum of the inputs, element-wise."},
+        {"header": "nl.abs(x: tile, dtype=None)", "description": "Element-wise absolute value."},
+        {"header": "nl.exp(x: tile, dtype=None)", "description": "Element-wise exponential (e**x)."},
+        {"header": "nl.log(x: tile, dtype=None)", "description": "Element-wise natural logarithm."},
+        {"header": "nl.sqrt(x: tile, dtype=None)", "description": "Element-wise non-negative square root."},
+        {"header": "nl.rsqrt(x: tile, dtype=None)", "description": "Element-wise reciprocal of the square root (1/sqrt(x))."},
+        {"header": "nl.square(x: tile, dtype=None)", "description": "Element-wise square (x*x)."},
+        {"header": "nl.reciprocal(x: tile, dtype=None)", "description": "Element-wise reciprocal (1/x)."},
+        {"header": "nl.sin(x: tile, dtype=None)", "description": "Element-wise sine."},
+        {"header": "nl.cos(x: tile, dtype=None)", "description": "Element-wise cosine."},
+        {"header": "nl.tanh(x: tile, dtype=None)", "description": "Element-wise hyperbolic tangent."},
+        {"header": "nl.ceil(x: tile, dtype=None)", "description": "Element-wise ceiling."},
+        {"header": "nl.floor(x: tile, dtype=None)", "description": "Element-wise floor."},
+        {"header": "nl.sign(x: tile, dtype=None)", "description": "Element-wise sign of a number."},
+        {"header": "nl.negative(x: tile, dtype=None)", "description": "Element-wise negative."},
+        {"header": "nl.trunc(x: tile, dtype=None)", "description": "Element-wise truncation."},
     ],
     "ActivationFunctions": [
-        {"header": "nl.relu(x: tile)", "description": "Rectified Linear Unit."},
-        {"header": "nl.sigmoid(x: tile)", "description": "Sigmoid activation."},
-        {"header": "nl.softmax(x: tile, axis: int|tuple)", "description": "Softmax activation along a specified axis."},
-        {"header": "nl.gelu(x: tile)", "description": "Gaussian Error Linear Unit."},
-        {"header": "nl.silu(x: tile)", "description": "Sigmoid Linear Unit (Swish)."}
+        {"header": "nl.relu(x: tile, dtype=None)", "description": "Rectified Linear Unit."},
+        {"header": "nl.sigmoid(x: tile, dtype=None)", "description": "Sigmoid activation."},
+        {"header": "nl.softmax(x: tile, axis: int|tuple, dtype=None)", "description": "Softmax activation along a specified axis."},
+        {"header": "nl.gelu(x: tile, dtype=None)", "description": "Gaussian Error Linear Unit."},
+        {"header": "nl.silu(x: tile, dtype=None)", "description": "Sigmoid Linear Unit (Swish)."}
     ],
     "ReductionOperations": [
-        {"header": "nl.sum(x: tile, axis: int|tuple, keepdims=False)", "description": "Sum of elements along a specified free axis."},
-        {"header": "nl.prod(x: tile, axis: int|tuple, keepdims=False)", "description": "Product of elements along the specified axis (or axes) of the input."},
-        {"header": "nl.all(x: tile, axis: int|tuple, keepdims=False)", "description": "Product of elements along the specified axis (or axes) of the input."},
-        {"header": "nl.max(x: tile, axis: int|tuple, keepdims=False)", "description": "Maximum of elements along a specified free axis."},
-        {"header": "nl.min(x: tile, axis: int|tuple, keepdims=False)", "description": "Minimum of elements along a specified free axis."},
-        {"header": "nl.mean(x: tile, axis: int|tuple, keepdims=False)", "description": "Mean of elements along a specified free axis."},
+        {"header": "nl.sum(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Sum of elements along a specified free axis."},
+        {"header": "nl.prod(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
+        {"header": "nl.all(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
+        {"header": "nl.max(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Maximum of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.min(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Minimum of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.mean(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Mean of elements along the specific free axis (or free axes) of the input."},
         # {"header": "nl.all_reduce(x: tile, op: binary_op, program_axes: int|tuple)", "description": "Performs a reduction (e.g., sum, max) across multiple SPMD programs."}
     ],
     "LogicalBitwise": [
@@ -153,7 +168,7 @@ nl.store(c_tensor[0:128, 0:512], c)"""},
         {"header": "nl.invert(x: tile)", "description": "Element-wise bitwise NOT (~x)."}
     ],
     "ShapeAndSelection": [
-        {"header": "nl.where(condition: tile[bool], x: tile, y: tile|scalar)", "description": "Selects elements from x or y based on a condition."},
+        {"header": "nl.where(condition: tile[bool], x: tile, y: tile|scalar, dtype=None)", "description": "Return a tile with elements from x where condition is True, and elements from y otherwise. Note x must be a tile."},
         {"header": "nl.broadcast_to(src: tile, *, shape: tuple=None)", "description": "Broadcasts a tile to a new shape. Returns a new tile broadcast along the partition dimension of src, this new tile will be in SBUF, but can be also assigned to a PSUM tensor."},
         {"header": "nki.tensor.broadcast_to(shape: tuple)", "description": "The tensor object must be a tile or can be implicitly converted to a tile. A tensor can be implicitly converted to a tile iff the partition dimension is the highest dimension. Returns a new view of the tile, no copy will occur."},
         {"header": "nl.expand_dims(data: tile, axis: int|tuple)", "description": "Inserts a new dimension of size 1 into the tile's shape."},
@@ -163,6 +178,7 @@ nl.store(c_tensor[0:128, 0:512], c)"""},
         "header": "nl.affine_range(num_iterations: int):",
         "description": """Create a sequence of numbers for use as parallel loop iterators in NKI. affine_range should be the default loop iterator choice, when there is no loop carried dependency. Note, associative reductions are not considered loop carried dependencies in this context. A concrete example of associative reduction is multiple nl.matmul or nisa.nc_matmul calls accumulating into the same output buffer defined outside of this loop level (see code example #2 below).
 Overlapping nl.load outputs in SBUF are considered loop dependencies and are not allowed; buffers can be allocated inside affine_range or outputs can be indexed/sliced to avoid this.
+When the dst of an operation inside of affine_range is indexed using [:] (or [, :], or [:, :], etc.), the operation is likely to have an illegal loop carried dependency.
 When the above conditions are not met, we recommend using sequential_range instead.
 Notes:
     Using affine_range prevents Neuron compiler from unrolling the loops until entering compiler backend, which typically results in better compilation time.
@@ -221,6 +237,91 @@ for i_input in nl.sequential_range(input0.shape[1] // 512):
   # Prepare initial result for scan in the next loop iteration
   init[:, :] = result[:, 511]""",
     },
+    "nki.compiler.sbuf.mod_alloc": {
+        "header": "nki.compiler.sbuf.mod_alloc(*, base_addr, base_partition=0, num_par_tiles=(), num_free_tiles=())",
+        "description": """Allocate SBUF memory space for each logical tile in a tensor through modulo allocation. This is one of the NKI direct allocation APIs.
+When direct allocation is used, all tensors, including the tensor returned from a instruction, in that kernel must also use direct allocation.
+When direct allocation is used, HBM tensors cannot be declared unless they are used as kernel outputs.
+When direct allocation is used, compute APIs that introduce implicit tensors such as nc_transpose with engine=nisa.tensor_engine will fail.
+
+Parameters:
+    base_addr – the base address in the free(F) dimension of the SBUF in bytes.
+    base_partition – the partition where the physical tile starts from. Must be 0 in the current version.
+    num_par_tiles – the number of physical tiles on the partition dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
+    num_free_tiles – the number of physical tiles on the free dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
+""",
+        "examples": """Here’s an example usage of this API:
+
+nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
+                        buffer=nki.compiler.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
+
+for i_block in nl.affine_range(4):
+  nki_tensor[i_block, :, :] = nl.load(...)
+  ...                       = nl.exp(nki_tensor[i_block, :, :])
+
+This produces the following allocation:
+Logical Tile Index: (0, ); Physical Tile start_partition: 0; Physical Tile byte_addr: 0 + (0 % 2) * 512 * sizeof(nl.bfloat16) = 0
+Logical Tile Index: (1, ); Physical Tile start_partition: 0; Physical Tile byte_addr: 0 + (1 % 2) * 512 * sizeof(nl.bfloat16) = 1024
+Logical Tile Index: (2, ); Physical Tile start_partition: 0; Physical Tile byte_addr: 0 + (2 % 2) * 512 * sizeof(nl.bfloat16) = 0
+Logical Tile Index: (3, ); Physical Tile start_partition: 0; Physical Tile byte_addr: 0 + (3 % 2) * 512 * sizeof(nl.bfloat16) = 1024
+
+With above scheme, we are able to implement double buffering in nki_tensor, such that nl.load in one iteration can write to one physical tile while nl.exp of the previous iteration can read from the other physical tile simultaneously.
+
+Here's an example SBufAllocator class that uses mod_alloc to allocate SBUF memory space, incrementing base_addr each time a new allocation is made.
+
+sb_mod = nki.compiler.sbuf.mod_alloc
+
+class SBufAllocator:
+    def __init__(self):
+        self.offset = 0
+
+    def get_dtype_size(self, dtype):
+        if dtype == nl.float32:
+            return 4
+        elif dtype == nl.bfloat16:
+            return 2
+        else:
+            raise ValueError(f"Unsupported dtype: {dtype}")
+
+    def allocate(self, size, dtype, num_buffers=1):
+        addr = self.offset
+        self.offset += size * num_buffers * self.get_dtype_size(dtype)
+        return sb_mod(base_addr=addr, num_free_tiles=(num_buffers, ))
+""",
+    },
+    "nki.compiler.psum.mod_alloc": {
+        "header": "nki.compiler.psum.mod_alloc(*, base_bank, base_addr=0, base_partition=0, num_bank_tiles=(), num_par_tiles=(), num_free_tiles=())",
+        "description": """Allocate PSUM memory space for each logical block in a tensor through modulo allocation. This is one of the NKI direct allocation APIs.
+
+Parameters:
+    base_addr – the base address in bytes along the free(F) dimension of the PSUM bank. Must be 0 in the current version.
+    base_bank – the base bank ID that the physical tiles start from.
+    num_bank_tiles – the number of PSUM banks allocated for the tensor.
+    base_partition – the partition ID the physical tiles start from. Must be 0 in the current version.
+    num_par_tiles – the number of physical tiles along the partition dimension allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
+    num_free_tiles – the number of physical tiles on the free dimension per PSUM bank allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
+""",
+        "examples": """Here’s an example usage of this API:
+
+psum_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.float32,
+                         buffer=ncc.psum.mod_alloc(base_bank=0,
+                                                    base_addr=0,
+                                                    num_bank_tiles=(2,)))
+
+for i_block in nl.affine_range(4):
+  psum[i_block, :, :] = nisa.nc_matmul(...)
+  ...                 = nl.exp(psum[i_block, :, :])
+
+This produces the following allocation:
+
+Logical Tile Index: (0, ); Physical Tile bank_id: 0; Physical Tile start_partition: 0; Physical Tile byte_addr: 0
+Logical Tile Index: (1, ); Physical Tile bank_id: 1; Physical Tile start_partition: 0; Physical Tile byte_addr: 0
+Logical Tile Index: (2, ); Physical Tile bank_id: 0; Physical Tile start_partition: 0; Physical Tile byte_addr: 0
+Logical Tile Index: (3, ); Physical Tile bank_id: 1; Physical Tile start_partition: 0; Physical Tile byte_addr: 0
+
+With above scheme, we are able to implement double buffering in nki_tensor, such that nisa.nc_matmul in one iteration can write to one physical tile while nl.exp of the previous iteration can read from the other physical tile simultaneously.
+""",
+    },
     "nki.language.mgrid": {
         "header": "nl.mgrid[start:end, start:end, ...]",
         "description": "Same as NumPy mgrid: “An instance which returns a dense (or fleshed out) mesh-grid when indexed, so that each returned argument has the same shape. The dimensions and number of the output arrays are equal to the number of indexing dimensions.”",
@@ -245,7 +346,24 @@ for i_batch in nl.affine_range(batch_size):
     # partial accumulated scanC result with processed states
     scanC_accum = nl.zeros((n_channel_tile, nl.par_dim(channel_psize), seq_len), dtype=delta.dtype)
     ...
-""",
+
+# NKI requires inputs of all compute APIs to be valid tiles with the first dimension being the partition dimension.
+# We mark the second dimension as the partition dimension
+a = nl.zeros((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
+c = nl.add(a, 32) # Error: Failed to infer tile from tensor 'a',
+
+# To fix the problem you can use index tensor a to generate a tile whose first dimension is the partition dimension
+# We mark the second dimension of tensor a as the partition dimension
+a = nl.zeros((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
+c = nl.ndarray((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
+for i in range(4):
+  # result of `a[i]` is a tile with shape (8, 8) and the first dimension is the partition dimension
+  c[i] = nl.add(a[i], 32) # works
+  # Or explicitly generate a tile with `nl.arange`
+  ix = nl.arange(8)[:, None]
+  iy = nl.arange(8)[None, :]
+  # result of `a[i, ix, iy]` is a tile with shape (8, 8) and the first dimension is the partition dimension
+  c[i, ix, iy] = nl.add(a[i, ix, iy], 32) # also works""",
     },
     "nki.language.tile_size": {
         "header": """class nl.tile_size, attributes: 
@@ -258,8 +376,126 @@ psum_min_align: The minimum byte alignment requirement for PSUM free dimension a
 sbuf_min_align: The minimum byte alignment requirement for SBUF free dimension address.
 total_available_sbuf_size: The total SBUF available size""",
     },
+    "nki.language.load": {
+        "header": "nl.load(src: tile[HBM]) -> tile[SBUF] (same shape as src)",
+        "description": "Load a tensor from device memory (HBM) into on-chip memory (SBUF).",
+        "examples": """# Partition dimension has to be the first dimension in the index tuple of a tile. Therefore, data may need to be split into multiple batches to load/store, for example:
+for i_b in nl.affine_range(4):
+  data_tile = nl.zeros((128, 512), dtype=in_tensor.dtype) 
+  # load from in_tensor[4, 128, 512] one batch at a time
+  # copy into data_tile[128, 512]
+  i_p, i_f = nl.mgrid[0:128, 0:512]
+  data_tile[i_p, i_f] = nl.load(in_tensor[i_b, i_p, i_f])
+  ...
+
+# Also supports indirect DMA access with dynamic index values:
+# Indirect DMA read example 1:
+# - data_tensor on HBM has shape [128 x 512].
+# - idx_tensor on HBM has shape [64] (with values [0, 2, 4, 6, ...]).
+# - idx_tensor values read from HBM and stored in SBUF idx_tile of shape [64 x 1]
+# - data_tensor values read from HBM indexed by values in idx_tile 
+#   and store into SBUF data_tile of shape [64 x 512].
+i_p = nl.arange(64)[:, None]
+i_f = nl.arange(512)[None, :]
+
+idx_tile = nl.load(idx_tensor[i_p]) # indices have to be in SBUF
+data_tile = nl.load(data_tensor[idx_tile[i_p, 0], i_f]) 
+...
+
+# Indirect DMA read example 2:
+# - data_tensor on HBM has shape [128 x 512].
+# - idx_tile on SBUF has shape [64 x 1] (with values [[0], [2], [4], ...] generated by iota)
+# - data_tensor values read from HBM indexed by values in idx_tile 
+#   and store into SBUF data_tile of shape [64 x 512].
+i_f = nl.arange(512)[None, :]
+
+idx_expr = 2*nl.arange(64)[:, None]
+idx_tile = nisa.iota(idx_expr, dtype=np.int32)
+data_tile = nl.load(data_tensor[idx_tile, i_f]) 
+...""",
+    },
+    "nki.language.store": {
+        "header": "nl.store(dst: tile[HBM], value: tile[SBUF])",
+        "description": """Store into a tensor on device memory (HBM) from on-chip memory (SBUF).
+Parameters:
+    dst – HBM tensor to store the data into.
+    value – An SBUF tile that contains the values to store. If the tile is in PSUM, an extra copy will be performed to move the tile to SBUF first.""",
+        "examples": """# Partition dimension has to be the first dimension in the index tuple of a tile. Therefore, data may need to be split into multiple batches to load/store, for example:
+for i_b in nl.affine_range(4):
+  data_tile = nl.zeros((128, 512), dtype=in_tensor.dtype) 
+
+...
+# store into out_tensor[4, 128, 512] one batch at a time
+# from data_tile[128, 512] 
+i_p, i_f = nl.mgrid[0:128, 0:512]
+nl.store(out_tensor[i_b, i_p, i_f], value=data_tile[i_p, i_f]) 
+
+# Also supports indirect DMA access with dynamic index values:
+# Indirect DMA write example 1:
+#  - data_tensor has shape [128 x 512].
+#  - idx_tensor on HBM has shape [64] (with values [0, 2, 4, 6, ...]).
+#  - idx_tensor values read from HBM and stored in SBUF idx_tile.
+#  - data_tile of shape [64 x 512] values written into
+#    HBM data_tensor indexed by values in idx_tile.
+i_p = nl.arange(64)[:, None]
+i_f = nl.arange(512)[None, :]
+idx_tile = nl.load(idx_tensor[i_p]) # indices have to be in SB
+
+nl.store(data_tensor[idx_tile[i_p, 0], i_f], value=data_tile[0:64, 0:512])
+
+# Indirect DMA write example 2:
+#  - data_tensor has shape [128 x 512].
+#  - idx_tile on SBUF has shape [64 x 1] (with values [[0], [2], [4], ...] generated by iota)
+#  - data_tile of shape [64 x 512] values written into
+#    HBM data_tensor indexed by values in idx_tile.
+idx_expr = 2*nl.arange(64)[:, None]
+idx_tile = nisa.iota(idx_expr, dtype=np.int32)
+
+nl.store(data_tensor[idx_tile, i_f], value=data_tile[0:64, 0:512])""",
+    },
     "nki.isa.activation": {
-        "header": "nisa.activation(op: activation_function, data: tile[SBUF|PSUM], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, reduce_op: reduce_function=None, reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=idle, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (same shape as data)",
+        "header": "nisa.activation(op: activation_function, data: tile[SBUF|PSUM], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, reduce_op: reduce_function=None, reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=nisa.reduce_cmd.idle, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (same shape as data)",
+        "description": """Apply an activation function on every element of the input tile using Scalar Engine. The activation function is specified in the op input field (see Supported Activation Functions for NKI ISA for a list of supported activation functions and their valid input ranges).
+The activation instruction can optionally multiply the input data by a scalar or vector scale and then add another vector bias before the activation function is applied, at no additional performance cost:
+
+output = f_act(data * scale + bias)
+
+When the scale is a scalar, it must be a compile-time constant. In this case, the scale is broadcasted to all the elements in the input data tile. When the scale/bias is a vector, it must have the same partition axis size as the input data tile and only one element per partition. In this case, the element of scale/bias within each partition is broadcasted to elements of the input data tile in the same partition.
+There are 128 registers on the scalar engine for storing reduction results, corresponding to the 128 partitions of the input. The scalar engine can reduce along free dimensions without extra performance penalty, and store the result of reduction into these registers. The reduction is done after the activation function is applied.
+
+output = f_act(data * scale + bias)
+accu_registers = reduce_op(accu_registers, reduce_op(output, axis = <FreeAxis>))
+
+These registers are shared between activation and activation_accu calls, and the state of them can be controlled via the reduce_cmd parameter.
+    nisa.reduce_cmd.reset: Reset the accumulators to zero
+    nisa.reduce_cmd.idle: Do not use the accumulators
+    nisa.reduce_cmd.reduce: keeps accumulating over the current value of the accumulator
+    nisa.reduce_cmd.reset_reduce: Resets the accumulators then immediately accumulate the results of the current instruction into the accumulators
+
+We can choose to read out the current values stored in the register by passing in a tensor in the reduce_res arguments. Reading out the accumulator will incur a small overhead.
+Note that activation_accu can also change the state of the registers. It’s user’s responsibility to ensure correct ordering. It’s recommended to not mixing the use of activation_accu and activation, when reduce_cmd is not set to idle.
+Note, the Scalar Engine always performs the math operations in float32 precision. Therefore, the engine automatically casts the input data tile to float32 before performing multiply/add/activate specified in the activation instruction. The engine is also capable of casting the float32 math results into another output data type specified by the dtype field at no additional performance cost. If dtype field is not specified, Neuron Compiler will set output data type of the instruction to be the same as input data type of data. On the other hand, the scale parameter must have a float32 data type, while the bias parameter can be float32/float16/bfloat16.
+The input data tile can be an SBUF or PSUM tile. Similarly, the instruction can write the output tile into either SBUF or PSUM, which is specified using the buffer field. If not specified, nki.language.sbuf is selected by default.
+
+Estimated instruction cost:
+max(MIN_II, N) Scalar Engine cycles, where
+    N is the number of elements per partition in data.
+    MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+    op – an activation function (see Supported Activation Functions for NKI ISA for supported functions)
+    data – the input tile; layout: (partition axis <= 128, free axis)
+    bias – a vector with the same partition axis size as data for broadcast add (after broadcast multiply with scale)
+    scale – a scalar or a vector with the same partition axis size as data for broadcast multiply
+    reduce_op – the reduce operation to perform on the free dimension of the activation result
+    reduce_res – a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile. The result of sum(ReductionResult) is written in-place into the tensor.
+    reduce_cmd – an enum member from nisa.reduce_cmd to control the state of reduction registers
+    dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    output tile of the activation instruction; layout: same as input data tile
+""",
         "examples": """# Example 1: perform exponential function on matrix a of shape (128, 1024)
 a = nl.load(a_tensor)
 activated_a = nisa.activation(op=nl.exp, data=a)
@@ -273,8 +509,38 @@ b = nl.load(b_tensor)
 c = nl.load(c_tensor)
 activated_b = nisa.activation(op=np.square, data=b, bias=c, scale=2.0,
                               dtype=nl.bfloat16)
-nl.store(b_act_tensor, activated_b)
-""",
+nl.store(b_act_tensor, activated_b)""",
+
+# # Example 3: Compute softmax with exp, bias subtraction, and reduction
+# # Applies exp(qk_sbuf - row_max) and accumulates results into sum_row_tiles
+# exp_row = nl.ndarray((nl.par_dim(PMAX), seqlen_kv),
+#                         dtype=nl.bfloat16, buffer=nl.sbuf)
+# qk_sbuf = nl.ndarray((nl.par_dim(PMAX), seqlen_kv // FMAX_MOVING, FMAX_MOVING),
+#                 dtype=nl.float32, buffer=nl.sbuf)
+# row_max = nl.ndarray((nl.par_dim(PMAX), 1), dtype=nl.float32,
+#                          buffer=nl.sbuf)
+# sum_row_tiles = nl.ndarray((nl.par_dim(PMAX), seqlen_kv // FMAX_MOVING), dtype=nl.float32,
+#                        buffer=nl.sbuf)
+# def exp_row_sum(i_tile_q):
+#     for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
+#         exp_row[:, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)] = nisa.activation(
+#             op=nl.exp,
+#             data=qk_sbuf[:, i_tile_kv, :],
+#             bias=row_max[:, :],
+#             reduce_op=nl.add,
+#             reduce_res=sum_row_tiles[:, i_tile_kv],
+#             reduce_cmd=nisa.reduce_cmd.reset_reduce,
+#             dtype=nl.bfloat16
+#             )
+# """,
+    },
+    "nki.isa.reduce_cmd": {
+        "header": "nisa.reduce_cmd",
+        "description": """Engine Register Reduce commands
+.idle: Not using the accumulator registers
+.reset: Resets the accumulator registers to its initial state
+.reset_reduce: Resets the accumulator registers then immediately accumulate the results of the current instruction into the accumulators
+.reduce: keeps accumulating over the current value of the accumulator registers"""
     },
     "nki.isa.activation_reduce": {
         "header": "nisa.activation_reduce(op: activation_function, data: tile[SBUF|PSUM], reduce_op: reduce_function, reduce_res: tile[vector], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (same shape as data)",
@@ -644,7 +910,37 @@ nl.store(out_tensor, value=x_copy)
     },
     "nki.isa.tensor_reduce": {
         "header": "nisa.tensor_reduce(op: reduce_function, data: tile, axis: int|tuple, negate: bool=False, keepdims: bool=False, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (reduced result)",
-        "examples": "",
+        "description": """Apply a reduction operation to the free axes of an input data tile using Vector Engine.
+The reduction operator is specified in the op input field (see Supported Math Operators for NKI ISA for a list of supported reduction operators). There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or) and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the reduction operation in float32 math. The float32 reduction results are cast to the target data type specified in the dtype field before written into the output tile. If the dtype field is not specified, it is default to be the same as input tile data type.
+When the reduction op is an arithmetic operator, the instruction can also multiply the output reduction results by -1.0 before writing into the output tile, at no additional performance cost. This behavior is controlled by the negate input field.
+The reduction axes are specified in the axis field using a list of integer(s) to indicate axis indices. The reduction axes can contain up to four free axes and must start at the most minor free axis. Since axis 0 is the partition axis in a tile, the reduction axes must contain axis 1 (most-minor). In addition, the reduction axes must be consecutive: e.g., [1, 2, 3, 4] is a legal axis field, but [1, 3, 4] is not.
+Since this instruction only supports free axes reduction, the output tile must have the same partition axis size as the input data tile. To perform a partition axis reduction, we can either:
+    invoke a nki.isa.nc_transpose instruction on the input tile and then this reduce instruction to the transposed tile, or
+    invoke nki.isa.nc_matmul instructions to multiply a nki.language.ones([128, 1], dtype=data.dtype) vector with the input tile.
+
+Estimated instruction cost (Vector Engine Cycles):
+N/2, ifboth input and output data types are bfloat16 and the reduction operator is add or maximum
+N, otherwise
+where,
+    N is the number of elements per partition in data.
+    MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+        op – the reduction operator (see Supported Math Operators for NKI ISA for supported reduction operators)
+        data – the input tile to be reduced
+        axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: [1], [1,2], [1,2,3], [1,2,3,4]
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+        negate – if True, reduction result is multiplied by -1.0; only applicable when op is an arithmetic operator
+        keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+Returns:
+    output tile of the reduction result""",
+        "examples": """# Example 1: reduce add tile a of shape (128, 512)
+# in the free dimension and return
+# reduction result in tile b of shape (128, 1)
+i_p_a = nl.arange(128)[:, None]
+i_f_a = nl.arange(512)[None, :]
+b = nisa.tensor_reduce(np.add, a[i_p_a, i_f_a], axis=[1])""",
     },
     "nki.isa.tensor_scalar": {
         "header": "nisa.tensor_scalar(data: tile, op0: binary_op, operand0: scalar|tile[vector], reverse0: bool=False, op1: binary_op=None, operand1: scalar|tile[vector]=None, reverse1: bool=False, engine: nisa.engine=unknown, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (computation result)",
@@ -708,7 +1004,30 @@ g = nisa.tensor_scalar(e[i_p_ef, i_f_e], op0=np.multiply, operand0=f[i_p_ef, i_f
     },
     "nki.isa.tensor_scalar_reduce": {
         "header": "nisa.tensor_scalar_reduce(data: tile, op0: binary_op, operand0: scalar|tile[vector], reduce_op: reduce_function, reduce_res: tile[vector], reverse0: bool=False, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (result of tensor-scalar op)",
-        "examples": "",
+        "description": """Perform the same computation as nisa.tensor_scalar with one math operator and also a reduction along the free dimension of the nisa.tensor_scalar result using Vector Engine.
+Refer to nisa.tensor_scalar for semantics of data/op0/operand0. Unlike regular nisa.tensor_scalar where two operators are supported, only one operator is supported in this API. Also, op0 can only be arithmetic operation in Supported Math Operators for NKI ISA. Bitvec operators are not supported in this API.
+In addition to nisa.tensor_scalar computation, this API also performs a reduction along the free dimension(s) of the nisa.tensor_scalar result, at a small additional performance cost. The reduction result is returned in reduce_res in-place, which must be a SBUF/PSUM tile with the same partition axis size as the input tile data and one element per partition. The reduce_op can be any of nl.add, nl.subtract, nl.multiply, nl.max or nl.min.
+Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will reduce across all of them.
+
+result = data <op0> operand0
+reduce_res = reduce_op(dst, axis=<FreeAxis>)
+
+Estimated instruction cost:
+max(MIN_II, N) + MIN_II Vector Engine cycles, where
+    N is the number of elements per partition in data, and
+    MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+        data – the input tile
+        op0 – the math operator used with operand0 (any arithmetic operator in Supported Math Operators for NKI ISA is allowed)
+        operand0 – a scalar constant or a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile
+        reverse0 – (not supported yet) reverse ordering of inputs to op0; if false, operand0 is the rhs of op0; if true, operand0 is the lhs of op0. <– currently not supported yet.
+        reduce_op – the reduce operation to perform on the free dimension of data <op0> operand0
+        reduce_res – a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile. The result of reduce_op(data <op0> operand0) is written in-place into the tile.
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+Returns:
+    an output tile of (data <op0> operand0) computation""",
     },
     "nki.isa.tensor_tensor": {
         "header": "nisa.tensor_tensor(data1: tile, data2: tile, op: binary_op, engine: nisa.engine=unknown, dtype: nki_dtype=type_promotion, mask: predicate=None) -> tile (element-wise result)",
@@ -804,55 +1123,55 @@ c[:, 512:1024] = nisa.tensor_tensor_scan(a[:, 512:1024], b[:, 512:1024],
 }
 
 kernel_insts_dict = {
-    "gemm": [
+    "standard": [
         "architecture",
+        "nki.language.par_dim",
         "nki.language.affine_range",
         "nki.language.sequential_range",
         "nki.language.mgrid",
         "nki.language.ndarray",
         "nki.language.zeros",
         "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.nc_matmul",
-        "nki.isa.nc_transpose",
+        "nki.compiler.sbuf.mod_alloc",
+        "nki.compiler.psum.mod_alloc",
+        # "nki.isa.dma_copy",
+        "nki.language.load",
+        "nki.language.store",
         "nki.isa.tensor_copy",
     ],
+    "gemm": [
+        "nki.isa.nc_matmul",
+        "nki.isa.nc_transpose",
+    ],
     "layernorm": [
-        "architecture",
         "ElementWiseMath",
         "ShapeAndSelection",
-        "nki.language.affine_range",
-        "nki.language.sequential_range",
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
         "nki.isa.bn_stats",
         "nki.isa.bn_aggr",
         "nki.isa.tensor_scalar",
     ],
     "mamba": [
-        "architecture",
         "ElementWiseMath",
         "ShapeAndSelection",
         "ActivationFunctions",
-        "nki.language.affine_range",
-        "nki.language.sequential_range",
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
         "nki.isa.activation",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
         "nki.isa.tensor_scalar",
         "nki.isa.tensor_tensor",
         "nki.isa.tensor_tensor_scan",
     ],
+    "softmax": [
+        "ElementWiseMath",
+        "ShapeAndSelection",
+        "ActivationFunctions",
+        "nki.isa.activation",
+        "nki.isa.tensor_reduce",
+        "nki.isa.tensor_scalar",
+        "nki.isa.tensor_scalar_reduce",
+    ]
 }
+
 workload_to_kernel_dict = {
+    "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
 }
 
 prob_id_to_name = {
@@ -860,6 +1179,7 @@ prob_id_to_name = {
     1: "gemm",
     2: "layernorm",
     3: "mamba",
+    4: "attention",
 }
 
 class NkiIsaGenerator:
@@ -894,6 +1214,7 @@ class NkiIsaGenerator:
             examples = dic.get("examples", "")
             if examples:
                 isa_string += examples + "\n"
+            isa_string += "\n"
         return isa_string
 
     def generate_isa(self, id_or_name: int | str):
@@ -901,15 +1222,13 @@ class NkiIsaGenerator:
             name = self.prob_id_to_name[id_or_name]
         else:
             name = id_or_name
-        if name in self.kernel_insts_dict:
-            insts = self.kernel_insts_dict[name]
-        else:
-            kernels = self.workload_to_kernel_dict[name]
-            insts = []
-            seen = set()
-            for kernel in kernels:
-                for inst in self.kernel_insts_dict[kernel]:
-                    if inst not in seen:
-                        insts.append(inst)
-                        seen.add(inst)
+        kernels = self.workload_to_kernel_dict.get(name, [name]) # if not found, then <name> is a kernel
+        kernels = ["standard"] + kernels # always include standard instructions
+        insts = []
+        seen = set()
+        for kernel in kernels:
+            for inst in self.kernel_insts_dict[kernel]:
+                if inst not in seen:
+                    insts.append(inst)
+                    seen.add(inst)
         return self.generate_isa_string(insts)

@@ -513,6 +513,92 @@ class LLMAgent:
             candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
         return candidates
 
+    def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, prob: Prob = None) -> list[CodeCandidate]:
+        """
+        Reimplement failed code candidates using stdout/stderr from the last attempt.
+        This method is parallelized across multiple candidates.
+        """
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+        
+        loaded_code = []
+        code_not_found = False
+        for c_i in range(len(candidate_lst)):
+            this_cand_loaded_code = []
+            save_str = save_strs[c_i]
+            for s_i in range(num_samples):
+                path = save_dir / f"reimplement{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                if path.exists():
+                    with open(path, "r") as f:
+                        code = extracted_code = extract(f.read())
+                        logger.debug("Loaded reimplemented code from %s", path)
+                        this_cand_loaded_code.append(code)
+                else:
+                    code_not_found = True
+                    break
+            if code_not_found:
+                break
+            loaded_code.append(this_cand_loaded_code)
+        else:
+            loaded_candidates = []
+            for c_i in range(len(candidate_lst)):
+                cand = candidate_lst[c_i]
+                for s_i in range(num_samples):
+                    new_cand = copy_candidate(cand)
+                    new_cand.code = loaded_code[c_i][s_i]
+                    new_cand.code_gen_model = self.llm_client.model
+                    loaded_candidates.append(new_cand)
+            logger.info("Loaded %d reimplemented code implementations rather than generating new ones", len(loaded_candidates))
+            return loaded_candidates
+
+        msgs_lst = []
+        for c_i in range(len(candidate_lst)):
+            prompt_text = self._get_reimplement_failed_code_prompt(candidate_lst[c_i], prob)
+            # Save full prompt
+            prompt_path = save_dir / f"reimplement_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
+            with open(prompt_path, "w") as f:
+                f.write(prompt_text)
+            messages = [
+                {"role": "user", "content": prompt_text},
+            ]
+            msgs_lst.append(messages)
+
+        responses = self.llm_client.chat_async(
+            msgs_lst,
+            num_candidates=num_samples,
+        )
+
+        candidates: list[CodeCandidate] = []
+        for c_i, cand_responses in enumerate(responses):
+            this_plan_cands = []
+            for s_i, sample_response in enumerate(cand_responses):
+                # Save full response
+                full_path = save_dir / f"reimplement{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
+                with open(full_path, "w") as f:
+                    f.write(sample_response)
+                # Extract just the code
+                extracted_code = extract(sample_response)
+                if not extracted_code:
+                    logger.warning("Failed to extract code from reimplement %d response %d, full response was %s", 
+                                   c_i, s_i, sample_response)
+                path = save_dir / f"reimplement{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
+                with open(path, "w") as f:
+                    f.writelines(extracted_code)
+                logger.debug("Saved reimplemented %d code impl %d to %s", c_i, s_i, path)
+                # Make a copy of the candidate with the new code impl
+                new_cand = copy_candidate(candidate_lst[c_i])
+                new_cand.code = extracted_code
+                new_cand.code_gen_model = self.llm_client.model
+                this_plan_cands.append(new_cand)
+            candidates.extend(this_plan_cands)
+        return candidates
+
+    def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
+        """
+        Base method to be overridden by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement _get_reimplement_failed_code_prompt")
+
 
 class GemminiLLMAgent(LLMAgent):
     def __init__(self, model, pe_dim):
@@ -1025,35 +1111,96 @@ class TrnLLMAgent(LLMAgent):
     def get_opt_menu_options(self, prob: Prob):
         """Get optimization menu options for NKI/Trainium kernels"""
         return [
-            "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
-            "Add additional loop levels so larger blocks of data can be loaded",
-            "modify loop tiling and tile sizes",
-            "loop reordering and restructuring",
-            "optimize memory buffer allocation (sbuf, psum, hbm)",
-            "improve data layout and access patterns",
-            "reduce data movement between memory hierarchies",
-            "improve load/store patterns and coalescing",
-            "optimize matrix multiplication blocking strategies",
-            "reduce redundant memory operations",
-            "fuse operations",
-            "pipeline operations for better overlap",
-            "optimize accumulation patterns in psum",
-            "optimize for specific tensor shapes and sizes",
+            # "distribute evenly across different engines (tensor/vector/scalar) and overlap work to maximize throughput",
+            "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
+            "delay softmax division until after all reductions are complete",
+            "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
+            # "reorder operations to work on a tile after it has been collapsed/reduced when mathematically equivalent",
+            "accumulate directly in the Scalar Engine’s reduction registers",
+            "do operations in lower precision such as nl.bfloat16",
+            "move operations inside affine_range loops to parallelize and avoid synchronization",
             "double buffering",
-            "Scan carry-over to parallelize the scan operation",
-            "Overlap DMA transfers (HBM to/from SBUF) with compute, hiding memory latency behind matmul execution.",
-            "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
-            "Use lower-precision datatypes like bf16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
-            "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
-            "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
-            "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
-            "Block all dimensions to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
-            "Group multiple output tiles to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
-            "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
+            "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
+            "dispatch operations ahead of time to pipeline them",
+            "pipeline operations to better overlap computation and data movement",
+            "keep data in SBUF/PSUM instead of storing to and loading from HBM",
+            # "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
+            # "transpose only one tile of a matrix (using nc_matmul with is_transpose=True and is_moving_onezero=True) so that it can be kept in SBUF",
+            "use mod_alloc to pre-allocate workspace in SBUF/PSUM",
+            "stronger tiling for contraction / moving-free split",
+            "work on buffer-sized tiles to increase data reuse",
+            "reorder operations to improve locality",
+            "fuse dependent operations",
+            "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
+            "fuse loops that iterate over the same dimension to improve intermediate data reuse",
+            "split loops to enable indepedent optimization",
+            "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
+            "allocate buffers in lower precision such as nl.bfloat16",
+            "allocate and accumulate in PSUM to reduce communication to SBUF",
+            "downcast to lower precision during operations that take dtype as an argument",
+            "keep data in the same layout to avoid transpose operations",
+            "eliminate intermediate tensor materialization by using in-place operations",
+            "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
+            # "use the streaming softmax with running max and scaling trick",
+            "optimize accumulation patterns in psum (tile-wise reduction)",
+            "optimize reduction by fusing tile-wise reductions with transformation passes",
+            "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
+            "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
-            "use a simpler nisa primitive if an nl operation does unnecessary work",
-            "other methods not listed here.",
         ]
+        # return [
+        #     "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
+        #     "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
+        #     "modify loop tiling and tile sizes",
+        #     "double buffering",
+        #     "loop reordering and restructuring",
+        #     "reorder associative operations to work on a tile after it has been collapsed/reduced",
+        #     "optimize memory buffer allocation (sbuf, psum, hbm)",
+        #     "abstract operations into functions so that they can more easily be reused and pipelined",
+        #     "stronger tiling for contraction / moving-free split",
+        #     "work on buffer-sized tiles to increase data reuse",
+        #     "fuse dependent operations",
+        #     "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
+        #     "fuse loops that iterate over the same dimension to improve intermediate data reuse",
+        #     "split loops to enable indepedent optimization",
+        #     "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
+        #     "allocate buffers in lower precision such as nl.bfloat16",
+        #     "use mod_alloc to pre-allocate workspace in PSUM/SBUF",
+        #     "allocate and accumulate in PSUM to reduce communication to SBUF",
+        #     "downcast to lower precision during operations that take dtype as an argument",
+        #     "dispatch operations ahead of time to pipeline them",
+        #     "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
+        #     "keep data in the same layout to avoid transpose operations",
+        #     "eliminate intermediate tensor materialization by using in-place operations",
+        #     "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
+        #     "use the streaming softmax with running max and scaling trick",
+        #     "fuse operations",
+        #     "fuse multiple instructions into one",
+        #     "optimize accumulation patterns in psum (tile-wise reduction)",
+        #     "optimize reduction by fusing tile-wise reductions with transformation passes",
+        #     "optimize for specific tensor shapes and sizes",
+        # # For Mamba
+        #     "Scan carry-over to parallelize the scan operation",
+        #     "Overlap DMA transfers (load/store) with compute, hiding memory latency behind matmul execution.",
+        #     "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
+        #     "Use lower-precision datatypes like bfloat16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
+        #     "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
+        #     "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
+        #     "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+        #     "Block all dimensions to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
+        #     "Group multiple output tiles to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
+        #     "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
+        #     "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
+        # # From Gemmini
+        #     "simplify arithmetic and propagate constants to simplify expressions",
+        #     "reorder computations or blocks of computations",
+        #     "loop unrolling",
+        #     "hoist redundant operations out of loops",
+        #     "substitute operations with equivalent operations that are faster",
+        #     "pipeline operations to better overlap computation and data movement",
+        #     "minimize data movement",
+        #     "other methods not listed here.",
+        # ]
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
@@ -1129,7 +1276,7 @@ class TrnLLMAgent(LLMAgent):
 
         # TODO make it a parameter
         if random.random() < 0.5:
-            prompt_text += "You do not need to implement the code."
+            prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
         prompt_text += self._get_prompt_rules(planning=True, coding=False)
 
@@ -1169,15 +1316,17 @@ class TrnLLMAgent(LLMAgent):
         return prompt_text
 
     def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
-        rules = ["The rewritten program should be semantically equivalent to the original program.",
-                 "Use proper NKI syntax and decorators (@nki.jit).",
-                 "Ensure proper memory buffer usage (sbuf, psum, hbm).",
-                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables.",
+        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+                #  "Use proper NKI syntax and decorators (@nki.jit).",
+                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
-                 "Try to use the nki.language and nki.isa functions defined above.",
-                 ]
+                #  "Try to use the nki.language and nki.isa functions defined above.",
+                ]
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
+            if random.random() < 0.5:
+                rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
         if coding:
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
@@ -1185,4 +1334,39 @@ class TrnLLMAgent(LLMAgent):
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
+        return prompt_text
+
+    def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
+        """
+        Generate a prompt to reimplement failed code based on stdout/stderr feedback.
+        """
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
+        if prob is None:
+            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+        prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
+
+        prompt_text += "The original code is as follows:\n"
+        prompt_text += candidate.parent.code
+        prompt_text += "\n\nYou are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
+        prompt_text += "We attempted to optimize the original code based on the following plan:\n"
+        prompt_text += candidate.plan
+        prompt_text += "\n\nThe generated code was:\n"
+        prompt_text += candidate.code
+        
+        # Add error information
+        prompt_text += "\n\nHowever, the code failed with the following output:\n"
+        if candidate.stderr:
+            prompt_text += "=== STDERR ===\n"
+            prompt_text += candidate.stderr
+            prompt_text += "\n"
+        if candidate.stdout:
+            prompt_text += "=== STDOUT ===\n"
+            prompt_text += candidate.stdout
+            prompt_text += "\n"
+        
+        prompt_text += "\nPlease fix the code to address the errors while still applying the optimization plan. "
+        prompt_text += "Make sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += "\nFixed and optimized NKI code:"
+
         return prompt_text

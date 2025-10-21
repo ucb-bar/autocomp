@@ -54,9 +54,14 @@ class TrnHardwareBackend(HardwareBackend):
             # Run the test code and capture stdout
             cmd = ["python", str(temp_dir.resolve() / f"code_{i}.py")]
             logger.info(f"Running command {' '.join(cmd)}")
-            p = subprocess.run(cmd, 
-                             capture_output=True, text=True)
-            
+            try:
+                p = subprocess.run(cmd, 
+                                 capture_output=True, text=True, timeout=90)
+            except subprocess.TimeoutExpired:
+                logger.error(f"Code {i} timed out after 90 seconds")
+                results.append({"correct": False})
+                continue
+
             # Save stdout and stderr to temp_dir
             with open(temp_dir / f"code_{i}_output.txt", "w") as f:
                 f.write("=== STDOUT ===\n")
@@ -64,23 +69,28 @@ class TrnHardwareBackend(HardwareBackend):
                 f.write("\n=== STDERR ===\n")
                 f.write(p.stderr)
 
+            result_dict = {
+                "correct": False,
+                "latency": None,
+                "stdout": p.stdout,
+                "stderr": p.stderr
+            }
+
             if p.returncode != 0:
                 logger.error(f"Code {i} failed to run")
-                results.append({"correct": False})
+                results.append(result_dict)
                 continue
-            
+
             # Extract latency from stdout
             latency = self._extract_latency(p.stdout)
             if latency is None:
                 logger.error(f"Code {i} did not produce latency output")
-                results.append({"correct": False})
+                results.append(result_dict)
                 continue
             
             logger.info(f"Code {i} latency: {latency}")
-            results.append({
-                "correct": True,
-                "latency": latency,
-                "stdout": p.stdout
-            })
+            result_dict["correct"] = True
+            result_dict["latency"] = latency
+            results.append(result_dict)
 
         return results

@@ -137,3 +137,17 @@ class LLMEnsemble:
                 this_agent_resps = llm.combine_candidates(candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model)
                 cands.extend(this_agent_resps)
         return cands
+
+    def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
+        """
+        Reimplement failed code candidates using stdout/stderr from the last attempt.
+        This method is parallelized across multiple LLM agents.
+        """
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        cands = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                this_agent_resps = llm.reimplement_failed_code_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, save_strs=this_model_save_strs, prob=prob)
+                cands.extend(this_agent_resps)
+        return cands
