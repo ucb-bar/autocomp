@@ -1113,40 +1113,48 @@ class TrnLLMAgent(LLMAgent):
         return [
             # "distribute evenly across different engines (tensor/vector/scalar) and overlap work to maximize throughput",
             "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
+            "minimize data movement",
+            "improve data layout and access patterns",
+            "loop reordering and restructuring",
             "delay softmax division until after all reductions are complete",
             "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
+            "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
             # "reorder operations to work on a tile after it has been collapsed/reduced when mathematically equivalent",
-            "accumulate directly in the Scalar Engine’s reduction registers",
+            # "accumulate directly in the Scalar Engine’s reduction registers",
             "do operations in lower precision such as nl.bfloat16",
-            "move operations inside affine_range loops to parallelize and avoid synchronization",
+            # "move operations inside affine_range loops to parallelize and avoid synchronization",
             "double buffering",
             "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
-            "dispatch operations ahead of time to pipeline them",
-            "pipeline operations to better overlap computation and data movement",
+            # "dispatch operations ahead of time to pipeline them",
+            "pipeline operations to better overlap computation and data movement (using sequential_range)",
             "keep data in SBUF/PSUM instead of storing to and loading from HBM",
             # "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
             # "transpose only one tile of a matrix (using nc_matmul with is_transpose=True and is_moving_onezero=True) so that it can be kept in SBUF",
-            "use mod_alloc to pre-allocate workspace in SBUF/PSUM",
+            # "use mod_alloc to pre-allocate workspace in SBUF/PSUM",
             "stronger tiling for contraction / moving-free split",
-            "work on buffer-sized tiles to increase data reuse",
+            # "work on buffer-sized tiles to increase data reuse",
             "reorder operations to improve locality",
             "fuse dependent operations",
             "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
             "fuse loops that iterate over the same dimension to improve intermediate data reuse",
-            "split loops to enable indepedent optimization",
+            # "split loops to enable independent optimization",
             "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
             "allocate buffers in lower precision such as nl.bfloat16",
-            "allocate and accumulate in PSUM to reduce communication to SBUF",
+            # "allocate and accumulate in PSUM to reduce communication to SBUF",
             "downcast to lower precision during operations that take dtype as an argument",
             "keep data in the same layout to avoid transpose operations",
             "eliminate intermediate tensor materialization by using in-place operations",
-            "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
+            # "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
             # "use the streaming softmax with running max and scaling trick",
-            "optimize accumulation patterns in psum (tile-wise reduction)",
+            "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
             "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
             "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
+            "Scan carry-over to parallelize the scan operation",
+            "Replace general-purpose code with faster specialized instructions",
+            "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            "Other methods not listed here.",
         ]
         # return [
         #     "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
@@ -1263,20 +1271,21 @@ class TrnLLMAgent(LLMAgent):
         else:
             prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
 
-            # TODO make it a parameter
-            choose_or_invent = random.random()
-            if choose_or_invent < 0.1:
-                # Prompt to invent a new optimization inspired by the <optimizations>
-                prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-            elif choose_or_invent < 0.2:
-                # Prompt to invent a new optimization different from the <optimizations>
-                prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-            else:
-                prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
+            prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
+        #     # TODO make it a parameter
+        #     choose_or_invent = random.random()
+        #     if choose_or_invent < 0.1:
+        #         # Prompt to invent a new optimization inspired by the <optimizations>
+        #         prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+        #     elif choose_or_invent < 0.2:
+        #         # Prompt to invent a new optimization different from the <optimizations>
+        #         prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+        #     else:
+        #         prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
 
-        # TODO make it a parameter
-        if random.random() < 0.5:
-            prompt_text += " The plan should be specific to this code and explain how to change it."
+        # # TODO make it a parameter
+        # if random.random() < 0.5:
+        #     prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
         prompt_text += self._get_prompt_rules(planning=True, coding=False)
 
@@ -1327,6 +1336,7 @@ class TrnLLMAgent(LLMAgent):
             rules.append("Limit the scope of the plan to the selected optimization.")
             if random.random() < 0.5:
                 rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
+            rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
         if coding:
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
