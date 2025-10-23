@@ -367,7 +367,7 @@ class BeamSearchStrategy(SearchStrategy):
             "save_strs": save_strs, 
             "prob": self.prob,
             "prompt_end": prompt_end, 
-            "shuffle_opts": True,
+            "shuffle_opts": False,
             "give_score_feedback": self.give_score_feedback,
             "give_util_feedback": self.give_util_feedback,
             "give_spad_acc_feedback": self.give_spad_acc_feedback,
@@ -558,7 +558,7 @@ def main():
     beam_size=6
 
     # Planning prompt knobs
-    dropout_menu_options = 0.3
+    dropout_menu_options = 0.25
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0
