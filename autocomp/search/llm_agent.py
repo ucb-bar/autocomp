@@ -1116,6 +1116,11 @@ class TrnLLMAgent(LLMAgent):
             "minimize data movement",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
+            "inline a function so it can be more easily optimized and fused",
+            "skip computation when it is not needed (e.g. it is completely masked out)",
+            "fuse loops (reordering if necessary)",
+            "increase reuse by keeping data in SBUF across outer loop iterations",
+            "hoist redundant operations out of loops",
             "delay softmax division until after all reductions are complete",
             "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
             "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
@@ -1143,9 +1148,9 @@ class TrnLLMAgent(LLMAgent):
             # "allocate and accumulate in PSUM to reduce communication to SBUF",
             "downcast to lower precision during operations that take dtype as an argument",
             "keep data in the same layout to avoid transpose operations",
-            "eliminate intermediate tensor materialization by using in-place operations",
+            "eliminate intermediate tensor materialization by using in-place operations (storing the output in the same buffer as the input)",
             # "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
-            # "use the streaming softmax with running max and scaling trick",
+            "use the streaming softmax with running max and scaling trick",
             "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
             "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
@@ -1271,18 +1276,19 @@ class TrnLLMAgent(LLMAgent):
         else:
             prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
 
-            prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
-        #     # TODO make it a parameter
-        #     choose_or_invent = random.random()
-        #     if choose_or_invent < 0.1:
-        #         # Prompt to invent a new optimization inspired by the <optimizations>
-        #         prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-        #     elif choose_or_invent < 0.2:
-        #         # Prompt to invent a new optimization different from the <optimizations>
-        #         prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-        #     else:
-        #         prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
+            # prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
+            # TODO make it a parameter
+            choose_or_invent = random.random()
+            if choose_or_invent < 0.1:
+                # Prompt to invent a new optimization inspired by the <optimizations>
+                prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+            elif choose_or_invent < 0.2:
+                # Prompt to invent a new optimization different from the <optimizations>
+                prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+            else:
+                prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
 
+        prompt_text += " The plan should be specific to this code and explain how to change it."
         # # TODO make it a parameter
         # if random.random() < 0.5:
         #     prompt_text += " The plan should be specific to this code and explain how to change it."
@@ -1330,6 +1336,7 @@ class TrnLLMAgent(LLMAgent):
                 #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
+                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
                 #  "Try to use the nki.language and nki.isa functions defined above.",
                 ]
         if planning:
@@ -1355,23 +1362,31 @@ class TrnLLMAgent(LLMAgent):
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
         prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
 
-        prompt_text += "The original code is as follows:\n"
-        prompt_text += candidate.parent.code
+        # prompt_text += "The original code is as follows:\n"
+        # prompt_text += candidate.parent.code
         prompt_text += "\n\nYou are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
-        prompt_text += "We attempted to optimize the original code based on the following plan:\n"
-        prompt_text += candidate.plan
-        prompt_text += "\n\nThe generated code was:\n"
+        # prompt_text += "We attempted to optimize the original code based on the following plan:\n"
+        # prompt_text += candidate.plan
+        # prompt_text += "\n\nThe generated code was:\n"
+        prompt_text += "\nThe code was:\n"
         prompt_text += candidate.code
         
         # Add error information
         prompt_text += "\n\nHowever, the code failed with the following output:\n"
         if candidate.stderr:
             prompt_text += "=== STDERR ===\n"
-            prompt_text += candidate.stderr
+            # Limit the length of each line to 400 characters
+            stderr_lines = candidate.stderr.split("\n")
+            stderr_lines = [line[:400] for line in stderr_lines]
+            stderr_lines = "\n".join(stderr_lines)
+            prompt_text += stderr_lines
             prompt_text += "\n"
         if candidate.stdout:
             prompt_text += "=== STDOUT ===\n"
-            prompt_text += candidate.stdout
+            stdout_lines = candidate.stdout.split("\n")
+            stdout_lines = [line[:400] for line in stdout_lines]
+            stdout_lines = "\n".join(stdout_lines)
+            prompt_text += stdout_lines
             prompt_text += "\n"
         
         prompt_text += "\nPlease fix the code to address the errors while still applying the optimization plan. "

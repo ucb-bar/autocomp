@@ -548,9 +548,9 @@ def main():
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
-    iterations = 15
+    iterations = 10
     prob_type = "trn"  # For trn backend, use "trn"
-    prob_id = 4
+    prob_id = 12
 
     # Beam search parameters
     num_plan_candidates=6

@@ -51,6 +51,60 @@ Indexing:
             # Same as above but use ds (dynamic slice) instead of the native
             # slice syntax
             tile = nl.load(in_tensor[:, nl.ds(i * 512, 512)])
+    Mixing basic tensor indexing and advanced tensor indexing is not supported
+        a = nl.zeros((4, 4), dtype=nl.float32, buffer=nl.sbuf)
+        i = nl.arange(4)[:, None]
+        c = nl.exp(a[i, :]) # Error: Mixing basic tensor indexing and advanced tensor indexing is not supported.
+    You could avoid the error by either use basic indexing or advanced indexing but not both:
+        c = nl.exp(a[:, :]) # ok
+        i = nl.arange(4)[:, None]
+        j = nl.arange(4)[None. :]
+        c = nl.exp(a[i, j]) # also ok
+
+NKI API Masking
+    mask: optional compile-time predicate for all nki.language / nki.isa APIs.
+    → Tells compiler which tile regions to compute or skip, with no runtime cost.
+
+    Defined via comparisons over affine indices:
+    (a < b), (a < b) & (c > d) using nl.arange(), nl.affine_range(), or nl.program_id().
+
+    Example:
+    i_p = nl.arange(128)[:, None]
+    i_f = nl.arange(512)[None, :]
+    out_tile = nl.square(in_tile, mask=((i_p<64) & (i_f<256))) # Computes only [0:64, 0:256].
+
+    Matmul special case: has contraction (lhs_rhs_p), lhs free (lhs_f), rhs free (rhs_f) axes.
+    Uses operand masking:
+    i_p = nl.arange(sz_p)[:, None]
+    i_lhs_f = nl.arange(sz_m)[None, :]
+    i_rhs_f = nl.arange(sz_n)[None, :] # same as `i_rhs_f = i_lhs_f`
+    i_lhs_f_virtual = nl.arange(sz_m)[None, :, None]
+    result = nl.matmul(lhs_T[i_lhs_f <= 64], rhs[i_rhs_f <= 256], transpose_x=True)
+
+    Masking main uses:
+    Handle non-divisible tile sizes (avoid remainder loops).
+    Skip ineffectual computations.
+
+    Example:
+    def tensor_exp_kernel_(in_tensor, out_tensor):
+        sz_p, sz_f = in_tensor.shape
+        i_f = nl.arange(sz_f)[None, :]
+        trip_count = math.ceil(sz_p/nl.tile_size.pmax)
+        for p in nl.affine_range(trip_count):
+            # Generate tensor indices for the input/output tensors
+            # pad index to pmax, for simplicity
+            i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
+
+            # Load input data from external memory to on-chip memory
+            # only read up to sz_p
+            in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p < sz_p))
+
+            # perform the computation
+            out_tile = nl.exp(in_tile, mask=(i_p < sz_p))
+
+            # store the results back to external memory
+            # only write up to sz_p
+            nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p)) # Cleaner loop, compiler prunes partial tiles automatically.
 
 Performance tip:
     Access HBM sequentially; only F-dim striding is hardware-efficient.
@@ -150,12 +204,12 @@ nl.store(c_tensor[0:128, 0:512], c)"""},
         {"header": "nl.silu(x: tile, dtype=None)", "description": "Sigmoid Linear Unit (Swish)."}
     ],
     "ReductionOperations": [
-        {"header": "nl.sum(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Sum of elements along a specified free axis."},
-        {"header": "nl.prod(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
-        {"header": "nl.all(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
-        {"header": "nl.max(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Maximum of elements along the specific free axis (or free axes) of the input."},
-        {"header": "nl.min(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Minimum of elements along the specific free axis (or free axes) of the input."},
-        {"header": "nl.mean(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Mean of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.sum(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Sum of elements along a specified free axis."},
+        {"header": "nl.prod(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
+        {"header": "nl.all(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
+        {"header": "nl.max(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Maximum of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.min(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Minimum of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.mean(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Mean of elements along the specific free axis (or free axes) of the input."},
         # {"header": "nl.all_reduce(x: tile, op: binary_op, program_axes: int|tuple)", "description": "Performs a reduction (e.g., sum, max) across multiple SPMD programs."}
     ],
     "LogicalBitwise": [
@@ -548,7 +602,49 @@ nl.store(b_act_tensor, activated_b)""",
     },
     "nki.isa.affine_select": {
         "header": "nisa.affine_select(pred: affine_expression, on_true_tile: tile, on_false_value: scalar, dtype: nki_dtype=on_true_tile.dtype, mask: predicate=None) -> tile (same shape as on_true_tile)",
-        "examples": "",
+        "description": """Select elements between an input tile on_true_tile and a scalar value on_false_value according to a boolean predicate tile using GpSimd Engine. The predicate tile is calculated on-the-fly in the engine by evaluating an affine expression element-by-element as indicated in pred.
+
+pred must meet the following requirements:
+
+        It must not depend on any runtime variables that can’t be resolved at compile-time.
+
+        It can’t be multiple masks combined using logical operators such as & and |.
+
+For a complex predicate that doesn’t meet the above requirements, consider using nl.where.
+
+The input tile on_true_tile, the calculated boolean predicate tile expressed by pred, and the returned output tile of this instruction must have the same shape. If the predicate value of a given position is True, the corresponding output element will take the element from on_true_tile in the same position. If the predicate value of a given position is False, the corresponding output element will take the value of on_false_value.
+
+A common use case for affine_select is to apply a causal mask on the attention scores for transformer decoder models.
+
+This instruction allows any float or 8-bit/16-bit integer data types for both the input data tile and output tile (see Supported Data Types for more information). The output tile data type is specified using the dtype field. If dtype is not specified, the output data type will be the same as the input data type of data. However, the data type of on_false_value must be float32, regardless of the input/output tile data types.
+
+Estimated instruction cost:
+
+GPSIMD_START + N GpSimd Engine cycles, where N is the number of elements per partition in on_true_tile and GPSIMD_START is the instruction startup overhead on GpSimdE, roughly 150 engine cycles.
+
+Parameters:
+
+        pred – an affine expression that defines the boolean predicate
+
+        on_true_tile – an input tile for selection with a True predicate value
+
+        on_false_value – a scalar value for selection with a False predicate value
+
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+Returns:
+
+    an output tile with values selected from either on_true_tile or on_false_value according to the following equation: output[x] = (pred[x] > 0) ? on_true_tile[x] : on_false_value
+""",
+        "examples": """# Example 1: Take tile a of shape [128, 128] and replace its
+# upper triangle with nl.fp32.min;
+ix, iy = nl.mgrid[0:128, 0:128]
+a = nl.load(a_tensor[ix, iy])
+b = nisa.affine_select(pred=(iy <ix), on_true_tile=a[ix, iy], on_false_value=nl.fp32.min)
+nl.store(b_tensor[ix, iy], b)
+""",
     },
     "nki.isa.bn_aggr": {
         "header": "nisa.bn_aggr(data: tile, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (shape: [par_dim, 2])",
@@ -747,12 +843,25 @@ nisa.dma_copy(dst=out_tensor[idx_tile, iy], src=inp_tile, oob_mode=nisa.oob_mode
         "header": "nisa.nc_match_replace8(data: tile, vals: tile, imm: scalar, dst_idx: tile=None, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (modified data tensor)",
         "examples": "",
     },
+    "nki.language.matmul": {
+        "header": "nl.matmul(x, y, *, transpose_x=False, mask=None)",
+        "description": """x @ y matrix multiplication of x and y. (Similar to numpy.matmul).
+Parameters:
+        x – a tile on SBUF (partition dimension <= 128, free dimension <= 128), x’s free dimension must match y’s partition dimension.
+        y – a tile on SBUF (partition dimension <= 128, free dimension <= 512)
+        transpose_x – Defaults to False. If True, x is treated as already transposed. If False, an additional transpose will be inserted to make x’s partition dimension the contract dimension of the matmul to align with the Tensor Engine.
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+Returns:
+    x @ y or x.T @ y if transpose_x=True
+""",
+    },
     "nki.isa.nc_matmul": {
         "header": "nisa.nc_matmul(stationary: tile[SBUF], moving: tile[SBUF], is_stationary_onezero: bool=False, is_moving_onezero: bool=False, is_transpose: bool=False, tile_position: tuple=(), tile_size: tuple=(), mask: predicate=None) -> tile[PSUM](shape:(M, N))",
         "description": """Compute stationary.T @ moving using the Tensor Engine.
 Make the contraction dimension as close as possible to 128 without exceeding it. The stationary tensor should be transposed before or during the call so that the contraction dimension is in the first (K, M) position instead of (M, K).
 Both stationary and moving inputs must be SBUF tiles, and the output must be a PSUM tile.
 If the contraction dimension exceeds 128, accumulate multiple nc_matmul outputs into the same PSUM tile.
+The nc_matmul instruction currently supports float8_e4m3/float8_e5m2/bfloat16/float16/tfloat32/float32 input data types.
 
 Cost (Tensor Engine Cycles)
 if input data type is one of float8_e4m3/float8_e5m2/bfloat16/float16/tfloat32, cost is max(min(64, N_stationary), N_moving)
@@ -885,7 +994,16 @@ All three compute engines, Vector, Scalar and GpSimd Engine can perform tensor c
 In addition, since GpSimd Engine cannot access PSUM in NeuronCore, Scalar or Vector Engine must be chosen when the input or output tile is in PSUM (see NeuronCore-v2 Compute Engines for details). By default, this API returns a tile in SBUF, unless the returned value is assigned to a pre-declared PSUM tile.
 
 Estimated instruction cost:
-max(MIN_II, N) engine cycles, where N is the number of elements per partition in the input tile, and MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.""",
+max(MIN_II, N) engine cycles, where N is the number of elements per partition in the input tile, and MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+        src – the source of copy, must be a tile in SBUF or PSUM.
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+        engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.scalar_engine, nki.isa.gpsimd_engine or nki.isa.unknown_engine (default, compiler selects best engine based on engine workload).
+Returns:
+    a tile with the same content and partition axis size as the src tile.
+""",
         "examples": """# Example 1: Copy over the tensor to another tensor using the Vector engine.
 x = nl.load(in_tensor)
 x_copy = nisa.tensor_copy(x, engine=nisa.vector_engine)
@@ -1140,6 +1258,7 @@ kernel_insts_dict = {
         "nki.isa.tensor_copy",
     ],
     "gemm": [
+        "nki.language.matmul",
         "nki.isa.nc_matmul",
         "nki.isa.nc_transpose",
     ],
@@ -1167,11 +1286,15 @@ kernel_insts_dict = {
         "nki.isa.tensor_reduce",
         "nki.isa.tensor_scalar",
         "nki.isa.tensor_scalar_reduce",
+    ],
+    "causal_mask": [
+        "nki.isa.affine_select",
     ]
 }
 
 workload_to_kernel_dict = {
     "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
+    "attention_decoder": ["gemm", "softmax", "causal_mask"],
 }
 
 prob_id_to_name = {
@@ -1180,6 +1303,10 @@ prob_id_to_name = {
     2: "layernorm",
     3: "mamba",
     4: "attention",
+    9: "attention_decoder",
+    10: "attention_decoder",
+    11: "attention_decoder",
+    12: "attention_decoder",
 }
 
 class NkiIsaGenerator:
