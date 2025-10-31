@@ -159,7 +159,7 @@ def verify_model(loaded_model, inputs, args):
     for i in range(1, args.num_verification_iterations):
         logger.debug("result[{}] = {}, result[{}] = {}".format(i, verfication_res[i], i - 1,
                                                                verfication_res[i - 1]))
-        np.testing.assert_allclose(verfication_res[i], verfication_res[i - 1])
+        np.testing.assert_allclose(verfication_res[i].to(torch.float32), verfication_res[i - 1].to(torch.float32))
     
     logger.info("Done with verification")
 

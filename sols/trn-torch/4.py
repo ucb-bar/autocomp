@@ -60,6 +60,48 @@ class AttentionManual(nn.Module):
 
 
 @torch.no_grad()
+class AttentionSoftmax(nn.Module):
+    """
+    Attention implementation using PyTorch's built-in softmax.
+    
+    Computes: softmax(Q^T @ K) @ V^T
+    
+    Input shapes:
+        q: (d_head, seqlen_q)
+        k: (d_head, seqlen_kv)
+        v: (d_head, seqlen_kv)
+    
+    Output shape: (seqlen_q, d_head)
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, q, k, v):
+        """
+        Args:
+            q: Query tensor of shape (d_head, seqlen_q)
+            k: Key tensor of shape (d_head, seqlen_kv)
+            v: Value tensor of shape (d_head, seqlen_kv)
+        
+        Returns:
+            attn_out: Attention output of shape (seqlen_q, d_head)
+        """
+        # Q^T @ K -> (seqlen_q, seqlen_kv)
+        qk = torch.matmul(q.T, k)
+        
+        # Apply built-in softmax along dim=1 (over keys)
+        scores = torch.softmax(qk, dim=1)  # (seqlen_q, seqlen_kv)
+        
+        # V transpose
+        v_t = v.T  # (seqlen_kv, d_head)
+        
+        # scores @ V^T -> (seqlen_q, d_head)
+        attn_out = torch.matmul(scores, v_t)
+        
+        return attn_out
+
+
+@torch.no_grad()
 class AttentionBuiltin(nn.Module):
     """
     Attention module using PyTorch's built-in scaled_dot_product_attention.
@@ -109,7 +151,7 @@ class AttentionBuiltin(nn.Module):
 
 
 # Choose which implementation to use
-Attention = AttentionManual  # Change to AttentionManual to test the manual version
+Attention = AttentionSoftmax  # Change to AttentionManual to test the manual version
 
 
 def create_model_and_input():
@@ -129,9 +171,9 @@ def create_model_and_input():
     seqlen_kv = 2048  # Key/Value sequence length
     
     # Create input tensors with shapes matching numpy reference
-    q = torch.randn([d_head, seqlen_q], dtype=torch.float32)
-    k = torch.randn([d_head, seqlen_kv], dtype=torch.float32)
-    v = torch.randn([d_head, seqlen_kv], dtype=torch.float32)
+    q = torch.randn([d_head, seqlen_q], dtype=torch.bfloat16)
+    k = torch.randn([d_head, seqlen_kv], dtype=torch.bfloat16)
+    v = torch.randn([d_head, seqlen_kv], dtype=torch.bfloat16)
     
     # Create model
     model = Attention()

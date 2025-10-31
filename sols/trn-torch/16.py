@@ -12,14 +12,21 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 @torch.no_grad()
-class Matmult(nn.Module):
-    """Matrix multiplication module using nn.Linear"""
-    def __init__(self, in_features, out_features, is_add_bias):
+class RMSNormModule(nn.Module):
+    """RMSNorm module using torch_rmsnorm_kernel function"""
+    def __init__(self):
         super().__init__()
-        self.matmult = nn.Linear(in_features=in_features, out_features=out_features, bias=is_add_bias, dtype=torch.bfloat16)
 
-    def forward(self, x):
-        return self.matmult(x).mean()
+    def forward(self, a_tensor, g_tensor):
+        # Square the tensor (element-wise)
+        in_square = a_tensor.pow(2)
+        # Calculate means in the free dimension
+        mean = in_square.mean(dim=1, keepdim=True)
+        # Scale by reciprocal of sqrt(mean)
+        tensor = a_tensor * torch.rsqrt(mean)
+        
+        # Scale the output by the weight
+        return tensor * g_tensor
 
 
 def create_model_and_input():
@@ -34,23 +41,21 @@ def create_model_and_input():
         inputs: Tuple of input tensors for the model. Use a single-element tuple for one input.
     """
     # Configuration - modify these values
-    batch_size = 1
-    m = 4096
-    k = 8192
-    n = 8192
-    add_bias = True
+    batch_size = 4096
+    hidden_size = 512
     
-    # Create input matrix with shape [B, M, K]
-    input_tensor = torch.randn([batch_size, m, k], dtype=torch.bfloat16)
+    # Create input tensor with shape [hidden_size, batch_size]
+    a_tensor = torch.randn([hidden_size, batch_size], dtype=torch.bfloat16)
+    g_tensor = torch.randn([batch_size], dtype=torch.bfloat16)
     
-    # Create model with K input features and N output features
-    model = Matmult(k, n, add_bias)
+    # Create RMSNorm model
+    model = RMSNormModule()
     model.eval()
     
-    description = f'Matrix Multiplication: input=[{batch_size}, {m}, {k}], output=[{batch_size}, {m}, {n}]'
+    description = f'RMSNorm: input=[{hidden_size}, {batch_size}], normalized_shape={hidden_size}'
     
-    # Return inputs as a tuple (single input in this case)
-    return model, (input_tensor,), description
+    # Return inputs as a tuple (input_tensor, gamma)
+    return model, (a_tensor, g_tensor), description
 
 # ============================================================================
 # END MODULE DEFINITION

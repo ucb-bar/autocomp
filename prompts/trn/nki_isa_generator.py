@@ -1020,7 +1020,40 @@ nl.store(out_tensor, value=x_copy)
     },
     "nki.isa.tensor_copy_predicated": {
         "header": "nisa.tensor_copy_predicated(src: tile|scalar, dst: tile, predicate: tile, reverse_pred: bool=False, dtype: nki_dtype=src.dtype, mask: predicate=None) -> None",
-        "examples": "",
+        "description": """Conditionally copy elements from the src tile to the destination tile on SBUF / PSUM based on a predicate using Vector Engine.
+This instruction provides low-level control over conditional data movement on NeuronCores, optimized for scenarios where only selective copying of elements is needed. Either src or predicate may be in PSUM, but not both simultaneously. Both src and predicate are permitted to be in SBUF.
+Shape and data type constraints:
+    1. src (if it is a tensor), dst, and predicate must occupy the same number of partitions and same number of elements per partition.
+    2. predicate must be of type uint8, uint16, or uint32.
+    3. src and dst must share the same data type.
+Behavior:
+    Where predicate is True: The corresponding elements from src are copied to dst tile. If src is a scalar, the scalar is copied to the dst tile.
+    Where predicate is False: The corresponding values in dst tile are unmodified
+
+Estimated instruction cost (Vector Engine Cycles):
+max(MIN_II, N), if src is from SBUF and predicate is from PSUM or the other way around
+max(MIN_II, 2N), if both src and dst are in SBUF
+N is the number of elements per partition in src tile
+MIN_II is the minimum instruction initiation interval for small input tiles. MIN_II is roughly 64 engine cycles.
+
+Parameters:
+        src – The source tile or number to copy elements from when predicate is True
+        dst – The destination tile to copy elements to
+        predicate – A tile that determines which elements to copy
+        reverse_pred – A boolean that reverses the effect of predicate.
+        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+        dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+""",
+        "examples": """# Example 1: Conditionally copies elements from the `on_true` tile to 
+# SBUF/PSUM destination tile using Vector Engine, where copying occurs 
+# only at positions where the predicate evaluates to True.
+pre_tile: tensor[128, 512] = nl.load(predicate)
+src_tile: tensor[128, 512] = nl.load(on_true_tensor)
+ix, iy = nl.mgrid[0:128, 0:512]
+dst_tile: tensor[128, 512] = nl.zeros(shape=src_tile.shape, dtype=src_tile.dtype)
+dst_tile[ix, iy] = nl.load(on_false_tensor)
+nisa.tensor_copy_predicated(src=src_tile, dst=dst_tile, predicate=pre_tile)
+""",
     },
     "nki.isa.tensor_partition_reduce": {
         "header": "nisa.tensor_partition_reduce(op: reduce_function, data: tile, dtype: nki_dtype=data.dtype, mask: predicate=None) -> tile (reduced result)",
@@ -1280,8 +1313,9 @@ kernel_insts_dict = {
     ],
     "softmax": [
         "ElementWiseMath",
-        "ShapeAndSelection",
         "ActivationFunctions",
+        "ReductionOperations",
+        "ShapeAndSelection",
         "nki.isa.activation",
         "nki.isa.tensor_reduce",
         "nki.isa.tensor_scalar",
@@ -1289,6 +1323,7 @@ kernel_insts_dict = {
     ],
     "causal_mask": [
         "nki.isa.affine_select",
+        "nki.isa.tensor_copy_predicated",
     ]
 }
 
@@ -1307,6 +1342,7 @@ prob_id_to_name = {
     10: "attention_decoder",
     11: "attention_decoder",
     12: "attention_decoder",
+    15: "attention_decoder",
 }
 
 class NkiIsaGenerator:

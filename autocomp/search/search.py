@@ -550,7 +550,7 @@ def main():
     search_strategy = "beam"
     iterations = 10
     prob_type = "trn"  # For trn backend, use "trn"
-    prob_id = 12
+    prob_id = 15
 
     # Beam search parameters
     num_plan_candidates=6
