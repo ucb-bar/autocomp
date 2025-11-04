@@ -322,6 +322,7 @@ class BeamSearchStrategy(SearchStrategy):
                  trigger_exhaustive_iters: int,
                  start_exhaustive_iters: int,
                  prevent_duplicate_level: int,
+                 reimplement_failed: bool,
                 ):
         super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level)
         self.num_analyses = num_analyses
@@ -333,6 +334,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_threshold = trigger_exhaustive_threshold
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
+        self.reimplement_failed = reimplement_failed
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -490,24 +492,25 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info(f"Evaluated {len(evaluated_code_candidates)} code candidates.")
 
             # Step 3.5: Reimplement failed candidates
-            failed_candidates = [c for c in evaluated_code_candidates if c.score == float("inf") and (c.stdout or c.stderr)]
-            if len(failed_candidates) > 0:
-                logger.info(f"Found {len(failed_candidates)} failed candidates with error output. Attempting to reimplement...")
-                save_dir = self.output_dir / f"reimplemented-code-iter-{i}"
-                save_dir.mkdir(parents=True, exist_ok=True)
-                save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
-                # Reimplement with the same number of samples as original code candidates
-                reimplemented_candidates = self.llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
-                logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
-                
-                # Evaluate the reimplemented candidates
-                save_dir = self.output_dir / f"eval-reimplemented-results-iter-{i}"
-                save_dir.mkdir(parents=True, exist_ok=True)
-                reimplemented_evaluated = self.evaluate_candidates(reimplemented_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
-                logger.info(f"Evaluated {len(reimplemented_evaluated)} reimplemented candidates.")
-                
-                # Add successful reimplementations to the evaluated candidates list
-                evaluated_code_candidates.extend(reimplemented_evaluated)
+            if self.reimplement_failed:
+                failed_candidates = [c for c in evaluated_code_candidates if c.score == float("inf") and (c.stdout or c.stderr)]
+                if len(failed_candidates) > 0:
+                    logger.info(f"Found {len(failed_candidates)} failed candidates with error output. Attempting to reimplement...")
+                    save_dir = self.output_dir / f"reimplemented-code-iter-{i}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
+                    # Reimplement with the same number of samples as original code candidates
+                    reimplemented_candidates = self.llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
+                    logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
+                    
+                    # Evaluate the reimplemented candidates
+                    save_dir = self.output_dir / f"eval-reimplemented-results-iter-{i}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    reimplemented_evaluated = self.evaluate_candidates(reimplemented_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
+                    logger.info(f"Evaluated {len(reimplemented_evaluated)} reimplemented candidates.")
+                    
+                    # Add successful reimplementations to the evaluated candidates list
+                    evaluated_code_candidates.extend(reimplemented_evaluated)
 
             # Step 4: Filter and rank the code candidates
             improving_candidates = self.filter_code_candidates(evaluated_code_candidates, cur_iter=i, num_iters=iterations) # No num_to_keep means keep all improving candidates
@@ -580,6 +583,9 @@ def main():
     # 1: prevent candidates with same parent
     # 2: prevent candidates with any parents in common (any nodes below root have branching factor 1)
     prevent_duplicate_level = 0
+    
+    # Reimplement failed candidates
+    reimplement_failed = True
 
     # Sanitize model names for file system compatibility
     for i in range(len(models)):
@@ -658,7 +664,7 @@ def main():
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed)
 
     # Start the optimization process
     optimizer.optimize(iterations)
