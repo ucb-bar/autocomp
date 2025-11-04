@@ -16,7 +16,7 @@ Welcome to the code repository of **Autocomp**. Check out our introductory [📝
 **Update (11/3/2025)**: Added code/documentation for setting up Trainium backend.
 Check out [📝 blog post 3](https://charleshong3.github.io/blog/autocomp_trainium.html) for more details.
 
-**📚 Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
+**📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
 
