@@ -173,14 +173,15 @@ class LLMClient():
             model = self.client.models.list()
             self.model = model.data[0].id
 
-    def chat_async(self, msgs_lst: list[list[dict]], num_candidates=10, temperature=0.7) -> list[list[str]]:
+    def chat_async(self, msgs_lst: list[list[dict]], num_candidates=10, temperature=None) -> list[list[str]]:
         if self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "n":num_candidates,
-                "temperature":temperature,
             }
+            if temperature is not None:
+                kwargs["temperature"] = temperature
             if "kevin" in self.model:
                 kwargs["max_tokens"] = 16384
             if "o1" in self.model or "o3" in self.model:
@@ -194,15 +195,16 @@ class LLMClient():
                 responses.append(this_msg_resps)
             return responses
 
-    def chat(self, messages: list, num_candidates=10, temperature=0.7):
+    def chat(self, messages: list, num_candidates=10, temperature=None):
         responses = []
         if isinstance(self.client, OpenAI) or isinstance(self.client, Together):
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "messages":messages,
                 "n":num_candidates,
-                "temperature":temperature,
             }
+            if temperature is not None:
+                kwargs["temperature"] = temperature
             if "kevin" in self.model:
                 kwargs["max_tokens"] = 8192
                 kwargs["timeout"] = 1200

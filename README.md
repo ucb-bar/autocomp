@@ -4,7 +4,7 @@
     <img src="img/2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
 </div> 
 
-# Autocomp: LLM-Driven Code Optimization for Tensor Accelerators
+# Autocomp: AI Code Optimizer for Tensor Accelerators
 
 [![arXiv](https://img.shields.io/badge/arXiv-2505.18574-b31b1b.svg)](https://arxiv.org/abs/2505.18574)
 [![Blog Post](https://img.shields.io/badge/Blog-github.io-blue)](https://charleshong3.github.io/blog/autocomp.html)
@@ -13,34 +13,50 @@ Welcome to the code repository of **Autocomp**. Check out our introductory [📝
 
 **Update (9/22/2025)**: Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out [📝 blog post 2](https://charleshong3.github.io/blog/autocomp_update.html) for more details.
 
-**📚 Paper**: [**Autocomp: LLM-Driven Code Optimization for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
+**Update (11/3/2025)**: Added code/documentation for setting up Trainium backend.
+Check out [📝 blog post 3](https://charleshong3.github.io/blog/autocomp_trainium.html) for more details.
+
+**📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
 
 # ⚙️ Setup
 
+## Backend Setup
+
 Currently supported backends:
-- CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
+- Trainium ([trn_setup.md](autocomp/backend/trn_setup.md))
+- CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
 
 Partially supported backends:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this backend.
+
+## LLM Endpoint Setup
+
+Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create a custom `openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`) file in `autocomp/common/openai_key.py`, which defines the variable `key` as follows:
+
+```python
+key = "YOUR_OPENAI_API_KEY"
+```
 
 ## 🚀 Usage
 
 `autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as backend, models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
 Notable parameters:
-- `backend`: The hardware backend to use. Currently supported backends are `cuda` and `gemmini`.
+- `backend`: The hardware backend to use. Currently supported backends are `gemmini`, `trn`, and `cuda`.
 - `models`: The list of models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints (OpenAI, Anthropic, Gemini, Together) are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
 - `simulator`: The evaluation method to use.
-  - For CUDA,`kernelbench`
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
+  - For Trainium, `trn`
+  - For CUDA,`kernelbench`
 - `iterations`: The number of iterations to run.
 - `search_strategy`: The search strategy to use. Currently only `beam` is supported.
 - `prob_type`: The problem type to use.
-  - For CUDA, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
+  - For Trainium, `trn-tutorial` or `trn-advanced`.
+  - For CUDA, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
 - `prob_id`: The problem ID to use.
 
 ## 📁 Repository Structure
@@ -55,9 +71,10 @@ Notable parameters:
 - `backend/` - Hardware evaluation utilities for different backends.
   - `hardware_backend.py` - Base class for hardware backends.
   - `gemmini_eval.py` - Hardware evaluation utilities for Gemmini. Must configure paths to Chipyard/FireSim/Gemmini here.
-  - `kb_eval.py` - Hardware evaluation utilities for KernelBench.
+  - `trn_eval.py` - Hardware evaluation utilities for Trainium.
+  - `kb_eval.py` - Hardware evaluation utilities for KernelBench. Must configure path to KernelBench here.
 - `common/` - Shared utilities and helper functions
-  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Claude, Gemini, Together. Implements parallel calls for OpenAI and Together.
+  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Anthropic, Gemini, Together. Implements parallel calls for OpenAI and Together.
   - `my_logging.py` - Custom logging functionality.
   - `utils.py` - General utility functions.
 

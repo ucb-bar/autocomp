@@ -13,7 +13,9 @@ def copy_candidate(candidate: 'CodeCandidate') -> 'CodeCandidate':
         score=candidate.score,
         spad_acc_stats=candidate.spad_acc_stats[:],  # Copy the spad_acc_stats list
         plan_gen_model=candidate.plan_gen_model,
-        code_gen_model=candidate.code_gen_model
+        code_gen_model=candidate.code_gen_model,
+        stdout=candidate.stdout,
+        stderr=candidate.stderr
     )
     return new_candidate
 
@@ -27,7 +29,7 @@ class CodeCandidate:
     Represents a single version of the code with an associated optimization plan.
     """
     def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, spad_acc_stats: list[str]=None,
-                 plan_gen_model=None, code_gen_model=None):
+                 plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
@@ -45,6 +47,8 @@ class CodeCandidate:
 
         self.plan_gen_model = plan_gen_model
         self.code_gen_model = code_gen_model
+        self.stdout = stdout
+        self.stderr = stderr
 
     def __repr__(self):
         repr_str = f"CodeCandidate(parent={repr(self.parent)},\nplan="
@@ -54,7 +58,7 @@ class CodeCandidate:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
         escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}')"
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
         return repr_str
 
     def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:

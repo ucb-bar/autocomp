@@ -1,15 +1,17 @@
 import pathlib
 import random
+import json
 
 import wandb
 
 from autocomp.common import logger
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent
+from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, TrnLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kb_eval import KBHardwareBackend
+from autocomp.backend.trn_eval import TrnHardwareBackend
 from autocomp.search.prob import Prob
 
 class SearchStrategy:
@@ -72,18 +74,48 @@ class SearchStrategy:
         """
         raise NotImplementedError
     
-    def evaluate_candidates(self, candidates: list[CodeCandidate], metric: str) -> list[CodeCandidate]:
+    def evaluate_candidates(self, candidates: list[CodeCandidate], metric: str, cur_iter: int=None, save_dir: pathlib.Path=None) -> list[CodeCandidate]:
         """
         Evaluate the candidates based on the provided optimization metric
         and update their scores.
         """
-        per_cand_stats = self.hw_backend.evaluate_code(self.prob, [candidate.code for candidate in candidates], self.simulator)
+        # Load stats if they already exist in the save_dir
+        if save_dir is not None and save_dir.exists() and all((save_dir / f"code_{i}_result.txt").exists() for i in range(len(candidates))):
+            logger.info(f"Loading cached evaluation results for all {len(candidates)} candidates from {save_dir}")
+            per_cand_stats = []
+            for i in range(len(candidates)):
+                with open(save_dir / f"code_{i}_result.txt", "r") as f:
+                    per_cand_stats.append(json.load(f))
+        else:
+            per_cand_stats = self.hw_backend.evaluate_code(self.prob, [candidate.code for candidate in candidates], self.simulator)
+
+            # Save stats
+            if save_dir is not None:
+                for cand_i, stats in enumerate(per_cand_stats):
+                    with open(save_dir / f"code_{cand_i}_result.txt", "w") as f:
+                        json.dump(stats, f, indent=4)
+                    with open(save_dir / f"code_{cand_i}_result_full.txt", "w") as f:
+                        f.write(str(stats).replace("\\n", "\n"))
+                        if candidates[cand_i].parent is not None:
+                            f.write("\nPrev latency: "+str(candidates[cand_i].parent.score)+"\n")
+                        if stats["correct"]:
+                            f.write("New latency: "+ str(stats[metric]) +"\n")
+                        else:
+                            f.write("New latency: N/A\n")
+                        f.write("Plan: " + candidates[cand_i].plan.replace("\\n", "\n") +"\n")
+                        f.write("\n"+repr(candidates[cand_i]))
+
         for cand_i, stats in enumerate(per_cand_stats):
             if stats["correct"]:
                 # Assume the metric exists if the code passed tests
                 candidates[cand_i].score = stats[metric]
             else:
                 candidates[cand_i].score = float("inf")
+            # Store stdout and stderr for failed candidates
+            if "stdout" in stats:
+                candidates[cand_i].stdout = stats["stdout"]
+            if "stderr" in stats:
+                candidates[cand_i].stderr = stats["stderr"]
         return candidates
 
     def add_feedback(self, candidates: list[CodeCandidate]) -> list[CodeCandidate]:
@@ -118,9 +150,9 @@ class SearchStrategy:
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
 
         keep_factor = 1
-        if cur_iter is not None and num_iters is not None:
-            if cur_iter <= 2:
-                keep_factor = 1.5
+        # if cur_iter is not None and num_iters is not None:
+        #     if cur_iter <= 2:
+        #         keep_factor = 1.5
         if num_to_keep is None:
             cur_candidates = []
             for c in code_candidates:
@@ -232,12 +264,14 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             impl_candidates = []
             for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(plan_only_cand.parent)
-                this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}")
+                this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}", prob=self.prob)
                 impl_candidates.extend(this_plan_impl_candidates)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             # Step 3: Evaluate the code candidates
-            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric)
+            save_dir = self.output_dir / f"eval-results-iter-{i}"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
             logger.info(f"Evaluated {len(evaluated_code_candidates)} code candidates.")
 
             # Step 4: Filter and rank the code candidates
@@ -288,6 +322,7 @@ class BeamSearchStrategy(SearchStrategy):
                  trigger_exhaustive_iters: int,
                  start_exhaustive_iters: int,
                  prevent_duplicate_level: int,
+                 reimplement_failed: bool,
                 ):
         super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level)
         self.num_analyses = num_analyses
@@ -299,6 +334,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_threshold = trigger_exhaustive_threshold
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
+        self.reimplement_failed = reimplement_failed
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -439,7 +475,7 @@ class BeamSearchStrategy(SearchStrategy):
             for cand_idx, cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples)
+            impl_candidates = self.llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
@@ -450,8 +486,31 @@ class BeamSearchStrategy(SearchStrategy):
                 impl_candidates.extend(combined_candidates)
 
             # Step 3: Evaluate the code candidates
-            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric)
+            save_dir = self.output_dir / f"eval-results-iter-{i}"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
             logger.info(f"Evaluated {len(evaluated_code_candidates)} code candidates.")
+
+            # Step 3.5: Reimplement failed candidates
+            if self.reimplement_failed:
+                failed_candidates = [c for c in evaluated_code_candidates if c.score == float("inf") and (c.stdout or c.stderr)]
+                if len(failed_candidates) > 0:
+                    logger.info(f"Found {len(failed_candidates)} failed candidates with error output. Attempting to reimplement...")
+                    save_dir = self.output_dir / f"reimplemented-code-iter-{i}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
+                    # Reimplement with the same number of samples as original code candidates
+                    reimplemented_candidates = self.llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
+                    logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
+                    
+                    # Evaluate the reimplemented candidates
+                    save_dir = self.output_dir / f"eval-reimplemented-results-iter-{i}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    reimplemented_evaluated = self.evaluate_candidates(reimplemented_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
+                    logger.info(f"Evaluated {len(reimplemented_evaluated)} reimplemented candidates.")
+                    
+                    # Add successful reimplementations to the evaluated candidates list
+                    evaluated_code_candidates.extend(reimplemented_evaluated)
 
             # Step 4: Filter and rank the code candidates
             improving_candidates = self.filter_code_candidates(evaluated_code_candidates, cur_iter=i, num_iters=iterations) # No num_to_keep means keep all improving candidates
@@ -486,15 +545,14 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "cuda"
-    models = ["o3-mini", "gpt-4o"]
-    # models = ["kevin"]
+    backend = "trn"  # Options: "gemmini", "trn", "cuda"
+    models = ["o4-mini", "gpt-5"]
     metric = "latency"
-    simulator = "kernelbench" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"
+    simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "kb-level3"
-    prob_id = 10
+    prob_type = "trn-tutorial"  # For trn backend, use "trn"
+    prob_id = 0
 
     # Beam search parameters
     num_plan_candidates=6
@@ -502,7 +560,7 @@ def main():
     beam_size=6
 
     # Planning prompt knobs
-    dropout_menu_options = 0.2
+    dropout_menu_options = 0.25
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0
@@ -524,6 +582,10 @@ def main():
     # 1: prevent candidates with same parent
     # 2: prevent candidates with any parents in common (any nodes below root have branching factor 1)
     prevent_duplicate_level = 0
+    
+    # Reimplement failed candidates
+    # Only works for trn
+    reimplement_failed = True
 
     # Sanitize model names for file system compatibility
     for i in range(len(models)):
@@ -561,6 +623,14 @@ def main():
         else:
             with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 initial_code = f.read()
+    elif backend == "trn":
+        # Find file matching pattern for Trainium/NKI kernels
+        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob.prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            initial_code = f.read()
 
     # Initialize hardware backend and LLM ensemble
     if backend == "cuda":
@@ -582,6 +652,9 @@ def main():
             acc_size_kb = 128
         hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
         llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
+    elif backend == "trn":
+        hw_backend = TrnHardwareBackend()
+        llm = LLMEnsemble([TrnLLMAgent(model) for model in models])
     else:
         raise ValueError(f"Unknown backend: {backend}")
     if search_strategy == "exhaustive":
@@ -591,7 +664,7 @@ def main():
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed)
 
     # Start the optimization process
     optimizer.optimize(iterations)
