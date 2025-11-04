@@ -235,7 +235,7 @@ def test_nki(ref_func, test_func):
   B_D_SIZE = 128
   B_F_SIZE = 512
   Q_TILE_SIZE = 128
-  seq_tile_size = 2048
+  seq_tile_size = 16384
   num_q_tiles = seq_tile_size // B_P_SIZE  # 16 tiles
   
   # Test multiple q_tile_idx values to cover different masking scenarios:
