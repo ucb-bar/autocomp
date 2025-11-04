@@ -4,7 +4,7 @@
     <img src="img/2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
 </div> 
 
-# Autocomp: LLM-Driven Code Optimization for Tensor Accelerators
+# Autocomp: AI Code Optimizer for Tensor Accelerators
 
 [![arXiv](https://img.shields.io/badge/arXiv-2505.18574-b31b1b.svg)](https://arxiv.org/abs/2505.18574)
 [![Blog Post](https://img.shields.io/badge/Blog-github.io-blue)](https://charleshong3.github.io/blog/autocomp.html)
