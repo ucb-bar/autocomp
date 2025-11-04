@@ -1259,7 +1259,7 @@ class TrnLLMAgent(LLMAgent):
 
         # Initialize the prompt with NKI context
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
+        prompt_text += self.nki_isa_generator.generate_isa(prob)
         
         prompt_text += parents_prompt
 
@@ -1304,7 +1304,7 @@ class TrnLLMAgent(LLMAgent):
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
-        prompt_text += self.nki_isa_generator.generate_isa(prob.prob_id)
+        prompt_text += self.nki_isa_generator.generate_isa(prob)
 
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code

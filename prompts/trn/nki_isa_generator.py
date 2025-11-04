@@ -1439,7 +1439,7 @@ class NkiIsaGenerator:
         self.isa_dict = nki_isa_dict
         self.kernel_insts_dict = kernel_insts_dict
         self.workload_to_kernel_dict = workload_to_kernel_dict
-        self.prob_id_to_name = prob_id_to_name
+        self.prob_to_name = prob_to_name
 
     def generate_isa_string(self, insts: Iterable[str]):
         # First expand those that are lists into individual dictionaries
@@ -1473,7 +1473,7 @@ class NkiIsaGenerator:
         if isinstance(prob_or_name, Prob):
             name = self.prob_to_name[prob_or_name.prob_type][prob_or_name.prob_id]
         elif isinstance(prob_or_name, int):
-            name = self.prob_id_to_name[prob_or_name]
+            name = self.prob_to_name[prob_or_name]
         elif isinstance(prob_or_name, str):
             name = prob_or_name
         else:

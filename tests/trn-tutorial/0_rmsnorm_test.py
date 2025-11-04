@@ -78,8 +78,8 @@ def ref(a_tensor, g_tensor):
 
 def test_nki(ref_func, test_func):
     for _ in range(2):
-        a = np.random.rand(128, 512).astype(np.float32)
-        g = np.random.rand(512).astype(np.float32)
+        a = np.random.rand(512, 4096).astype(np.float32)
+        g = np.random.rand(4096).astype(np.float32)
         result_1 = ref_func(a, g)
         result_2 = test_func(a, g)
         if not np.allclose(result_1, result_2, atol=1e-4, rtol=1e-2):

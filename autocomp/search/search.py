@@ -584,6 +584,7 @@ def main():
     prevent_duplicate_level = 0
     
     # Reimplement failed candidates
+    # Only works for trn
     reimplement_failed = True
 
     # Sanitize model names for file system compatibility

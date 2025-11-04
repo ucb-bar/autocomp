@@ -11,7 +11,7 @@ Begin by launching a `trn1.2xlarge` instance by following steps 1-3 [here](https
 After `ssh`ing into the instance, add the following line to your `~/.bashrc` file to make sure your environment is always activated:
 
 ```sh
-source /opt/aws_neuronx_venv_pytorch_2_5/bin/activate
+source /opt/aws_neuronx_venv_pytorch_2_8/bin/activate
 ```
 
 Also run the command inside your current shell.
