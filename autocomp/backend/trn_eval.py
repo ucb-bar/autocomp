@@ -43,8 +43,11 @@ class TrnHardwareBackend(HardwareBackend):
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Load the test code
-        test_code = pathlib.Path(__file__).parent.parent.parent / "tests" / "trn" / f"{prob.prob_id}.py"
-        test_code = test_code.read_text()
+        test_dir = pathlib.Path(__file__).parent.parent.parent / "tests" / prob.prob_type
+        test_file = list(test_dir.glob(f"{prob.prob_id}_*.py"))[0]
+        if not test_file:
+            raise FileNotFoundError(f"No test file found for {prob.prob_type} {prob.prob_id} in {test_dir}")
+        test_code = test_file.read_text()
 
         for i, code_str in enumerate(code_strs):
             test_code_i = test_code.replace("# SUBSTITUTE HERE", code_str)

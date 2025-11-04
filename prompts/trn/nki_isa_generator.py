@@ -1,6 +1,7 @@
 from typing import Iterable
 
 from autocomp.common import logger
+from autocomp.search.prob import Prob
 
 nki_isa_dict = {
     "architecture": {
@@ -1285,7 +1286,7 @@ kernel_insts_dict = {
         "nki.language.tile_size",
         # "nki.compiler.sbuf.mod_alloc",
         # "nki.compiler.psum.mod_alloc",
-        # "nki.isa.dma_copy",
+        "nki.isa.dma_copy",
         "nki.language.load",
         "nki.language.store",
         "nki.isa.tensor_copy",
@@ -1326,73 +1327,38 @@ kernel_insts_dict = {
         "nki.isa.tensor_copy_predicated",
     ],
     "rmsnorm": [
-        "architecture",
         "ElementWiseMath",              
         "ReductionOperations",          
         "ShapeAndSelection",            
-        "nki.language.affine_range",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
         "nki.isa.tensor_scalar",        
         "nki.isa.tensor_reduce",        
         "nki.isa.bn_stats",
         "nki.isa.bn_aggr",
     ],
-    "conv": [
-        "architecture",
-        "ElementWiseMath",          
-        "ReductionOperations",      
-        "nki.language.affine_range",
-        "nki.language.sequential_range",   
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.par_dim",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",               
-        "nki.isa.tensor_copy",             
-        "nki.isa.tensor_copy_predicated",  
-        "nki.isa.dma_transpose",          
-        "nki.isa.tensor_scalar",           
-        "nki.isa.tensor_tensor",           
-        "nki.isa.tensor_reduce",   
-    ],
-    "max_pooling": [
-        "architecture",
-        "ElementWiseMath",               
-        "ReductionOperations",           
-        "ShapeAndSelection",             
-        "nki.language.affine_range",
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.par_dim",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",              
-        "nki.isa.tensor_copy",           
+    "conv1d": [
+        "ElementWiseMath",
+        "ReductionOperations",
         "nki.isa.tensor_copy_predicated",
-        "nki.isa.tensor_reduce",         
-        "nki.isa.select_reduce",         
-        "nki.isa.tensor_scalar",         
-        "nki.isa.local_gather",          
+        "nki.isa.dma_transpose",
+        "nki.isa.tensor_scalar",
+        "nki.isa.tensor_tensor",
+        "nki.isa.tensor_reduce",
+    ],
+    "maxpool": [
+        "ElementWiseMath",
+        "ReductionOperations",
+        "ShapeAndSelection",
+        "nki.isa.tensor_copy_predicated",
+        "nki.isa.tensor_reduce",
+        "nki.isa.select_reduce",
+        "nki.isa.tensor_scalar",
+        "nki.isa.local_gather",
     ],
     "conv2d": [
-        "architecture",
         "ElementWiseMath",              
         "ShapeAndSelection",            
         "ReductionOperations",         
-        "nki.language.affine_range",    
-        "nki.language.sequential_range",
-        "nki.language.mgrid",           
-        "nki.language.ndarray",         
-        "nki.language.zeros",           
-        "nki.language.par_dim",        
-        "nki.language.tile_size",       
-        "nki.isa.dma_copy",             
-        "nki.isa.dma_transpose",        
-        "nki.isa.tensor_copy",          
+        "nki.isa.dma_transpose",
         "nki.isa.tensor_copy_predicated", 
         "nki.isa.nc_transpose",         
         "nki.isa.nc_matmul",           
@@ -1403,49 +1369,23 @@ kernel_insts_dict = {
         "nki.isa.activation",
     ],
     "cumsum": [
-        "architecture",
         "ElementWiseMath",                 
         "ShapeAndSelection",               
-        "nki.language.affine_range",       
-        "nki.language.sequential_range",   
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
         "nki.isa.tensor_scalar",           
         "nki.isa.tensor_tensor_scan",      
     ],
     "rope": [
-        "architecture",
         "ElementWiseMath",
         "ShapeAndSelection",
-        "nki.language.affine_range",    
-        "nki.language.sequential_range", 
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",             
-        "nki.isa.tensor_copy",          
         "nki.isa.tensor_copy_predicated",  
         "nki.isa.tensor_scalar",
         "nki.isa.tensor_tensor",
     ],
-    "softmax":  ["architecture",
+    "softmax":  [
         "ElementWiseMath",                  
         "ActivationFunctions",              
         "ReductionOperations",          
         "ShapeAndSelection",            
-        "nki.language.affine_range",    
-        "nki.language.sequential_range",
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.par_dim",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",             
-        "nki.isa.tensor_copy",          
         "nki.isa.tensor_copy_predicated", 
         "nki.isa.activation",           
         "nki.isa.activation_reduce",    
@@ -1455,63 +1395,16 @@ kernel_insts_dict = {
     ],
     "tensor_add": 
     [
-        "architecture",
         "ElementWiseMath",              
         "ShapeAndSelection",            
-        "nki.language.affine_range",    
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",             
-        "nki.isa.tensor_copy",          
         "nki.isa.tensor_scalar",        
         "nki.isa.tensor_tensor",        
     ],
-    "sd_attention": [
-    
-        "architecture",
-        "ElementWiseMath",
-        "ActivationFunctions",
-        "ReductionOperations",
-        "ShapeAndSelection",  
-        "nki.language.affine_range",
-        "nki.language.sequential_range",   
-        "nki.language.mgrid",
-        "nki.language.ndarray",
-        "nki.language.zeros",
-        "nki.language.par_dim",
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
-        "nki.isa.dma_transpose",           
-        "nki.isa.nc_transpose",            
-        "nki.isa.nc_matmul",
-        "nki.isa.activation",             
-        "nki.isa.activation_reduce",       
-        "nki.isa.tensor_reduce",           
-        "nki.isa.reciprocal",              
-        "nki.isa.tensor_scalar",           
-        "nki.isa.affine_select",           
-        "nki.isa.tensor_tensor",           
-        "nki.isa.tensor_copy_predicated",  
-    ],
-
-    "transpose_to_last_dim": [
-        "architecture",
-        "nki.language.affine_range",
-        "nki.language.mgrid",          
-        "nki.language.ndarray",
-        "nki.language.zeros",          
-        "nki.language.par_dim",        
-        "nki.language.tile_size",
-        "nki.isa.dma_copy",
-        "nki.isa.tensor_copy",
+    "transpose": [
         "nki.isa.tensor_copy_predicated",  
         "nki.isa.dma_transpose",       
         "nki.isa.nc_transpose",         
     ]
-
-
 }
 
 workload_to_kernel_dict = {
@@ -1519,27 +1412,26 @@ workload_to_kernel_dict = {
     "attention_decoder": ["gemm", "softmax", "causal_mask"],
 }
 
-prob_id_to_name = {
-    0: "gemm",
-    1: "gemm",
-    2: "layernorm",
-    3: "mamba",
-    4: "attention",
-    5: "rmsnorm"
-    6: "conv",
-    7: "max_pooling",
-    8: "conv2d"
-    9: "attention_decoder",
-    10: "attention_decoder",
-    11: "attention_decoder",
-    12: "attention_decoder",
-    15: "attention_decoder",
-    16: "cumsum",
-    17: "rope",
-    18: "softmax",
-    19: "tensor_add",
-    20: "sd_attention",
-    21: "transpose_to_last_dim",
+prob_to_name = {
+    "trn-tutorial": {
+        0: "rmsnorm",
+        1: "layernorm",
+        2: "gemm",
+        3: "mamba",
+        4: "attention",
+        5: "attention",
+    },
+    "trn-advanced": {
+        0: "cumsum",
+        1: "transpose",
+        2: "maxpool",
+        3: "rope",
+        4: "conv1d",
+        5: "conv2d",
+        6: "attention_decoder",
+        7: "attention_decoder",
+        8: "attention_decoder",
+    },
 }
 
 class NkiIsaGenerator:
@@ -1577,11 +1469,15 @@ class NkiIsaGenerator:
             isa_string += "\n"
         return isa_string
 
-    def generate_isa(self, id_or_name: int | str):
-        if isinstance(id_or_name, int):
-            name = self.prob_id_to_name[id_or_name]
+    def generate_isa(self, prob_or_name: Prob | int | str):
+        if isinstance(prob_or_name, Prob):
+            name = self.prob_to_name[prob_or_name.prob_type][prob_or_name.prob_id]
+        elif isinstance(prob_or_name, int):
+            name = self.prob_id_to_name[prob_or_name]
+        elif isinstance(prob_or_name, str):
+            name = prob_or_name
         else:
-            name = id_or_name
+            raise ValueError(f"Invalid input type: {type(prob_or_name)}")
         kernels = self.workload_to_kernel_dict.get(name, [name]) # if not found, then <name> is a kernel
         kernels = ["standard"] + kernels # always include standard instructions
         insts = []

@@ -545,15 +545,14 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "trn"  # Options: "cuda", "gemmini", "trn"
+    backend = "trn"  # Options: "gemmini", "trn", "cuda"
     models = ["o4-mini", "gpt-5"]
-    # models = ["kevin"]
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "trn"  # For trn backend, use "trn"
-    prob_id = 15
+    prob_type = "trn-tutorial"  # For trn backend, use "trn"
+    prob_id = 0
 
     # Beam search parameters
     num_plan_candidates=6
@@ -625,7 +624,7 @@ def main():
                 initial_code = f.read()
     elif backend == "trn":
         # Find file matching pattern for Trainium/NKI kernels
-        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / "trn"
+        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob.prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
