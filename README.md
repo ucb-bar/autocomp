@@ -79,14 +79,16 @@ Notable parameters:
   - `utils.py` - General utility functions.
 
 **`prompts/`** - Contains various prompts imported by `autocomp/search/llm_agent.py`.
-- `isa_prompt_conv.py` - Accelerator ISA section of the prompt, used for GEMM and convolution.
-- `isa_prompt_admm.py` - Accelerator ISA section of the prompt, used for TinyMPC.
-- `opt_system/` - Prompts and examples used for optimization
+- `gemmini/` - Prompts and examples used for Gemmini code optimization
+  - `isa_prompt_conv.py` - Accelerator ISA section of the prompt, used for GEMM and convolution.
+  - `isa_prompt_admm.py` - Accelerator ISA section of the prompt, used for TinyMPC.
   - `gemmini_rules.py` - Rules section of the prompt (helps constrain output and encourage functional correctness).
   - `plan_prompt.py` - Planning phase prompt (note that implementation prompt is entirely contained within `autocomp/search/llm_agent.py` above).
   - `tiling_example.py` - Tiling optimization example.
   - `if_example.py` - Conditional optimization example (from convolution).
   - `if_example_matmul.py` - Conditional optimization example (from GEMM).
+- `trn/` - Prompts and examples used for NKI (Trainium) optimization
+  - `nki_isa_generator.py` - Generates the ISA string for the NKI ISA. If optimizing a new workload, configure the set of instructions to use here.
 
 **`sols/`** - Contains baseline code for the benchmarks in the paper.
 - `exo/` - Exo unoptimized and optimized baseline code for the GEMM benchmarks in the paper. `sol{id}_exo_baseline.c` is the unoptimized code and is used by `autocomp/search/search.py` as the starting code fro optimization.

@@ -1,4 +1,4 @@
-from prompts.opt_system import gemmini_rules
+from prompts.gemmini import gemmini_rules
 
 def PROMPT(DIM):
     texts = {
