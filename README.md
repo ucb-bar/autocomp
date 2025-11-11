@@ -95,9 +95,13 @@ Notable parameters:
 - `gemm/` - Additional GEMM benchmarks used for schedule reuse. No hand-optimized code available.
 - `exo-conv/` - Exo unoptimized and optimized baseline code for the convolution benchmarks in the paper.
 - `admm-multifunction/` - TinyMPC unoptimized and optimized baseline code. Only problem IDs 1 and 2 are used in the paper. Run with FP32 4x4 Gemmini.
+- `trn-tutorial/` - NKI (Trainium) unoptimized and optimized baseline code for the tutorial benchmarks in the paper.
+- `trn-advanced/` - NKI (Trainium) unoptimized and optimized baseline code for the advanced benchmarks in the paper.
 
 **`tests/`** - Contains test cases corresponding to `sols/` above.
-- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/` - Test cases corresponding to directories in `sols/` above.
+- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/`, `trn-tutorial/`, `trn-advanced/` - Test cases corresponding to directories in `sols/` above.
+
+**`examples/`** - Contains examples of code optimized by Autocomp. Note that the generated code is specific to the input/output shapes used and may not be correct for other shapes.
 
 ## 📜 Citation
 ```
