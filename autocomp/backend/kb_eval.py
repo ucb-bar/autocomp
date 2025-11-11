@@ -4,6 +4,7 @@ import subprocess
 from typing import List
 import os
 import shutil
+from datetime import datetime
 
 from autocomp.common import logger
 from autocomp.search.prob import Prob
@@ -16,14 +17,13 @@ class KBHardwareBackend(HardwareBackend):
         level_str = prob.prob_type.split("-")[1]
         ref_file = glob.glob(f"{KERNELBENCH_DIR}/KernelBench/{level_str}/{prob.prob_id}_*.py")[0]
         results = []
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tmp_dir = pathlib.Path(__file__).parent / "tmp_files" / f"kb_eval_{timestamp}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
         for i, code_str in enumerate(code_strs):
-            test_dir = pathlib.Path(__file__).parent / "tmp_files" / f"test_{level_str}_{prob.prob_id}"
-            test_dir.mkdir(parents=True, exist_ok=True)
-            test_file = test_dir / f"code_{i}.py"
+            test_file = tmp_dir / f"code_{i}.py"
             test_file.write_text(code_str)
 
-            with open(test_file, "w") as f:
-                f.write(code_str)
             cmd = [
                 "python", 
                 "scripts/run_and_check.py", 
@@ -36,12 +36,14 @@ class KBHardwareBackend(HardwareBackend):
             ]
             logger.info(f"Running command: {' '.join(cmd)} from cwd {KERNELBENCH_DIR}")
             try:
-                result = subprocess.run(cmd, cwd=KERNELBENCH_DIR, check=False, capture_output=True, text=True, timeout=120)
+                result = subprocess.run(cmd, cwd=KERNELBENCH_DIR, check=False, capture_output=True, text=True, timeout=240)
             except Exception as e:
                 logger.info(f"Error running command: {e}")
                 results.append({"correct": False})
                 continue
             stdout = result.stdout
+            output_file = tmp_dir / f"output_{i}.txt"
+            output_file.write_text(stdout)
             if " runtime_stats={'mean':" not in stdout:
                 logger.info(f"Kernel did not pass correctness for code {i}")
                 results.append({"correct": False})
