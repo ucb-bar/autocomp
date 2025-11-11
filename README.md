@@ -50,7 +50,7 @@ Notable parameters:
 - `simulator`: The evaluation method to use.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Trainium, `trn`
-  - For CUDA,`kernelbench`
+  - For CUDA, `kernelbench`
 - `iterations`: The number of iterations to run.
 - `search_strategy`: The search strategy to use. Currently only `beam` is supported.
 - `prob_type`: The problem type to use.

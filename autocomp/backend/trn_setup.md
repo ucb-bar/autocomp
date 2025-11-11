@@ -18,7 +18,7 @@ Also run the command inside your current shell.
 
 ## Autocomp
 
-Next, inside the Trainium instance, clone Autocomp and set up its Python dependencies:
+Next, inside the Trainium instance and with the environment activated, clone Autocomp and set up its Python dependencies:
 
 ```sh
 git clone https://github.com/ucb-bar/autocomp

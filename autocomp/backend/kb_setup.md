@@ -20,11 +20,15 @@ pip install -e .
 
 ## Autocomp
 
-Navigate back to the `autocomp` directory and set up its Python dependencies: ``pip install -e .``
+In a different location, clone Autocomp and set up its Python dependencies:
+
+```sh
+git clone https://github.com/ucb-bar/autocomp
+cd autocomp
+pip install -e .
+```
 
 Then, point `KERNELBENCH_DIR` in `autocomp/backend/kb_eval.py` to the root of the KernelBench directory.
 
-## Usage
-
-`prob_type` in `autocomp/search/search.py` should be set to `kb-level{1,2,3,4}`. `prob_id` should be set to the ID of the problem to optimize.
-Autocomp will directly pull the initial code to optimize from `KERNELBENCH_DIR`, and call  `KernelBench/scripts/run_and_check.py` to evaluate the generated code.
+When running Autocomp, `prob_type` in `autocomp/search/search.py` should be set to `kb-level{1,2,3,4}`. `prob_id` should be set to the ID of the problem to optimize.
+Autocomp will directly pull the initial code to optimize from `KERNELBENCH_DIR`, and call `KernelBench/scripts/run_and_check.py` to evaluate the generated code.
