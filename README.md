@@ -34,7 +34,7 @@ Partially supported backends:
 
 ## LLM Endpoint Setup
 
-Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`), which defines the variable `key` as follows:
+Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`). The file should define the variable `key` as follows:
 
 ```python
 key = "YOUR_OPENAI_API_KEY"
@@ -99,7 +99,6 @@ Notable parameters:
 - `trn-advanced/` - NKI (Trainium) unoptimized and optimized baseline code for the advanced benchmarks in the paper.
 
 **`tests/`** - Contains test cases corresponding to `sols/` above.
-- `exo/`, `gemm/`, `exo-conv/`, `admm-multifunction/`, `trn-tutorial/`, `trn-advanced/` - Test cases corresponding to directories in `sols/` above.
 
 **`examples/`** - Contains examples of code optimized by Autocomp. Note that the generated code is specific to the input/output shapes used and may not be correct for other shapes.
 
