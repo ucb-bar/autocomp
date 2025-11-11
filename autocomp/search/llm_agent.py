@@ -7,6 +7,7 @@ from autocomp.search.code_repo import CodeCandidate, copy_candidate
 # from autocomp.search.annotate_perf import GemminiCode
 from prompts.gemmini import isa_prompt_conv, isa_prompt_admm,plan_prompt, gemmini_rules, tiling_example, if_example, if_example_matmul
 from prompts.trn.nki_isa_generator import NkiIsaGenerator
+from prompts.cuda import tensor_examples
 
 prob_macs_map = {
 "exo": [
@@ -914,14 +915,18 @@ class CudaLLMAgent(LLMAgent):
 
     def _get_convert_to_cuda_menu_options(self) -> list[str]:
         return [
-            "Convert PyTorch code to functional PyTorch code",
+            # "Convert PyTorch code to functional PyTorch code",
             "Convert a PyTorch operation to inline CUDA C++ code",
+            # "Use CUDA Graph Capture to eliminate launch overhead",
+            # "Convert a PyTorch operation to Triton code",
         ]
 
     def get_opt_menu_options(self) -> list[str]:
         return [
             # "Convert PyTorch code to functional PyTorch code",
-            "Convert a PyTorch operation to optimized CUDA C++ code",
+            "Convert an operation to optimized CUDA C++ code",
+            "Convert an operation to CUDA C++ code",
+            "Convert an operation to optimized Triton code",
             "Reduce PyTorch launch overhead",
             "Use compilation flags like -O3 and --use_fast_math when compiling CUDA code",
             # General Kernel and Memory Optimizations
@@ -938,15 +943,23 @@ class CudaLLMAgent(LLMAgent):
             "Minimize number of synchronization points",
             "Store more data and reduce at the end rather than using atomic operations",
             "Use grid-stride loops",
+            "Tile operations for optimal cache utilization",
+            "Use L2 persisting cache window to keep frequently reused tensors resident in L2",
+            "Use multiple CUDA streams to overlap computation and data movement",
+            # CUDA graph-related Optimizations
+            "overlap host-to-device transfers with the CUDA-Graph replay",
             # Thread and Block-Level Optimizations
             "Maximize occupancy without excessive register usage",
             "Choose optimal block sizes (typically multiples of 32 threads)",
             "Use __restrict__ to help compiler with pointer aliasing",
             "Loop unrolling (#pragma unroll)",
             # # Tensor and GEMM Specific Optimizations
-            "Use cuBLAS or cuDNN for GEMM and convolution operations instead of custom kernels",
+            "Use cuBLASLt for Tensor Core GEMM operations",
+            "Use cuBLASLt, cuBLAS, or cuDNN for GEMM and convolution operations instead of custom kernels",
             "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
-            "Quantize weights or activations where accuracy permits (e.g. INT8 inference)",
+            "Use PyTorch's tensor core APIs (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores",
+            "Use lower precision (e.g. bfloat16, float16, float8_e4m3fn) for computations",
+            "Quantize weights or activations where accuracy permits (e.g. bfloat16)",
             "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
             # Memory Transfer Optimizations
             "Overlap computation and data transfer using CUDA streams and asynchronous copies",
@@ -961,9 +974,12 @@ class CudaLLMAgent(LLMAgent):
             "Use Tensor core GEMMs for GEMM-like operations",
             "Convert convolution operations to Tensor core GEMMs",
             # "Convert to a lower precision",
-            # From Autocomp
-            "Remove unnecessary code",
-            "Simplify arithmetic and propagate constants to simplify expressions",
+            # From CUDA-L1
+            "Skip computation when data-dependent execution encounters zero values or a branch that will never be taken",
+            "Ensure data is stored in contiguous memory blocks",
+            "Arrange data access patterns to maximize memory bandwidth and minimize latency through techniques like shared memory usage, coalesced global memory access, and memory padding",
+            "Memory Coalescing: optimize CUDA kernel performance by ensuring threads in the same warp access contiguous memory locations",
+            "Pre-allocate input and output tensors during graph initialization and reuse them",
             "Merge low-level operations",
             "Merge high-level operations",
             "Reorder operations or blocks of operations",
@@ -987,16 +1003,24 @@ class CudaLLMAgent(LLMAgent):
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
         return []
     
-    def _get_prompt_rules(self) -> str:
-        return """
-1. The rewritten program should be semantically equivalent to the original program.
-2. Limit the scope of the plan to the selected optimization.
-3. All generated code should be contained in a single Python file (inline CUDA code is allowed).
-4. Wrap only the generated code with ```python at the beginning and ``` at the end.
-5. Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.
-6. When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.
-7. Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.
-"""
+    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
+        rules = [
+            "You will be running the code on an NVIDIA L40S GPU with PyTorch 2.5.0 and CUDA 12.4",
+            "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+            "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
+            "Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.",
+            "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
+            "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
+            "Do not add fallback paths that revert to the original code.",
+        ]
+        if planning:
+            rules.append("Limit the scope of the plan to the selected optimization.")
+        if coding:
+            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
+        rules_text = ""
+        for i, rule in enumerate(rules):
+            rules_text += f"{i+1}. {rule}\n"
+        return rules_text
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
@@ -1043,6 +1067,7 @@ class CudaLLMAgent(LLMAgent):
             parents_prompt += "\n" + analysis
 
         # Initialize the prompt with the parents info
+        # prompt_text = tensor_examples.PROMPT()
         prompt_text = parents_prompt
 
         # Now add the actual planning prompt
@@ -1053,13 +1078,17 @@ class CudaLLMAgent(LLMAgent):
 Speedup can be increased by using the following optimizations:
 <optimizations>: \n""" + menu_options_text + "\n"
         
+        prompt_text += "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. "
         if force_opt_menu:
             prompt_text += "Explain how to apply <optimization> " + str(force_opt_menu) + ": '" + opt_lst[force_opt_menu-1] + "' to the above code to reduce execution time, and explain how it will improve performance."
         else:
-            prompt_text += "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
+            if random.random() < 0.1:
+                prompt_text += "Invent an optimization different from the <optimizations> above to address the inefficiencies of the above code and reduce its execution time, and explain how it will improve performance."
+            else:
+                prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules()
+        prompt_text += self._get_prompt_rules(planning=True, coding=False)
 
         if prompt_end:
             logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
@@ -1068,7 +1097,11 @@ Speedup can be increased by using the following optimizations:
 
 
     def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
-        prompt_text = "\nThe original code is as follows:\n```python\n"
+        prompt_text = ""
+        if "tensor core" in candidate.plan.lower():
+            if random.random() < 0.5:
+                prompt_text += tensor_examples.PROMPT() + "\n"
+        prompt_text += "\nThe original code is as follows:\n```python\n"
         prompt_text += candidate.parent.code
         prompt_text += "\n```\nYou are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's optimize the original code based on the following plan:\n"
         prompt_text += candidate.plan
@@ -1083,7 +1116,7 @@ Speedup can be increased by using the following optimizations:
         #         prompt_text += "\n" + if_example.PROMPT()
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules()
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
 
         prompt_text += "Optimized code:"
 
@@ -1095,7 +1128,7 @@ Speedup can be increased by using the following optimizations:
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules()
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
         prompt_text += "Optimized code:"
         return prompt_text
 
@@ -1160,59 +1193,6 @@ class TrnLLMAgent(LLMAgent):
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Other methods not listed here.",
         ]
-        # return [
-        #     "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
-        #     "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
-        #     "modify loop tiling and tile sizes",
-        #     "double buffering",
-        #     "loop reordering and restructuring",
-        #     "reorder associative operations to work on a tile after it has been collapsed/reduced",
-        #     "optimize memory buffer allocation (sbuf, psum, hbm)",
-        #     "abstract operations into functions so that they can more easily be reused and pipelined",
-        #     "stronger tiling for contraction / moving-free split",
-        #     "work on buffer-sized tiles to increase data reuse",
-        #     "fuse dependent operations",
-        #     "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
-        #     "fuse loops that iterate over the same dimension to improve intermediate data reuse",
-        #     "split loops to enable indepedent optimization",
-        #     "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
-        #     "allocate buffers in lower precision such as nl.bfloat16",
-        #     "use mod_alloc to pre-allocate workspace in PSUM/SBUF",
-        #     "allocate and accumulate in PSUM to reduce communication to SBUF",
-        #     "downcast to lower precision during operations that take dtype as an argument",
-        #     "dispatch operations ahead of time to pipeline them",
-        #     "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
-        #     "keep data in the same layout to avoid transpose operations",
-        #     "eliminate intermediate tensor materialization by using in-place operations",
-        #     "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
-        #     "use the streaming softmax with running max and scaling trick",
-        #     "fuse operations",
-        #     "fuse multiple instructions into one",
-        #     "optimize accumulation patterns in psum (tile-wise reduction)",
-        #     "optimize reduction by fusing tile-wise reductions with transformation passes",
-        #     "optimize for specific tensor shapes and sizes",
-        # # For Mamba
-        #     "Scan carry-over to parallelize the scan operation",
-        #     "Overlap DMA transfers (load/store) with compute, hiding memory latency behind matmul execution.",
-        #     "Align SBUF tile strides to prevent multiple compute threads from hitting the same memory bank.",
-        #     "Use lower-precision datatypes like bfloat16 or fp8_e4m3 to double throughput and reduce bandwidth, provided numerical stability allows.",
-        #     "Aggregate loads/stores across contiguous tiles to amortize DMA setup costs and increase effective bandwidth.",
-        #     "Mix affine_range and sequential_range loops to control iteration order and enable the compiler to schedule DMA and compute efficiently.",
-        #     "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
-        #     "Block all dimensions to optimize locality across compute and memory hierarchies (HBM, SBUF, PSUM).",
-        #     "Group multiple output tiles to improve DMA coalescing and shared-buffer reuse for the free (non-contraction) dimensions.",
-        #     "Respect NKI layout constraints (e.g., contraction mapped to P-dim) and use nl.par_dim() and nl.mgrid to control physical partitioning for vectorized matmuls.",
-        #     "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
-        # # From Gemmini
-        #     "simplify arithmetic and propagate constants to simplify expressions",
-        #     "reorder computations or blocks of computations",
-        #     "loop unrolling",
-        #     "hoist redundant operations out of loops",
-        #     "substitute operations with equivalent operations that are faster",
-        #     "pipeline operations to better overlap computation and data movement",
-        #     "minimize data movement",
-        #     "other methods not listed here.",
-        # ]
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,

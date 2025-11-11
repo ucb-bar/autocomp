@@ -10,7 +10,7 @@ from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, TrnLLMAgent
 from autocomp.search.llm_ensemble import LLMEnsemble
 from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.backend.gemmini_eval import GemminiHardwareBackend
-from autocomp.backend.kb_eval import KBHardwareBackend
+from autocomp.backend.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
 from autocomp.backend.trn_eval import TrnHardwareBackend
 from autocomp.search.prob import Prob
 
@@ -551,7 +551,7 @@ def main():
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "trn-tutorial"  # For trn backend, use "trn"
+    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Beam search parameters
@@ -609,13 +609,22 @@ def main():
     # Get initial code
     prob = Prob(prob_type, prob_id)
     if backend == "cuda":
-        # Find file matching pattern
-        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type
-        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
-        if not matches:
-            raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            initial_code = f.read()
+        if "kb-" in prob_type:
+            level_str = prob_type.split("-")[1]
+            kb_level_dir = pathlib.Path(KERNELBENCH_DIR) / "KernelBench" / level_str
+            matches = list(kb_level_dir.glob(f"{prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {kb_level_dir}")
+            with open(matches[0]) as f:
+                initial_code = f.read().replace("Model", "ModelNew")
+        else:
+            # Find file matching pattern
+            sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type
+            matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
+            with open(matches[0]) as f:
+                initial_code = f.read()
     elif backend == "gemmini":
         if "admm" in prob_type:
             with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
