@@ -34,7 +34,7 @@ Partially supported backends:
 
 ## LLM Endpoint Setup
 
-Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create a custom `openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`) file in `autocomp/common/openai_key.py`, which defines the variable `key` as follows:
+Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`), which defines the variable `key` as follows:
 
 ```python
 key = "YOUR_OPENAI_API_KEY"
