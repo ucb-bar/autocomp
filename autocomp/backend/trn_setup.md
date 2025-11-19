@@ -1,7 +1,5 @@
 # ⚙️ Trainium Backend Setup
 
-### ⚠️ Note: Trainium documentation is still under construction.
-
 ## AWS Instance Setup
 
 We use UC Berkeley CS 152's [Lab 6 Setup Instructions](https://github.com/ucb-152/lab6?tab=readme-ov-file) as a reference for how to set up a Trainium instance.

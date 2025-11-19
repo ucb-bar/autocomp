@@ -34,6 +34,8 @@ Currently supported backends:
 Partially supported backends:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this backend.
 
+For instructions on adding a new backend, see [ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md).
+
 ## LLM Endpoint Setup
 
 Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`). The file should define the variable `key` as follows:
