@@ -16,7 +16,7 @@ Welcome to the code repository of **Autocomp**. Check out our introductory [📝
 **Update (11/3/2025)**: Added code/documentation for setting up Trainium backend.
 Check out [📝 blog post 3](https://charleshong3.github.io/blog/autocomp_trainium.html) for more details.
 
-**Update (11/18/2025)**: Added examples directory for example optimization traces, and published [📝 blog post 4](https://charleshong3.github.io/blog/autocomp_trainium_conv1d.html) about how we optimized conv1d on Trainium.
+**Update (11/18/2025)**: Added documentation for adding a new backend ([ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md)), added the `examples` directory for example optimization traces, and published [📝 blog post 4](https://charleshong3.github.io/blog/autocomp_trainium_conv1d.html) about how we optimized conv1d on Trainium.
 
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
