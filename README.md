@@ -22,6 +22,14 @@ Check out [📝 blog post 3](https://charleshong3.github.io/blog/autocomp_traini
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
 
+### What is Autocomp?
+
+Autocomp is an LLM-driven code optimizer for tensor accelerators. Autocomp is designed to be portable and easy to use across a variety of hardware backends, and has already demonstrated strong performance across Gemmini, AWS Trainium, RVV, and CUDA.
+
+### How does Autocomp work?
+
+Autocomp decomposes the optimization problem into a beam search, where each iteration is further divided into a planning phase and an implementation phase. Autocomp applies the user's domain knowledge, along with a variety of techniques to successfully explore the search space, in order to iteratively improve the code. For more details, see our [paper](https://arxiv.org/abs/2505.18574).
+
 # ⚙️ Setup
 
 ## Backend Setup
