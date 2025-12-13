@@ -600,7 +600,7 @@ def main():
 
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
     for model in models:
-        output_str += f"_{model}"g
+        output_str += f"_{model}"
     if code_models is not None:
         output_str += "_code"
         for model in code_models:
