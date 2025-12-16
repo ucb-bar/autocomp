@@ -57,7 +57,7 @@ class SearchStrategy:
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
-        if num_cands_loaded == 1:
+        if num_cands_loaded > 0:
             logger.info("Loaded initial code from %s", save_dir)
         else:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
@@ -67,8 +67,10 @@ class SearchStrategy:
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates([orig_code_candidate], 0)  # Add the initial code as the first candidate
             self.repository.save_candidates(0, save_dir)
-        initial_code_candidate: CodeCandidate = self.repository.get_candidates(0)[0]
-        logger.info("Initial code score: %f", initial_code_candidate.score)
+        initial_code_candidates: list[CodeCandidate] = self.repository.get_candidates(0)
+        logger.info("Initial code scores:")
+        for candidate in initial_code_candidates:
+            logger.info(candidate.score)
 
     def propose_optimizations_iter(self, candidates: list[CodeCandidate], num_plans: int) -> list[CodeCandidate]:
         """
@@ -503,7 +505,7 @@ class BeamSearchStrategy(SearchStrategy):
                     save_dir.mkdir(parents=True, exist_ok=True)
                     save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
                     # Reimplement with the same number of samples as original code candidates
-                    reimplemented_candidates = self.code_llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
+                    reimplemented_candidates = self.llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
                     logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
                     
                     # Evaluate the reimplemented candidates
@@ -549,22 +551,23 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "trn"  # Options: "gemmini", "trn", "cuda"
-    models = ["o4-mini", "gpt-5"]  # Models for planning
-    code_models = None  # Models for code implementation (None means use same as planning models)
+    models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview","us.anthropic.claude-sonnet-4-5-20250929-v1:0"]  # Models for planning
+    # models = ["gpt-5.2", "gemini-3-pro-preview", "us.anthropic.claude-opus-4-5-20251101-v1:0", "o4-mini"]  # Models for planning
+    code_models = ["gpt-5.2", "gemini-3-pro-preview"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
-    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 0
+    prob_type = "trn-e2e" # see README.md or sols directory for available problems
+    prob_id = 2
 
     # Beam search parameters
-    num_plan_candidates=6
+    num_plan_candidates=5
     num_code_candidates=2
     beam_size=6
 
     # Planning prompt knobs
-    dropout_menu_options = 0.25
+    dropout_menu_options = 0.2
     give_score_feedback = 1
     give_util_feedback = 0
     give_spad_acc_feedback = 0

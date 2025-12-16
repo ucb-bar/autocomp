@@ -532,6 +532,35 @@ Note that activation_accu can also change the state of the registers. It’s use
 Note, the Scalar Engine always performs the math operations in float32 precision. Therefore, the engine automatically casts the input data tile to float32 before performing multiply/add/activate specified in the activation instruction. The engine is also capable of casting the float32 math results into another output data type specified by the dtype field at no additional performance cost. If dtype field is not specified, Neuron Compiler will set output data type of the instruction to be the same as input data type of data. On the other hand, the scale parameter must have a float32 data type, while the bias parameter can be float32/float16/bfloat16.
 The input data tile can be an SBUF or PSUM tile. Similarly, the instruction can write the output tile into either SBUF or PSUM, which is specified using the buffer field. If not specified, nki.language.sbuf is selected by default.
 
+Pipelined Multiply-Add
+Each ScalarE compute lane also supports an additional multiply-add before the non-linear function (func) is applied in a pipeline fashion. Mathematically, ScalarE implements:
+# Case 1: scale is SBUF/PSUM vector
+# Input: 2D in_tile, 1D scale, 1D bias
+# Output: 2D out_tile
+for lane_id in range(in_tile.shape[0]):
+   for k in range(in_tile.shape[1])
+    out_tile[lane_id][k] = func(in_tile[lane_id][k] * scale[lane_id]
+                                    + bias[lane_id])
+# Case 2: scale is a compile-time scalar constant in the instruction
+for lane_id in range(in_tile.shape[0]):
+   for k in range(in_tile.shape[1])
+    out_tile[lane_id][k] = func(in_tile[lane_id][k] * scale
+                                    + bias[lane_id])
+This functionality can be invoked using the nki.isa.activation API by specifying a scale for multiplication and bias for addition. The scale can either be a tile from SBUF/PSUM with one element/partition or a compile-time constant. On the other hand, the bias can only be a tile from SBUF/PSUM with one element/partition. A useful mental model for this capability is combining a nki.isa.tensor_scalar instruction with a non-linear function evaluation into a single instruction (2x speed-up than two separate instructions).
+
+Pipelined Reduction
+Each ScalarE compute lane also supports reduction after the non-linear function (func) is applied in a pipeline fashion. On NeuronCore-v2, the reduction operator can only be addition.
+Mathematically, ScalarE with accumulation enabled implements:
+# Input: 2D in_tile, 1D scale (similarly for scalar scale), 1D bias
+# Output: 2D out_tile, 1D reduce_res
+for lane_id in range(in_tile.shape[0]):
+  for k in range(in_tile.shape[1]):
+    out_tile[lane_id][k] = func(in_tile[lane_id][k] * scale[lane_id]
+                                 + bias[lane_id])
+    reduce_res[lane_id] += out_tile[lane_id][k]
+This functionality can be invoked using the nki.isa.activation API by specifying reduce_op as nki.language.add and reduce_res as the output reduction tile, passed by reference.
+A useful mental model for this capability is combining a nki.isa.activation instruction with a nki.isa.tensor_reduce into a single API, which returns results from both APIs. Note, this invokes two back-to-back ISA instructions on hardware, Activate and ActReadAccumulator. The Activate instruction performs the regular computation as specified in nki.isa.activation and also reduction at no additional cost. The reduction result is cached inside ScalarE after Activate. The ActReadAccumulator instruction is a low cost (roughly 64 ScalarE cycles on NeuronCore-v2) instruction to write the internal reduction result back to SBUF/PSUM, one element per partition.
+
 Estimated instruction cost:
 max(MIN_II, N) Scalar Engine cycles, where
     N is the number of elements per partition in data.
@@ -863,6 +892,34 @@ Make the contraction dimension as close as possible to 128 without exceeding it.
 Both stationary and moving inputs must be SBUF tiles, and the output must be a PSUM tile.
 If the contraction dimension exceeds 128, accumulate multiple nc_matmul outputs into the same PSUM tile.
 The nc_matmul instruction currently supports float8_e4m3/float8_e5m2/bfloat16/float16/tfloat32/float32 input data types.
+
+In NKI, to perform a multiplication of two matrices, x[M, K] and y[K, N], you may invoke the NKI language API nki.isa.nc_matmul(x, y) directly. The returned tile has a shape of [M, N] as expected. At the hardware level, TensorE requires both input tiles to have the contraction dimension K in the SBUF partition dimension, that is, the first dimension of input shapes (LC #1 as discussed in NKI Programming Model). This ISA requirement is reflected in the low-level API nki.isa.nc_matmul, which takes stationary and moving matrices as input parameters. Therefore, nki.isa.nc_matmul(x, y) is a two-step computation: invoking nki.isa.nc_transpose(x) to get stationary and then nki.isa.nc_matmul(stationary, moving) to get the final result. In other words, nki.isa.nc_matmul(stationary[K,M], moving[K,N]) performs a stationary.T @ moving calculation, which will result in an output with dimensions [M,N].
+For every nki.isa.nc_matmul(stationary, moving) call, TensorE executes two distinct Neuron ISA instructions:
+    LoadStationary (short for LS): This instruction loads the stationary from SBUF and caches it in internal storage of TensorE
+    MultiplyMoving (short for MM): This instruction loads the moving from SBUF and multiplies moving across the pre-loaded stationary matrix from the previous LoadStationary instruction. The output of this instruction is the output of the nki.isa.nc_matmul call written to PSUM.
+
+Alternative Use Case
+One interesting use case of TensorE is low-latency data reshape within NeuronCore, which typically involves multiplying a matrix to be reshaped with a compile-time constant matrix filled with zeros and ones.
+As an example, we can perform a 128x128 matrix transposition (i.e., swap the free and partition axis of the matrix) using nki.isa.nc_matmul(transpose_input, identity), where transpose_input is the matrix to be transposed and identity is a 128x128 identity matrix. In fact, this is exactly what nki.isa.nc_transpose() does, when TensorE is chosen as the compute engine.
+Similarly, we can broadcast a vector occupying a single partition to M (M <= 128) partitions using nki.isa.nc_matmul(ones, broadcast_input, is_stationary_onezero=True), where ones is a 1xM vector filled with ones and broadcast_input is the vector to be broadcast. In fact, NKI invokes such matmul under the hood when broadcast_input.broadcast_to((M, broadcast_input.shape[1])) is called.
+In general, we can achieve many more complex data reshapes in TensorE, such as shuffling partitions of a SBUF tensor, by constructing appropriate zero/one patterns as one of the matmul inputs.
+Finally, we can also leverage TensorE for data summation across SBUF partitions (P-dim summation). For example, a vector laid out across SBUF partitions can be reduced into a single sum using TensorE as shown in the diagram below. Note, this utilizes only a single PE column of the TensorE; therefore, depending on the surrounding operators, this may not be the best use of TensorE. If you can do summation within each partition (F-dim summation), see nki.isa.tensor_reduce for an alternative reduction implementation on Vector Engine. It is recommended to choose the engine based on the natural layout of your input data to avoid any transpositions.
+As TensorE is the most performant compute engine of the NeuronCore in terms of FLOPS, the goal is to have it execute meaningful computation at high utilization as much as possible. The above “alternative use cases” stop TensorE from performing useful computations at high throughput and therefore, should generally be avoided. However, there are situations where it is advisable to use them:
+    Operators that do not require heavy matmuls anyhow, e.g. normalization, softmax.
+    Layout conflicts between producer and consumer engines where broadcast/transpose are absolutely unavoidable (see example in fused attention tutorial).
+
+Performance Consideration
+As a rule of thumb, TensorE can achieve the best throughput when it runs many back-to-back nki.isa.nc_matmul with both input matrices at the largest possible tiles sizes (stationary is 128x128 and moving is 128x512). In this ideal scenario, TensorE sees the below instruction sequence:
+    LoadStationary (LS[0]) (128x128)
+    MultiplyMoving (MM[0]) (128x512)
+    LoadStationary (LS[1]) (128x128)
+    MultiplyMoving (MM[1]) (128x512)
+    ...
+Cost Model: TensorE is a deeply pipelined engine; therefore, the engine can have several LS&MM instruction pairs in-flight at a given time. Due to this pipelining nature, it is often not useful to use end-to-end execution latency of a single instruction when estimating the instruction cost. Instead, we can focus on the initiation interval of such instructions, that is, the number of cycles between successive instruction launches. Therefore, we can estimate the cost of an instruction I by how soon TensorE can issue the next instruction after I.
+For the sake of discussion, let’s assume we have many back-to-back MM instructions with BF16/FP16/TF32/cFP8 input data type that reuse a single pre-loaded stationary inside TensorE. The initiation interval between subsequent MM instructions in this case is roughly max(N, MM_INIT_LATENCY), where MM_INIT_LATENCY is 64 TensorE cycles on NeuronCore-v2, and N is the free axis size of moving of current MM (typically set to 512). For FP32 input data type, the instruction cost is roughly 4x higher than BF16/FP16/TF32/cFP8. Therefore, whenever possible, we recommend down-casting FP32 input matrix data type to one of BF16/FP16/TF32/cFP8 before performing matrix multiplications.
+Background LoadStationary: In typical workloads, TensorE would be alternating between LS and MM instructions with different input matrices. In order to optimize TensorE’s utilization, we also enable a “background LoadStationary” capability, which allows loading of the next stationary tensor in parallel to the computation on the current stationary tensor.
+As a result, depending on the relative sizes of the stationary and moving matrices, the overall TensorE performance can be bounded by either LS or MM instructions.
+Fast LoadStationary: Since LoadStationary is a pure data movement with no computation, TensorE can perform LoadStationary up to 4x faster than a MultiplyMoving with the same free axis size. Fast LoadStationary has an important performance implication on nki.isa.nc_matmul: When one of the input matrices has a small free axis size and the other has a large free axis size, we prefer to put the matrix with large free axis as the stationary matrix. For example, if we try to do a vector-matrix multiplication, it is recommended to put the matrix as stationary matrix and vector as moving matrix to get the best performance out of TensorE.
 
 Cost (Tensor Engine Cycles)
 if input data type is one of float8_e4m3/float8_e5m2/bfloat16/float16/tfloat32, cost is max(min(64, N_stationary), N_moving)
@@ -1381,18 +1438,6 @@ kernel_insts_dict = {
         "nki.isa.tensor_scalar",
         "nki.isa.tensor_tensor",
     ],
-    "softmax":  [
-        "ElementWiseMath",                  
-        "ActivationFunctions",              
-        "ReductionOperations",          
-        "ShapeAndSelection",            
-        "nki.isa.tensor_copy_predicated", 
-        "nki.isa.activation",           
-        "nki.isa.activation_reduce",    
-        "nki.isa.tensor_reduce",        
-        "nki.isa.tensor_scalar",        
-        "nki.isa.reciprocal",           
-    ],
     "tensor_add": 
     [
         "ElementWiseMath",              
@@ -1410,6 +1455,7 @@ kernel_insts_dict = {
 workload_to_kernel_dict = {
     "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
     "attention_decoder": ["gemm", "softmax", "causal_mask"],
+    "llama_mlp": ["rmsnorm", "softmax", "gemm"],
 }
 
 prob_to_name = {
@@ -1431,6 +1477,11 @@ prob_to_name = {
         6: "attention_decoder",
         7: "attention_decoder",
         8: "attention_decoder",
+    },
+    "trn-e2e": {
+        0: "llama_mlp",
+        1: "llama_mlp",
+        2: "llama_mlp",
     },
 }
 

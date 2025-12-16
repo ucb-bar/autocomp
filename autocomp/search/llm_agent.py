@@ -6,6 +6,7 @@ from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
 # from autocomp.search.annotate_perf import GemminiCode
 from prompts.gemmini import isa_prompt_conv, isa_prompt_admm,plan_prompt, gemmini_rules, tiling_example, if_example, if_example_matmul
+from prompts.trn import fusion_example
 from prompts.trn.nki_isa_generator import NkiIsaGenerator
 from prompts.cuda import tensor_examples
 
@@ -50,6 +51,9 @@ def extract(code_str: str) -> str:
     
     if "```python" in code_str:
         code_str = code_str.split("```python")[1].split("```")[0]
+        return code_str
+    if "```cuda" in code_str:
+        code_str = code_str.split("```cuda")[1].split("```")[0]
         return code_str
 
     if "void test" in code_str:
@@ -102,6 +106,13 @@ def extract(code_str: str) -> str:
     #     new_body.append(line.strip())
     # return "\n".join(new_body)
 
+def extract_plan(plan_str: str) -> str:
+    """
+    Takes LLM-generated plan and extracts the plan
+    """
+    plan_str = plan_str.split("</think>")[-1].split("</budget:thinking>")[-1].split("</planning>")[-1]
+    return plan_str
+
 class LLMAgent:
     """
     A mock-up of the LLM used to propose, evaluate, and implement optimizations.
@@ -115,6 +126,14 @@ class LLMAgent:
 
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
         return ["Analysis 1", "Analysis 2", "Analysis 3"]
+
+    def evaluate_code_quality(self, candidates: list[CodeCandidate], save_dir: pathlib.Path = None) -> list[float]:
+        """
+        Evaluate the quality of code candidates using LLM before running benchmarks.
+        Returns a list of quality scores (0.0 to 1.0) where higher is better.
+        """
+        # Default implementation returns neutral scores for all candidates
+        return [0.5] * len(candidates)
 
     def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
                               prob: Prob,
@@ -168,7 +187,7 @@ class LLMAgent:
             num_unique_prompts_per_cand = num_plans
         else:
             num_unique_prompts_per_cand = 1
-        msgs_lst = []
+        prompts_lst = []
         for c_i, candidate in enumerate(candidate_lst):
             save_str = save_strs[c_i]
             for p in range(num_unique_prompts_per_cand):
@@ -191,38 +210,48 @@ class LLMAgent:
                 with open(prompt_path, "w") as f:
                     f.write(prompt_text)
 
-                messages = [
-                    # {"role": "system", "content": TEMPLATE_SYS},
-                    {"role": "user", "content": prompt_text},
-                ]
-                msgs_lst.append(messages)
+                prompts_lst.append(prompt_text)
 
         temperature = 1
         candidates_to_gen = num_plans // num_unique_prompts_per_cand
 
         extended_responses = self.llm_client.chat_async(
-            msgs_lst=msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=candidates_to_gen,  # number of candidates,
             temperature=temperature
         )
         # Need to sort the responses back into a flattened list for each parent candidate
-        responses = [[] for _ in range(len(candidate_lst))]
+        full_responses = [[] for _ in range(len(candidate_lst))]
         for r_i, per_prompt_responses in enumerate(extended_responses):
             c_i = r_i // num_unique_prompts_per_cand
-            responses[c_i].extend(per_prompt_responses)
+            full_responses[c_i].extend(per_prompt_responses)
 
+        # responses contains the extracted plans
+        responses = [[] for _ in range(len(candidate_lst))]
+        for c_i in range(len(full_responses)):
+            for s_i in range(len(full_responses[c_i])):
+                responses[c_i].append(extract_plan(full_responses[c_i][s_i]))
+
+        # Save the extracted plans and the full plans
         for c_i in range(len(responses)):
             save_str = save_strs[c_i]
             for s_i in range(num_plans):
                 path = f"plan{'' if not save_str else '_' + save_str}"
                 if force_opt_menu_lst is not None:
                     path += "_" + str(force_opt_menu_lst[c_i])
-                path += "_" + str(s_i) + ".txt"
-                path = save_dir / path
-                with open(path, "w") as f:
-                    f.write(responses[c_i][s_i])
-                logger.debug("Saved optimization plan to %s", path)
+                path += "_" + str(s_i)
+                full_plan_path = save_dir / (path + "_full.txt")
+                plan_path = save_dir / (path + ".txt")
+                full_plan = full_responses[c_i][s_i]
+                extracted_plan = responses[c_i][s_i]
+                if extracted_plan != full_plan:
+                    with open(full_plan_path, "w") as f:
+                        f.write(full_plan)
+                with open(plan_path, "w") as f:
+                    f.write(extracted_plan)
+                logger.debug("Saved optimization plan to %s", plan_path)
 
+        # Create the new candidates
         new_cands = []
         for c_i, cand_resps in enumerate(responses):
             for plan in cand_resps:
@@ -288,15 +317,11 @@ class LLMAgent:
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
 
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
             temperature = 1
             candidates_to_gen = num_plans // num_unique_prompts_per_cand
 
             resp = self.llm_client.chat_async(
-                msgs_lst=[messages],
+                prompts_lst=[prompt_text],
                 num_candidates=candidates_to_gen,  # number of candidates,
                 temperature=temperature
             )[0]
@@ -353,22 +378,18 @@ class LLMAgent:
             logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
             return loaded_candidates
 
-        msgs_lst = []
+        prompts_lst = []
         for c_i in range(len(candidate_lst)):
             prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], prob, code_icl_examples)
             # Save full prompt
             prompt_path = save_dir / f"prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
-            msgs_lst.append(messages)
+            prompts_lst.append(prompt_text)
 
         temperature = 1
         responses = self.llm_client.chat_async(
-            msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -428,13 +449,9 @@ class LLMAgent:
         with open(prompt_path, "w") as f:
             f.write(prompt_text)
 
-        messages = [
-            # {"role": "system", "content": TEMPLATE_SYS},
-            {"role": "user", "content": prompt_text},
-        ]
         temperature = 1
         responses = self.llm_client.chat(
-            messages=messages,
+            prompt=prompt_text,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -486,12 +503,9 @@ class LLMAgent:
         with open(prompt_path, "w") as f:
             f.write(prompt_text)
         
-        messages = [
-            {"role": "user", "content": prompt_text},
-        ]
         temperature = 1
         responses = self.llm_client.chat(
-            messages=messages,
+            prompt=prompt_text,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -551,20 +565,17 @@ class LLMAgent:
             logger.info("Loaded %d reimplemented code implementations rather than generating new ones", len(loaded_candidates))
             return loaded_candidates
 
-        msgs_lst = []
+        prompts_lst = []
         for c_i in range(len(candidate_lst)):
             prompt_text = self._get_reimplement_failed_code_prompt(candidate_lst[c_i], prob)
             # Save full prompt
             prompt_path = save_dir / f"reimplement_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
-            messages = [
-                {"role": "user", "content": prompt_text},
-            ]
-            msgs_lst.append(messages)
+            prompts_lst.append(prompt_text)
 
         responses = self.llm_client.chat_async(
-            msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=num_samples,
         )
 
@@ -1191,6 +1202,13 @@ class TrnLLMAgent(LLMAgent):
             "Scan carry-over to parallelize the scan operation",
             "Replace general-purpose code with faster specialized instructions",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            "Inline sequential operations into a single loop to pipeline them",
+            "Kernel Fusion via SBUF residency",
+            "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
+            "Move non-NKI code into NKI kernels to reduce overhead and/or data movement",
+            "Overlap execution across compute engines through pipelining",
+            "Optimize matmul behavior according to TensorEngine documentation",
+            "Simplify or eliminate any unnecessary code"
             "Other methods not listed here.",
         ]
 
@@ -1285,6 +1303,10 @@ class TrnLLMAgent(LLMAgent):
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
+        # if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
+        #     if random.random() < 0.3:
+        #         prompt_text += "\n" + fusion_example.PROMPT() + "\n"
+
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
         prompt_text += "\nYou are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
@@ -1320,13 +1342,16 @@ class TrnLLMAgent(LLMAgent):
                 ]
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
-            if random.random() < 0.5:
+            if random.random() < 0.4:
                 rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
+            elif random.random() < 0.3:
+                rules.append("Plans can be highly targeted to one particular part of the code.")
             rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
         if coding:
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 8192). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
