@@ -505,7 +505,7 @@ class BeamSearchStrategy(SearchStrategy):
                     save_dir.mkdir(parents=True, exist_ok=True)
                     save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
                     # Reimplement with the same number of samples as original code candidates
-                    reimplemented_candidates = self.llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
+                    reimplemented_candidates = self.code_llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
                     logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
                     
                     # Evaluate the reimplemented candidates
@@ -553,7 +553,7 @@ def main():
     backend = "trn"  # Options: "gemmini", "trn", "cuda"
     models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview","us.anthropic.claude-sonnet-4-5-20250929-v1:0"]  # Models for planning
     # models = ["gpt-5.2", "gemini-3-pro-preview", "us.anthropic.claude-opus-4-5-20251101-v1:0", "o4-mini"]  # Models for planning
-    code_models = ["gpt-5.2", "gemini-3-pro-preview"] # Models for code implementation (None means use same as planning models)
+    code_models = ["gemini-3-pro-preview", "gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
