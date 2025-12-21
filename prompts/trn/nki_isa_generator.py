@@ -1455,7 +1455,8 @@ kernel_insts_dict = {
 workload_to_kernel_dict = {
     "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
     "attention_decoder": ["gemm", "softmax", "causal_mask"],
-    "llama_mlp": ["rmsnorm", "softmax", "gemm"],
+    "llama_mlp": ["softmax", "gemm"],
+    "llama_attention": ["gemm", "softmax"],
 }
 
 prob_to_name = {
@@ -1482,6 +1483,9 @@ prob_to_name = {
         0: "llama_mlp",
         1: "llama_mlp",
         2: "llama_mlp",
+        3: "llama_mlp",
+        4: "llama_mlp",
+        5: "llama_attention",
     },
 }
 

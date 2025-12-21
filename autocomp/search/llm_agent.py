@@ -149,6 +149,7 @@ class LLMAgent:
                               cur_iter: int = None,
                               num_iters: int = None,
                               dropout_menu_options: float = 1,
+                              translate: bool = False,
                              ) -> list[CodeCandidate]:
         """
         dropout_menu_options: probability of keeping each menu option
@@ -196,7 +197,7 @@ class LLMAgent:
                 force_opt_menu = None if force_opt_menu_lst is None else force_opt_menu_lst[c_i]
                 prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
                                                                     give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                    dropout_menu_options)
+                                                                    dropout_menu_options, translate)
 
                 # Save full prompt
                 prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
@@ -271,6 +272,7 @@ class LLMAgent:
                               cur_iter: int = None,
                               num_iters: int = None,
                               dropout_menu_options: float = 1,
+                              translate: bool = False,
                              ) -> list[CodeCandidate]:
         """
         dropout_menu_options: probability of keeping each menu option
@@ -303,7 +305,7 @@ class LLMAgent:
             # Add the previously iterated plans and code to the prompt
             prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
                                                                  give_score_feedback, give_util_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                 dropout_menu_options)
+                                                                 dropout_menu_options, translate)
 
             # Save full prompt
             prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
@@ -577,6 +579,7 @@ class LLMAgent:
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_candidates=num_samples,
+            temperature=1,
         )
 
         candidates: list[CodeCandidate] = []
@@ -807,6 +810,7 @@ class GemminiLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> list[str]:
         # Select which menu options will appear
         plan_prompt_texts = plan_prompt.PROMPT(self.pe_dim)
@@ -1047,9 +1051,10 @@ class CudaLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> list[str]:
         # Select which menu options will appear
-        if cur_iter <= 2:
+        if translate:
             opt_lst = self._get_convert_to_cuda_menu_options()
         else:
             opt_lst = self.get_opt_menu_options()
@@ -1151,6 +1156,13 @@ class TrnLLMAgent(LLMAgent):
     def __repr__(self):
         return f"TrnLLMAgent({self.llm_client.model})"
 
+    def _get_convert_to_nki_menu_options(self) -> list[str]:
+        return [
+            "convert non-NKI code into NKI code",
+            "move a non-NKI transpose into the NKI kernel",
+            "fuse multiple NKI kernels into a single kernel",
+        ]
+
     def get_opt_menu_options(self, prob: Prob):
         """Get optimization menu options for NKI/Trainium kernels"""
         return [
@@ -1204,8 +1216,10 @@ class TrnLLMAgent(LLMAgent):
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Inline sequential operations into a single loop to pipeline them",
             "Kernel Fusion via SBUF residency",
+            "Modify one particular parameter to maximize performance",
             "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
-            "Move non-NKI code into NKI kernels to reduce overhead and/or data movement",
+            "transpose inside the NKI kernel",
+            "move non-NKI code into the NKI kernel",
             "Overlap execution across compute engines through pipelining",
             "Optimize matmul behavior according to TensorEngine documentation",
             "Simplify or eliminate any unnecessary code"
@@ -1226,14 +1240,19 @@ class TrnLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> str:
         # Select which menu options will appear
         menu_options_text = ""
-        opt_lst = self.get_opt_menu_options(prob)
-        if dropout_menu_options < 1 and not force_opt_menu:
-            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
-        if shuffle_opts:
-            random.shuffle(opt_lst)
+        if translate:
+            opt_lst = self._get_convert_to_nki_menu_options()
+        else:
+            dropout_menu_options = 1
+            opt_lst = self.get_opt_menu_options(prob)
+            if dropout_menu_options < 1 and not force_opt_menu:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+            if shuffle_opts:
+                random.shuffle(opt_lst)
         include_score_feedback = random.random() < give_score_feedback
 
         parents_prompt = ""
@@ -1276,10 +1295,10 @@ class TrnLLMAgent(LLMAgent):
             # prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
             # TODO make it a parameter
             choose_or_invent = random.random()
-            if choose_or_invent < 0.1:
+            if choose_or_invent < 0.1 and not translate:
                 # Prompt to invent a new optimization inspired by the <optimizations>
                 prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-            elif choose_or_invent < 0.2:
+            elif choose_or_invent < 0.2 and not translate:
                 # Prompt to invent a new optimization different from the <optimizations>
                 prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
             else:
@@ -1303,9 +1322,12 @@ class TrnLLMAgent(LLMAgent):
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
-        # if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
-        #     if random.random() < 0.3:
-        #         prompt_text += "\n" + fusion_example.PROMPT() + "\n"
+        if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
+            rand_val = random.random()
+            if rand_val < 0.15:
+                prompt_text += "\n" + fusion_example.PROMPT() + "\n"
+            elif rand_val < 0.3:
+                prompt_text += "\n" + fusion_example.PROMPT_2() + "\n"
 
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
@@ -1351,7 +1373,11 @@ class TrnLLMAgent(LLMAgent):
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 8192). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: R = 1, H = 2048, U = 8192, D = 2048. Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
+        rules.append("Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
@@ -1361,9 +1387,10 @@ class TrnLLMAgent(LLMAgent):
         """
         Generate a prompt to reimplement failed code based on stdout/stderr feedback.
         """
-        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
         # prompt_text += "The original code is as follows:\n"

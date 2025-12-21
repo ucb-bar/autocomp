@@ -34,6 +34,8 @@ class SearchStrategy:
                  code_icl_examples: bool,
                  dropout_menu_options: float,
                  prevent_duplicate_level: int,
+                 translate_iters: int,
+                 translate_perf_threshold: float,
                  code_llm: LLMEnsemble = None,
                ):
         self.repository = CodeRepository()  # Stores the code candidates
@@ -53,7 +55,8 @@ class SearchStrategy:
         self.code_icl_examples = code_icl_examples
         self.dropout_menu_options = dropout_menu_options
         self.prevent_duplicate_level = prevent_duplicate_level
-
+        self.translate_iters = translate_iters
+        self.translate_perf_threshold = translate_perf_threshold
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
@@ -153,7 +156,7 @@ class SearchStrategy:
         # Filter out incorrect candidates
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
 
-        keep_factor = 1
+        keep_factor = self.translate_perf_threshold if self.translate_iters >= cur_iter else 1
         # if cur_iter is not None and num_iters is not None:
         #     if cur_iter <= 2:
         #         keep_factor = 1.5
@@ -327,9 +330,11 @@ class BeamSearchStrategy(SearchStrategy):
                  start_exhaustive_iters: int,
                  prevent_duplicate_level: int,
                  reimplement_failed: bool,
+                 translate_iters: int,
+                 translate_perf_threshold: float,
                  code_llm: LLMEnsemble = None,
                 ):
-        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, code_llm=code_llm)
+        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_llm=code_llm)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -353,7 +358,7 @@ class BeamSearchStrategy(SearchStrategy):
         return candidates[:num_select]  # Select the top-N candidates
 
     def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path, cur_iter: int, num_iters: int,
-                                   exhaustive: bool = False, dropout_menu_options: float = 1) -> list[CodeCandidate]:
+                                   exhaustive: bool = False, translate: bool = False) -> list[CodeCandidate]:
         """
         Propose a plan for each optimization in the menu.
         Returns a list of plan strings, one for each optimization in the menu.
@@ -382,7 +387,8 @@ class BeamSearchStrategy(SearchStrategy):
             "plan_icl_examples": self.plan_icl_examples,
             "cur_iter": cur_iter,
             "num_iters": num_iters,
-            "dropout_menu_options": dropout_menu_options
+            "dropout_menu_options": self.dropout_menu_options,
+            "translate": translate,
         }
         # kwargs["force_opt_menu"] = 3
         # new_cands = self.llm.propose_optimizations(parent_candidate, **kwargs)
@@ -464,8 +470,9 @@ class BeamSearchStrategy(SearchStrategy):
                 if (losses[i-1] / losses[i-self.trigger_exhaustive_iters-1]) >= self.trigger_exhaustive_threshold:
                     exhaustive = True
             exhaustive = exhaustive or (i <= self.start_exhaustive_iters) # or if we are in the first start_exhaustive_iters iterations
+            translate = (i <= self.translate_iters)
             plan_only_candidates = self.propose_optimizations_iter(current_candidates, save_dir, i, iterations, 
-                                                                   exhaustive=exhaustive, dropout_menu_options=self.dropout_menu_options)
+                                                                   exhaustive=exhaustive, translate=translate)
             logger.info(f"Proposed {len(plan_only_candidates)} new optimizations.")
 
             # Step 2: Generate code candidates for each optimization plan
@@ -551,15 +558,15 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "trn"  # Options: "gemmini", "trn", "cuda"
-    models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview","us.anthropic.claude-sonnet-4-5-20250929-v1:0"]  # Models for planning
-    # models = ["gpt-5.2", "gemini-3-pro-preview", "us.anthropic.claude-opus-4-5-20251101-v1:0", "o4-mini"]  # Models for planning
+    # models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview","us.anthropic.claude-sonnet-4-5-20250929-v1:0"]  # Models for planning
+    models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview", "us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
     code_models = ["gemini-3-pro-preview", "gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 10
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
-    prob_id = 2
+    prob_id = 1
 
     # Beam search parameters
     num_plan_candidates=5
@@ -567,6 +574,8 @@ def main():
     beam_size=6
 
     # Planning prompt knobs
+    translate_iters = 2
+    translate_perf_threshold = 1.3
     dropout_menu_options = 0.2
     give_score_feedback = 1
     give_util_feedback = 0
@@ -603,14 +612,16 @@ def main():
 
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
     for model in models:
-        output_str += f"_{model}"
+        output_str += f"_{model[:15]}"
     if code_models is not None:
         output_str += "_code"
         for model in code_models:
-            output_str += f"_{model}"
+            output_str += f"_{model[:15]}"
     output_str += f"_dropout{dropout_menu_options}"
     if search_strategy == "beam":
         output_str += f"_analyses{num_analyses}_plan{num_plan_candidates}_code{num_code_candidates}_beam{beam_size}"
+    if translate_iters > 0:
+        output_str += f"_translate{translate_iters}_{translate_perf_threshold}"
     output_str += f"_score{give_score_feedback}_util{give_util_feedback}_spadacc{give_spad_acc_feedback}_ancestors{int(include_ancestors)}_preventdupe{prevent_duplicate_level}_planicl{int(plan_icl_examples)}_codeicl{int(code_icl_examples)}"
     output_dir = pathlib.Path("output/" + output_str)
 
@@ -690,7 +701,7 @@ def main():
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, code_llm=code_llm)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_llm=code_llm)
 
     # Start the optimization process
     optimizer.optimize(iterations)

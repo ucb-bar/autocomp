@@ -5,67 +5,6 @@ import neuronxcc.nki.isa as nisa
 import math
 
 @nki.jit
-def nki_rmsnorm_kernel(a_tensor, g_tensor):
-  # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
-  # Where RMS(a_tensor) = sqrt(eps + (1/N) * sum(a_tensor * a_tensor))
-  # and N = a_tensor.shape[1], eps is 1e-5
-  # Reduction (mean) is performed in the free (2nd) dimension
-    out_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
-                            buffer=nl.shared_hbm)
-
-    # Make sure shapes match
-    assert a_tensor.shape[1] == g_tensor.shape[0]
-
-    # Generate tensor indices to index input tensor
-    ix = nl.arange(128)[:, None]
-    iw = nl.arange(1)[:, None]
-    iy = nl.arange(a_tensor.shape[1])[None, :]
-
-    num_rows = a_tensor.shape[0]
-
-    # Load RMSNorm weight once, reused by rows/tiles of a_tensor
-    g_tile = nl.load(g_tensor.reshape((1, g_tensor.shape[0]))[iw, iy])
-
-    # Process 128 rows at a time due to 128-partition tile size limitation
-    # Since we're not reducing across the first dimension
-    # Tiles can be processed independently
-    for i in nl.affine_range(math.ceil(a_tensor.shape[0]/128)):
-
-        # Load input data from external memory to on-chip memory
-        a_tile = nl.load(a_tensor[i * 128 + ix, iy],
-                         mask=(i * 128 + ix < num_rows))
-
-        # Compute element-wise square of a_tensor
-        in_square = nl.square(a_tile)
-
-        # Calculate sum of squared elements, along last dimension
-        square_sum = nl.sum(in_square, axis=[1])
-
-        # Scale and get a reciprocal
-        mean = square_sum / a_tensor.shape[1]
-
-        # Take square root of mean and then reciprocal with
-        # rsqrt API (one ISA instruction)
-        rms_reciprocal = nl.rsqrt(mean + 1e-5)
-
-        # Scale the input tensor
-        out_tile = nl.multiply(a_tile, rms_reciprocal)
-
-        # Broadcast weight along first axis to match tensor shape
-        # num_rows_active = min(num_rows - i * 128, 128)
-        g_bcast = g_tile.broadcast_to((128, g_tensor.shape[0]))
-
-        # Multiply with the RMSNorm weight
-        out_tile[...] = nl.multiply(out_tile, g_bcast,
-                            mask=(i * 128 + ix < num_rows))
-
-        # store the addition results back to external memory (out_tensor)
-        nl.store(out_tensor[i * 128 + ix, iy], value=out_tile,
-                 mask=(i * 128 + ix < num_rows))
-
-    return out_tensor
-
-@nki.jit
 def nki_matmul_tiled_(lhsT, rhs):
     """NKI kernel to compute a matrix multiplication operation in a tiled manner
 
@@ -125,20 +64,18 @@ def nki_matmul_tiled_(lhsT, rhs):
 
     return result
 
-def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
+def test(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Decode shapes:
     # x.shape = (1, 1, 2048)
-    # post_attention_layernorm_weight.shape = (2048,)
-    # up_proj_weight.shape = (8192, 2048)
-    # gate_proj_weight.shape = (8192, 2048)
-    # down_proj_weight.shape = (2048, 8192)
-    # output.shape = (1, 8192)
+    # up_proj_weight.shape = (2048, 4096)
+    # gate_proj_weight.shape = (2048, 4096)
+    # down_proj_weight.shape = (4096, 2048)
+    # output.shape = (1, 2048)
     b, s, h = x.shape
     x = x.view(-1, h)
-    x = nki_rmsnorm_kernel(x, post_attention_layernorm_weight)
-    up = nki_matmul_tiled_(x.t(), up_proj_weight.t())
-    gate = nki_matmul_tiled_(x.t(), gate_proj_weight.t())
+    up = nki_matmul_tiled_(x.t(), up_proj_weight)
+    gate = nki_matmul_tiled_(x.t(), gate_proj_weight)
     act = torch.nn.SiLU()(gate) * up
-    output = nki_matmul_tiled_(act.t() , down_proj_weight.t())
+    output = nki_matmul_tiled_(act.t() , down_proj_weight)
 
     return output

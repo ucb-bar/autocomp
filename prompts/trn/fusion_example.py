@@ -215,3 +215,163 @@ def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, d
 
     return output
 """
+
+def PROMPT_2():
+    return """Here is an example of a fused kernel that inlines two matrix multiplications into a single loop to enable SBUF residency (among other optimizations).
+@nki.jit
+def test(x_tensor, gamma, ug_wT, down_wT):
+    '''
+    Optimized NKI kernel using larger load blocks (Optimization 8).
+    Processing R=1, H=2048, U=8192, D=2048.
+    '''
+    # --- Shapes ---
+    R, H = x_tensor.shape          # (1, 2048)
+    H2, ug_cols = ug_wT.shape      # (2048, 16384)
+    U, D = down_wT.shape           # (8192, 2048)
+
+    # Basic constants
+    TILE_K = 128
+    TILE_D = 512
+    num_k = 16          # 2048/128
+    num_d = 4           # 2048/512
+
+    PACK_TILE_U = 256   
+    pack_blocks = 32    # 8192/256 total blocks
+
+    # New blocking for Optimization 8: Process 4 blocks at once
+    CHUNK_SIZE = 4 
+    num_chunks = pack_blocks // CHUNK_SIZE # 32 // 4 = 8
+
+    P_TILE = 1
+    i_p = nl.arange(P_TILE)[:, None]      
+    i_h = nl.arange(H)[None, :]           
+    i_d = nl.arange(TILE_D)[None, :]      
+
+    # Initialize Output
+    out = nl.ndarray((R, D), dtype=x_tensor.dtype, buffer=nl.shared_hbm)
+    
+    # Output accumulator in SBUF
+    out_acc = nl.zeros((nl.par_dim(P_TILE), D), dtype=nl.float32, buffer=nl.sbuf)
+
+    # Load inputs and perform RMSNorm
+    g_tile = nl.load(gamma.reshape((1, H))[0:1, nl.ds(0, H)])
+    row_idx = i_p
+    row_mask = (row_idx < R)
+    x_tile = nl.load(x_tensor[row_idx, i_h], mask=row_mask)
+
+    sq = nl.square(x_tile, mask=row_mask)
+    sq_sum = nl.sum(sq, axis=[1], mask=row_mask)             
+    mean = sq_sum / float(H)
+    inv_rms = nl.rsqrt(mean + 1.0e-5, mask=row_mask)         
+    y_tile = nl.multiply(x_tile, inv_rms, mask=row_mask)     
+    y_tile = nl.multiply(y_tile, g_tile, mask=row_mask)      
+
+    # Precompute transposed y tiles
+    yT_all = nl.ndarray((num_k, nl.par_dim(TILE_K), P_TILE),
+                        dtype=x_tensor.dtype, buffer=nl.sbuf)
+    for k in nl.affine_range(num_k):
+        k0 = k * TILE_K
+        y_blk = y_tile[:, nl.ds(k0, TILE_K)]  
+        yT_psum = nisa.nc_transpose(y_blk, engine=nisa.tensor_engine)  
+        yT_all[k, :, :] = nisa.tensor_copy(yT_psum, dtype=x_tensor.dtype)  
+
+    # Main Loop: Iterate over chunks of blocks
+    for chunk in nl.affine_range(num_chunks):
+        chunk_idx = chunk * CHUNK_SIZE 
+        
+        # Allocate accumulators for the 4 sub-blocks in this chunk.
+        # Shape: (4, 128, 1). Using CHUNK_SIZE as outer dim.
+        # Note: nl.par_dim(TILE_K) marks the 128 dim as partition dim for the slices.
+        acc_up0_all = nl.zeros((CHUNK_SIZE, nl.par_dim(TILE_K), P_TILE), dtype=nl.float32, buffer=nl.psum)
+        acc_gate0_all = nl.zeros((CHUNK_SIZE, nl.par_dim(TILE_K), P_TILE), dtype=nl.float32, buffer=nl.psum)
+        acc_up1_all = nl.zeros((CHUNK_SIZE, nl.par_dim(TILE_K), P_TILE), dtype=nl.float32, buffer=nl.psum)
+        acc_gate1_all = nl.zeros((CHUNK_SIZE, nl.par_dim(TILE_K), P_TILE), dtype=nl.float32, buffer=nl.psum)
+
+        # Base column index for ug_wT for this chunk
+        base_ug_col = chunk * 2048
+
+        # 1. Accumulate Up/Gate projections for the entire chunk
+        for k in nl.affine_range(num_k):
+            k0 = k * TILE_K
+            yT_sb = yT_all[k]
+
+            # Optimization: Load LARGE block [128, 2048] from ug_wT
+            ug_big = nl.load(ug_wT[nl.ds(k0, TILE_K), nl.ds(base_ug_col, 2048)]) 
+            
+            # Distribute computation to sub-blocks
+            for sub in nl.affine_range(CHUNK_SIZE):
+                sub_col_offset = sub * 512
+                
+                # Slice the large loaded tile
+                # ug_big is [128, 2048]. Slicing on dim 1.
+                up_w0 = ug_big[:, nl.ds(sub_col_offset + 0 * TILE_K, TILE_K)]
+                up_w1 = ug_big[:, nl.ds(sub_col_offset + 1 * TILE_K, TILE_K)]
+                gate_w0 = ug_big[:, nl.ds(sub_col_offset + 2 * TILE_K, TILE_K)]
+                gate_w1 = ug_big[:, nl.ds(sub_col_offset + 3 * TILE_K, TILE_K)]
+
+                acc_up0_all[sub] += nl.matmul(up_w0, yT_sb, transpose_x=True)
+                acc_gate0_all[sub] += nl.matmul(gate_w0, yT_sb, transpose_x=True)
+                acc_up1_all[sub] += nl.matmul(up_w1, yT_sb, transpose_x=True)
+                acc_gate1_all[sub] += nl.matmul(gate_w1, yT_sb, transpose_x=True)
+
+        # 2. Finalize and Down Projection for each sub-block in the chunk
+        for sub in nl.affine_range(CHUNK_SIZE):
+            nb = chunk_idx + sub
+            pack_u0 = nb * PACK_TILE_U
+            
+            # --- Half 0 ---
+            # Copy from PSUM accumulator to SBUF
+            up_nm_sb0 = nisa.tensor_copy(acc_up0_all[sub], dtype=x_tensor.dtype)
+            gate_nm_sb0 = nisa.tensor_copy(acc_gate0_all[sub], dtype=x_tensor.dtype)
+            
+            # Transpose to get [1, 128]
+            up_mn0 = nisa.tensor_copy(nisa.nc_transpose(up_nm_sb0, engine=nisa.tensor_engine), dtype=x_tensor.dtype)
+            gate_mn0 = nisa.tensor_copy(nisa.nc_transpose(gate_nm_sb0, engine=nisa.tensor_engine), dtype=x_tensor.dtype)
+            
+            # SiLU and element-wise mul
+            gate_silu0 = nisa.activation(op=nl.silu, data=gate_mn0, dtype=gate_mn0.dtype)
+            act_mn0 = nl.multiply(up_mn0, gate_silu0)
+
+            n0 = pack_u0
+            
+            # Optimization: Load LARGE down_wT row strip [128, 2048]
+            # Covers all di blocks (4 * 512 = 2048 columns) in one load.
+            down_big0 = nl.load(down_wT[nl.ds(n0, TILE_K), nl.ds(0, 4 * TILE_D)]) 
+
+            for di in nl.affine_range(num_d):
+                d0 = di * TILE_D
+                # Slice from SBUF tile for matmul
+                down_blk = down_big0[:, nl.ds(d0, TILE_D)]
+                res = nl.matmul(act_mn0, down_blk)
+                out_acc[:, nl.ds(d0, TILE_D)] += res
+
+            # --- Half 1 ---
+            up_nm_sb1 = nisa.tensor_copy(acc_up1_all[sub], dtype=x_tensor.dtype)
+            gate_nm_sb1 = nisa.tensor_copy(acc_gate1_all[sub], dtype=x_tensor.dtype)
+            
+            up_mn1 = nisa.tensor_copy(nisa.nc_transpose(up_nm_sb1, engine=nisa.tensor_engine), dtype=x_tensor.dtype)
+            gate_mn1 = nisa.tensor_copy(nisa.nc_transpose(gate_nm_sb1, engine=nisa.tensor_engine), dtype=x_tensor.dtype)
+            
+            gate_silu1 = nisa.activation(op=nl.silu, data=gate_mn1, dtype=gate_mn1.dtype)
+            act_mn1 = nl.multiply(up_mn1, gate_silu1)
+
+            n1 = pack_u0 + TILE_K
+            
+            # Optimization: Load LARGE down_wT row strip [128, 2048]
+            down_big1 = nl.load(down_wT[nl.ds(n1, TILE_K), nl.ds(0, 4 * TILE_D)])
+
+            for di in nl.affine_range(num_d):
+                d0 = di * TILE_D
+                # Slice from SBUF tile for matmul
+                down_blk = down_big1[:, nl.ds(d0, TILE_D)]
+                res = nl.matmul(act_mn1, down_blk)
+                out_acc[:, nl.ds(d0, TILE_D)] += res
+
+    # Store result
+    for di in nl.affine_range(num_d):
+        d0 = di * TILE_D
+        out_tile = nisa.tensor_copy(out_acc[:, nl.ds(d0, TILE_D)], dtype=x_tensor.dtype)
+        nl.store(out[row_idx, d0 + i_d], value=out_tile, mask=row_mask)
+
+    return out
+"""

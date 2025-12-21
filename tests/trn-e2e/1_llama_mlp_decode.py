@@ -8,129 +8,68 @@ import torch_xla.core.xla_model as xm
 import math
 import time
 
-@nki.jit
-def nki_rmsnorm_kernel(a_tensor, g_tensor):
-  # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
-  # Where RMS(a_tensor) = sqrt(eps + (1/N) * sum(a_tensor * a_tensor))
-  # and N = a_tensor.shape[1], eps is 1e-5
-  # Reduction (mean) is performed in the free (2nd) dimension
-    out_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
-                            buffer=nl.shared_hbm)
-
-    # Make sure shapes match
-    assert a_tensor.shape[1] == g_tensor.shape[0]
-
-    # Generate tensor indices to index input tensor
-    ix = nl.arange(128)[:, None]
-    iw = nl.arange(1)[:, None]
-    iy = nl.arange(a_tensor.shape[1])[None, :]
-
-    num_rows = a_tensor.shape[0]
-
-    # Load RMSNorm weight once, reused by rows/tiles of a_tensor
-    g_tile = nl.load(g_tensor.reshape((1, g_tensor.shape[0]))[iw, iy])
-
-    # Process 128 rows at a time due to 128-partition tile size limitation
-    # Since we're not reducing across the first dimension
-    # Tiles can be processed independently
-    for i in nl.affine_range(math.ceil(a_tensor.shape[0]/128)):
-
-        # Load input data from external memory to on-chip memory
-        a_tile = nl.load(a_tensor[i * 128 + ix, iy],
-                         mask=(i * 128 + ix < num_rows))
-
-        # Compute element-wise square of a_tensor
-        in_square = nl.square(a_tile)
-
-        # Calculate sum of squared elements, along last dimension
-        square_sum = nl.sum(in_square, axis=[1])
-
-        # Scale and get a reciprocal
-        mean = square_sum / a_tensor.shape[1]
-
-        # Take square root of mean and then reciprocal with
-        # rsqrt API (one ISA instruction)
-        rms_reciprocal = nl.rsqrt(mean + 1e-5)
-
-        # Scale the input tensor
-        out_tile = nl.multiply(a_tile, rms_reciprocal)
-
-        # Broadcast weight along first axis to match tensor shape
-        # num_rows_active = min(num_rows - i * 128, 128)
-        g_bcast = g_tile.broadcast_to((128, g_tensor.shape[0]))
-
-        # Multiply with the RMSNorm weight
-        out_tile[...] = nl.multiply(out_tile, g_bcast,
-                            mask=(i * 128 + ix < num_rows))
-
-        # store the addition results back to external memory (out_tensor)
-        nl.store(out_tensor[i * 128 + ix, iy], value=out_tile,
-                 mask=(i * 128 + ix < num_rows))
-
-    return out_tensor
-
 # SUBSTITUTE HERE
 
-@nki.jit
-def nki_rmsnorm_kernel_reference(a_tensor, g_tensor):
-  # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
-  # Where RMS(a_tensor) = sqrt(eps + (1/N) * sum(a_tensor * a_tensor))
-  # and N = a_tensor.shape[1], eps is 1e-5
-  # Reduction (mean) is performed in the free (2nd) dimension
-    out_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
-                            buffer=nl.shared_hbm)
+# @nki.jit
+# def nki_rmsnorm_kernel_reference(a_tensor, g_tensor):
+#   # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
+#   # Where RMS(a_tensor) = sqrt(eps + (1/N) * sum(a_tensor * a_tensor))
+#   # and N = a_tensor.shape[1], eps is 1e-5
+#   # Reduction (mean) is performed in the free (2nd) dimension
+#     out_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
+#                             buffer=nl.shared_hbm)
 
-    # Make sure shapes match
-    assert a_tensor.shape[1] == g_tensor.shape[0]
+#     # Make sure shapes match
+#     assert a_tensor.shape[1] == g_tensor.shape[0]
 
-    # Generate tensor indices to index input tensor
-    ix = nl.arange(128)[:, None]
-    iw = nl.arange(1)[:, None]
-    iy = nl.arange(a_tensor.shape[1])[None, :]
+#     # Generate tensor indices to index input tensor
+#     ix = nl.arange(128)[:, None]
+#     iw = nl.arange(1)[:, None]
+#     iy = nl.arange(a_tensor.shape[1])[None, :]
 
-    num_rows = a_tensor.shape[0]
+#     num_rows = a_tensor.shape[0]
 
-    # Load RMSNorm weight once, reused by rows/tiles of a_tensor
-    g_tile = nl.load(g_tensor.reshape((1, g_tensor.shape[0]))[iw, iy])
+#     # Load RMSNorm weight once, reused by rows/tiles of a_tensor
+#     g_tile = nl.load(g_tensor.reshape((1, g_tensor.shape[0]))[iw, iy])
 
-    # Process 128 rows at a time due to 128-partition tile size limitation
-    # Since we're not reducing across the first dimension
-    # Tiles can be processed independently
-    for i in nl.affine_range(math.ceil(a_tensor.shape[0]/128)):
+#     # Process 128 rows at a time due to 128-partition tile size limitation
+#     # Since we're not reducing across the first dimension
+#     # Tiles can be processed independently
+#     for i in nl.affine_range(math.ceil(a_tensor.shape[0]/128)):
 
-        # Load input data from external memory to on-chip memory
-        a_tile = nl.load(a_tensor[i * 128 + ix, iy],
-                         mask=(i * 128 + ix < num_rows))
+#         # Load input data from external memory to on-chip memory
+#         a_tile = nl.load(a_tensor[i * 128 + ix, iy],
+#                          mask=(i * 128 + ix < num_rows))
 
-        # Compute element-wise square of a_tensor
-        in_square = nl.square(a_tile)
+#         # Compute element-wise square of a_tensor
+#         in_square = nl.square(a_tile)
 
-        # Calculate sum of squared elements, along last dimension
-        square_sum = nl.sum(in_square, axis=[1])
+#         # Calculate sum of squared elements, along last dimension
+#         square_sum = nl.sum(in_square, axis=[1])
 
-        # Scale and get a reciprocal
-        mean = square_sum / a_tensor.shape[1]
+#         # Scale and get a reciprocal
+#         mean = square_sum / a_tensor.shape[1]
 
-        # Take square root of mean and then reciprocal with
-        # rsqrt API (one ISA instruction)
-        rms_reciprocal = nl.rsqrt(mean + 1e-5)
+#         # Take square root of mean and then reciprocal with
+#         # rsqrt API (one ISA instruction)
+#         rms_reciprocal = nl.rsqrt(mean + 1e-5)
 
-        # Scale the input tensor
-        out_tile = nl.multiply(a_tile, rms_reciprocal)
+#         # Scale the input tensor
+#         out_tile = nl.multiply(a_tile, rms_reciprocal)
 
-        # Broadcast weight along first axis to match tensor shape
-        # num_rows_active = min(num_rows - i * 128, 128)
-        g_bcast = g_tile.broadcast_to((128, g_tensor.shape[0]))
+#         # Broadcast weight along first axis to match tensor shape
+#         # num_rows_active = min(num_rows - i * 128, 128)
+#         g_bcast = g_tile.broadcast_to((128, g_tensor.shape[0]))
 
-        # Multiply with the RMSNorm weight
-        out_tile[...] = nl.multiply(out_tile, g_bcast,
-                            mask=(i * 128 + ix < num_rows))
+#         # Multiply with the RMSNorm weight
+#         out_tile[...] = nl.multiply(out_tile, g_bcast,
+#                             mask=(i * 128 + ix < num_rows))
 
-        # store the addition results back to external memory (out_tensor)
-        nl.store(out_tensor[i * 128 + ix, iy], value=out_tile,
-                 mask=(i * 128 + ix < num_rows))
+#         # store the addition results back to external memory (out_tensor)
+#         nl.store(out_tensor[i * 128 + ix, iy], value=out_tile,
+#                  mask=(i * 128 + ix < num_rows))
 
-    return out_tensor
+#     return out_tensor
 
 @nki.jit
 def nki_matmul_tiled_reference_(lhsT, rhs):
@@ -192,26 +131,24 @@ def nki_matmul_tiled_reference_(lhsT, rhs):
 
     return result
 
-def forward_reference(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
+def forward_reference(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     b, s, h = x.shape
     x = x.view(-1, h)
     # x = RmsNorm.apply(x, post_attention_layernorm_weight, 1e-5, len(x.shape) - 1)
-    x = nki_rmsnorm_kernel_reference(x, post_attention_layernorm_weight)
-    up = nki_matmul_tiled_reference_(x.t(), up_proj_weight.t())
-    gate = nki_matmul_tiled_reference_(x.t(), gate_proj_weight.t())
+    # x = nki_rmsnorm_kernel_reference(x, post_attention_layernorm_weight)
+    up = nki_matmul_tiled_reference_(x.t(), up_proj_weight)
+    gate = nki_matmul_tiled_reference_(x.t(), gate_proj_weight)
     act = torch.nn.SiLU()(gate) * up
-    output = nki_matmul_tiled_reference_(act.t() , down_proj_weight.t())
+    output = nki_matmul_tiled_reference_(act.t() , down_proj_weight)
 
     return output
 
 def get_test_weights(hidden_size, intermediate_size, dtype, device):
     """Create test weights for MLP."""
-    post_attention_layernorm_weight = torch.randn(hidden_size, dtype=dtype, device=device)
-    up_proj_weight = torch.randn(intermediate_size, hidden_size, dtype=dtype, device=device)
-    gate_proj_weight = torch.randn(intermediate_size, hidden_size, dtype=dtype, device=device)
-    down_proj_weight = torch.randn(hidden_size, intermediate_size, dtype=dtype, device=device)
+    up_proj_weight = torch.randn(hidden_size, intermediate_size, dtype=dtype, device=device)
+    gate_proj_weight = torch.randn(hidden_size, intermediate_size, dtype=dtype, device=device)
+    down_proj_weight = torch.randn(intermediate_size, hidden_size, dtype=dtype, device=device)
     return (
-        post_attention_layernorm_weight,
         up_proj_weight,
         gate_proj_weight,
         down_proj_weight,
@@ -249,7 +186,7 @@ def test_nki(ref_func, test_func):
     dtype = torch.bfloat16
     device = xm.xla_device()
     hidden_size = 2048
-    intermediate_size = 8192
+    intermediate_size = 4096
     weights = get_test_weights(hidden_size, intermediate_size, dtype, device)
     
     for _ in range(2):
@@ -266,7 +203,7 @@ def benchmark_nki(nki_func):
     dtype = torch.bfloat16
     device = xm.xla_device()
     hidden_size = 2048
-    intermediate_size = 8192
+    intermediate_size = 4096
     weights = get_test_weights(hidden_size, intermediate_size, dtype, device)
     batch, seq = 1, 1
     x = torch.randn(batch, seq, hidden_size, dtype=dtype, device=device)

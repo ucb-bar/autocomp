@@ -49,6 +49,7 @@ class LLMEnsemble:
                               cur_iter: int = None,
                               num_iters: int = None,
                               dropout_menu_options: float = 1,
+                              translate: bool = False,
                              ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_plans)
         cands = []
@@ -69,6 +70,7 @@ class LLMEnsemble:
                                     cur_iter=cur_iter,
                                     num_iters=num_iters,
                                     dropout_menu_options=dropout_menu_options,
+                                    translate=translate,
                                     )
                 cands.extend(this_agent_resps)
         return cands
@@ -87,6 +89,7 @@ class LLMEnsemble:
                                 cur_iter: int = None,
                                 num_iters: int = None,
                                 dropout_menu_options: float = 1,
+                                translate: bool = False,
                                 ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_plans)
         cands = []
@@ -106,6 +109,7 @@ class LLMEnsemble:
                                     cur_iter=cur_iter,
                                     num_iters=num_iters,
                                     dropout_menu_options=dropout_menu_options,
+                                    translate=translate,
                                     )
                 cands.extend(this_agent_resps)
         return cands
