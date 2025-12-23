@@ -152,25 +152,16 @@ def run_compare(dtype=torch.bfloat16):
     if perf_iters > 0:
         args = get_input_tensors(batch, num_heads, num_kv_heads, head_dim, seqlen_kv, dtype, device)
         # Warmup to ensure compilation happens before timing.
-        _ = run_baseline(*args)
         _ = run_nki(*args)
         torch_xla.sync()
         t0 = time.time()
         for _ in range(perf_iters):
-            baseline_out = run_baseline(*args)
-        torch_xla.sync()
-        t1 = time.time()
-        print(f"baseline_out: {baseline_out.to('cpu')[0, 0, 0, :8]}")
-        torch_xla.sync()
-        t2 = time.time()
-        for _ in range(perf_iters):
             nki_out = run_nki(*args)
         torch_xla.sync()
-        t3 = time.time()
-        print(f"nki_out: {nki_out.to('cpu')[0, 0, 0, :8]}")
-        baseline_ms = (t1 - t0) * 1000.0 / perf_iters
-        nki_ms = (t3 - t2) * 1000.0 / perf_iters
-        print(f"autocomp perf over {perf_iters} iters — baseline: {baseline_ms:.3f} ms/iter, nki: {nki_ms:.3f} ms/iter")
+        t1 = time.time()
+        # print(f"nki_out: {nki_out.to('cpu')[0, 0, 0, :8]}")
+        nki_ms = (t1 - t0) * 1000.0 / perf_iters
+        print("Latency: {:.3f} ms (P99)".format(nki_ms))
 
 
 if __name__ == "__main__":

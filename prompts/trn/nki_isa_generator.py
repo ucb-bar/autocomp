@@ -835,10 +835,22 @@ nisa.dma_copy(dst=out_tensor[idx_tile, iy], src=inp_tile, oob_mode=nisa.oob_mode
     },
     "nki.isa.dma_transpose": {
         "header": "nisa.dma_transpose(src: tile[HBM|SBUF], axes: tuple=auto, dtype: nki_dtype=src.dtype, mask: predicate=None) -> tile (transposed)",
-        "description": """Perform a transpose on input src using DMA Engine. The permutation of transpose follow the rules described below:
-    For 2-d input tile, the permutation will be [1, 0]
-    For 3-d input tile, the permutation will be [2, 1, 0]
-    For 4-d input tile, the permutation will be [3, 1, 2, 0]
+        "description": """    Perform a transpose on input src using DMA Engine.
+
+    The permutation of transpose follow the rules described below:
+        For 2-d input tile, the permutation will be [1, 0]
+        For 3-d input tile, the permutation will be [2, 1, 0]
+        For 4-d input tile, the permutation will be [3, 1, 2, 0]
+
+    The only valid dge_mode s are unknown and hwdge. If hwdge, this instruction will be lowered to a Hardware DGE transpose. This has additional restrictions:
+        src.shape[0] == 16
+        src.shape[-1] % 128 == 0
+        dtype is 2 bytes
+
+    Parameters:
+            src – the source of transpose, must be a tile in HBM or SBUF.
+            axes – transpose axes where the i-th axis of the transposed tile will correspond to the axes[i] of the source. Supported axes are (1, 0), (2, 1, 0), and (3, 1, 2, 0).
+            dge_mode – (optional) specify which Descriptor Generation Engine (DGE) mode to use for DMA descriptor generation: nki.isa.dge_mode.none (turn off DGE) or nki.isa.dge_mode.swdge (software DGE) or nki.isa.dge_mode.hwdge (hardware DGE) or nki.isa.dge_mode.unknown (by default, let compiler select the best DGE mode). Hardware based DGE is only supported for NeuronCore-v3 or newer. See Trainium2 arch guide for more information.
 """,
     },
     "nki.isa.dropout": {
@@ -1446,17 +1458,19 @@ kernel_insts_dict = {
         "nki.isa.tensor_tensor",        
     ],
     "transpose": [
-        "nki.isa.tensor_copy_predicated",  
-        "nki.isa.dma_transpose",       
-        "nki.isa.nc_transpose",         
+        "ShapeAndSelection",
+        "nki.isa.tensor_copy_predicated",
+        # "nki.isa.dma_transpose",
+        "nki.isa.nc_transpose",
     ]
 }
 
 workload_to_kernel_dict = {
     "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
     "attention_decoder": ["gemm", "softmax", "causal_mask"],
-    "llama_mlp": ["softmax", "gemm"],
+    "llama_mlp": ["gemm", "softmax"],
     "llama_attention": ["gemm", "softmax"],
+    "llama_logits": ["transpose", "gemm"],
 }
 
 prob_to_name = {
@@ -1486,6 +1500,11 @@ prob_to_name = {
         3: "llama_mlp",
         4: "llama_mlp",
         5: "llama_attention",
+        6: "llama_attention",
+        7: "llama_logits",
+        8: "llama_logits",
+        9: "llama_logits",
+        10: "llama_logits",
     },
 }
 

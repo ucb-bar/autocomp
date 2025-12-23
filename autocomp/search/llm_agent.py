@@ -1166,7 +1166,6 @@ class TrnLLMAgent(LLMAgent):
     def get_opt_menu_options(self, prob: Prob):
         """Get optimization menu options for NKI/Trainium kernels"""
         return [
-            # "distribute evenly across different engines (tensor/vector/scalar) and overlap work to maximize throughput",
             "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
             "minimize data movement",
             "improve data layout and access patterns",
@@ -1179,32 +1178,21 @@ class TrnLLMAgent(LLMAgent):
             "delay softmax division until after all reductions are complete",
             "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
             "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
-            # "reorder operations to work on a tile after it has been collapsed/reduced when mathematically equivalent",
-            # "accumulate directly in the Scalar Engine’s reduction registers",
             "do operations in lower precision such as nl.bfloat16",
-            # "move operations inside affine_range loops to parallelize and avoid synchronization",
             "double buffering",
             "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
-            # "dispatch operations ahead of time to pipeline them",
             "pipeline operations to better overlap computation and data movement (using sequential_range)",
             "keep data in SBUF/PSUM instead of storing to and loading from HBM",
-            # "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
-            # "transpose only one tile of a matrix (using nc_matmul with is_transpose=True and is_moving_onezero=True) so that it can be kept in SBUF",
-            # "use mod_alloc to pre-allocate workspace in SBUF/PSUM",
             "stronger tiling for contraction / moving-free split",
-            # "work on buffer-sized tiles to increase data reuse",
             "reorder operations to improve locality",
             "fuse dependent operations",
             "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
             "fuse loops that iterate over the same dimension to improve intermediate data reuse",
-            # "split loops to enable independent optimization",
             "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
             "allocate buffers in lower precision such as nl.bfloat16",
-            # "allocate and accumulate in PSUM to reduce communication to SBUF",
             "downcast to lower precision during operations that take dtype as an argument",
             "keep data in the same layout to avoid transpose operations",
             "eliminate intermediate tensor materialization by using in-place operations (storing the output in the same buffer as the input)",
-            # "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
             "use the streaming softmax with running max and scaling trick",
             "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
@@ -1214,14 +1202,15 @@ class TrnLLMAgent(LLMAgent):
             "Scan carry-over to parallelize the scan operation",
             "Replace general-purpose code with faster specialized instructions",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
-            "Inline sequential operations into a single loop to pipeline them",
             "Kernel Fusion via SBUF residency",
             "Modify one particular parameter to maximize performance",
             "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
             "transpose inside the NKI kernel",
             "move non-NKI code into the NKI kernel",
             "Overlap execution across compute engines through pipelining",
-            "Optimize matmul behavior according to TensorEngine documentation",
+            # "Swap stationary and moving tensors in nc_matmul",
+            # "Make the vector the moving tensor in nc_matmul",
+            "Use conditional execution instead of masking, or vice versa",
             "Simplify or eliminate any unnecessary code"
             "Other methods not listed here.",
         ]
@@ -1247,7 +1236,6 @@ class TrnLLMAgent(LLMAgent):
         if translate:
             opt_lst = self._get_convert_to_nki_menu_options()
         else:
-            dropout_menu_options = 1
             opt_lst = self.get_opt_menu_options(prob)
             if dropout_menu_options < 1 and not force_opt_menu:
                 opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
@@ -1262,12 +1250,12 @@ class TrnLLMAgent(LLMAgent):
             if include_score_feedback and (cur_cand.score is not None):
                 parents_prompt = f"The latency of this code was {cur_cand.score} ms.\n" + parents_prompt
             if not include_ancestors:
-                parents_prompt = "\nThe original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
                 break # No need to go up past the immediate parent
             elif cur_cand.plan is not None:
                 parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
             else:
-                parents_prompt = "The original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
             cur_cand = cur_cand.parent
 
         if analysis:
@@ -1374,10 +1362,15 @@ class TrnLLMAgent(LLMAgent):
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
         # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_w.shape = (2048, 4096), gate_w.shape = (2048, 4096), down_w.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: R = 1, H = 2048, U = 8192, D = 2048. Make sure to take advantage of these shapes, especially the fact that x is a vector.")
         # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
-        rules.append("Minimize the amount of non-NKI code.")
+        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
+        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
