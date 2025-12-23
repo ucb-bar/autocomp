@@ -1168,6 +1168,7 @@ class TrnLLMAgent(LLMAgent):
         return [
             "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
             "minimize data movement",
+            "maximally overlap data movement and compute",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
             "inline a function so it can be more easily optimized and fused",
