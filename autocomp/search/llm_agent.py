@@ -1181,7 +1181,7 @@ class TrnLLMAgent(LLMAgent):
             "do operations in lower precision such as nl.bfloat16",
             "double buffering",
             "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
-            "pipeline operations to better overlap computation and data movement (using sequential_range)",
+            "software pipelining",
             "keep data in SBUF/PSUM instead of storing to and loading from HBM",
             "stronger tiling for contraction / moving-free split",
             "reorder operations to improve locality",
@@ -1200,16 +1200,17 @@ class TrnLLMAgent(LLMAgent):
             "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
             "Scan carry-over to parallelize the scan operation",
-            "Replace general-purpose code with faster specialized instructions",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Kernel Fusion via SBUF residency",
             "Modify one particular parameter to maximize performance",
             "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
-            "transpose inside the NKI kernel",
-            "move non-NKI code into the NKI kernel",
+            "Use constant 128-iteration loops for Vector Engine instructions to coalesce them",
+            # "Replace general-purpose code with faster specialized instructions",
+            # "transpose inside the NKI kernel",
+            # "move non-NKI code into the NKI kernel",
             "Overlap execution across compute engines through pipelining",
-            # "Swap stationary and moving tensors in nc_matmul",
-            # "Make the vector the moving tensor in nc_matmul",
+            "Swap stationary and moving tensors in nc_matmul",
+            "Make the vector the moving tensor in nc_matmul",
             "Use conditional execution instead of masking, or vice versa",
             "Simplify or eliminate any unnecessary code"
             "Other methods not listed here.",
@@ -1368,8 +1369,8 @@ class TrnLLMAgent(LLMAgent):
         # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
+        rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
         # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
