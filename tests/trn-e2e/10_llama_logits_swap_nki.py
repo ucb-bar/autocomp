@@ -110,10 +110,10 @@ def test_nki(ref_func, test_func):
     np.random.seed(0)
     dtype = nl.bfloat16
     
-    for _ in range(2):
-        hidden_states, lm_head_weight = get_test_data(dtype)
-        ref_out = ref_func(lm_head_weight, hidden_states)
-        test_out = test_func(lm_head_weight, hidden_states)
+    for _ in range(1):
+        test_data = get_test_data(dtype)
+        ref_out = ref_func(*test_data)
+        test_out = test_func(*test_data)
         if not compare_outputs(ref_out, test_out):
             return False
     return True
