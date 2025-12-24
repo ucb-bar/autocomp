@@ -59,9 +59,9 @@ class TrnHardwareBackend(HardwareBackend):
             logger.info(f"Running command {' '.join(cmd)}")
             try:
                 p = subprocess.run(cmd, 
-                                 capture_output=True, text=True, timeout=200)
+                                 capture_output=True, text=True, timeout=300)
             except subprocess.TimeoutExpired:
-                logger.error(f"Code {i} timed out after 120 seconds")
+                logger.error(f"Code {i} timed out after 300 seconds")
                 results.append({"correct": False})
                 continue
 

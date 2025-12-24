@@ -3,6 +3,53 @@ from typing import Iterable
 from autocomp.common import logger
 from autocomp.search.prob import Prob
 
+workload_to_kernel_dict = {
+    "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
+    "attention_decoder": ["gemm", "softmax", "causal_mask"],
+    "llama_mlp": ["gemm", "softmax"],
+    "llama_attention": ["gemm", "softmax"],
+    "llama_logits": ["transpose", "gemm"],
+}
+
+prob_to_name = {
+    "trn-tutorial": {
+        0: "rmsnorm",
+        1: "layernorm",
+        2: "gemm",
+        3: "mamba",
+        4: "attention",
+        5: "attention",
+    },
+    "trn-advanced": {
+        0: "cumsum",
+        1: "transpose",
+        2: "maxpool",
+        3: "rope",
+        4: "conv1d",
+        5: "conv2d",
+        6: "attention_decoder",
+        7: "attention_decoder",
+        8: "attention_decoder",
+    },
+    "trn-e2e": {
+        0: "llama_mlp",
+        1: "llama_mlp",
+        2: "llama_mlp",
+        3: "llama_mlp",
+        4: "llama_mlp",
+        5: "llama_attention",
+        6: "llama_attention",
+        7: "llama_logits",
+        8: "llama_logits",
+        9: "llama_logits",
+        10: "llama_logits",
+        11: "llama_attention",
+        12: "llama_attention",
+        13: "llama_mlp",
+        14: "llama_mlp",
+    },
+}
+
 nki_isa_dict = {
     "architecture": {
         "description": """Kernel structure: Each NKI kernel has 3 stages — load data from HBM → SBUF, compute on NeuronCore, store results from SBUF → HBM.
@@ -1463,49 +1510,6 @@ kernel_insts_dict = {
         # "nki.isa.dma_transpose",
         "nki.isa.nc_transpose",
     ]
-}
-
-workload_to_kernel_dict = {
-    "attention": ["gemm", "softmax"], # for now, attention is a combination of gemm and softmax
-    "attention_decoder": ["gemm", "softmax", "causal_mask"],
-    "llama_mlp": ["gemm", "softmax"],
-    "llama_attention": ["gemm", "softmax"],
-    "llama_logits": ["transpose", "gemm"],
-}
-
-prob_to_name = {
-    "trn-tutorial": {
-        0: "rmsnorm",
-        1: "layernorm",
-        2: "gemm",
-        3: "mamba",
-        4: "attention",
-        5: "attention",
-    },
-    "trn-advanced": {
-        0: "cumsum",
-        1: "transpose",
-        2: "maxpool",
-        3: "rope",
-        4: "conv1d",
-        5: "conv2d",
-        6: "attention_decoder",
-        7: "attention_decoder",
-        8: "attention_decoder",
-    },
-    "trn-e2e": {
-        0: "llama_mlp",
-        1: "llama_mlp",
-        2: "llama_mlp",
-        3: "llama_mlp",
-        4: "llama_mlp",
-        5: "llama_attention",
-        6: "llama_attention",
-        7: "llama_logits",
-        8: "llama_logits",
-        9: "llama_logits",
-        10: "llama_logits",
-    },
 }
 
 class NkiIsaGenerator:

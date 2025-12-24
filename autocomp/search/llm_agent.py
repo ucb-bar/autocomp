@@ -1168,7 +1168,7 @@ class TrnLLMAgent(LLMAgent):
         return [
             "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
             "minimize data movement",
-            "maximally overlap data movement and compute",
+            "overlap data movement and compute",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
             "inline a function so it can be more easily optimized and fused",
@@ -1370,8 +1370,9 @@ class TrnLLMAgent(LLMAgent):
         # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
         # rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
+        rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (32, 2048). Make sure to take advantage of these shapes.")
         # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
