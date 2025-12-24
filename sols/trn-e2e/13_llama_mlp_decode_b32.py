@@ -70,6 +70,12 @@ def nki_matmul_tiled_batched_(lhsT, rhs):
 import torch
 
 def forward_reference(x, up_proj_weight, gate_proj_weight, down_proj_weight):
+    # Decode shapes:
+    # x.shape = (32, 1, 2048)
+    # up_proj_weight.shape = (2048, 4096)
+    # gate_proj_weight.shape = (2048, 4096)
+    # down_proj_weight.shape = (4096, 2048)
+    # output.shape = (32, 2048)
     b, s, h = x.shape
     up = nki_matmul_tiled_batched_(x.t(), up_proj_weight)
     gate = nki_matmul_tiled_batched_(x.t(), gate_proj_weight)

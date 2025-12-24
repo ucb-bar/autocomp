@@ -566,7 +566,7 @@ def main():
     search_strategy = "beam"
     iterations = 8
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
-    prob_id = 11
+    prob_id = 13
 
     # Beam search parameters
     num_plan_candidates=5
