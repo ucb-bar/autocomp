@@ -564,9 +564,9 @@ def main():
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
-    iterations = 8
+    iterations = 12
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
-    prob_id = 12
+    prob_id = 13
 
     # Beam search parameters
     num_plan_candidates=5
@@ -574,8 +574,8 @@ def main():
     beam_size=6
 
     # Translation parameters
-    translate_iters = 0
-    translate_perf_threshold = 1.3
+    translate_iters = 12
+    translate_perf_threshold = 1.05
 
     # Planning prompt knobs
     dropout_menu_options = 0.2

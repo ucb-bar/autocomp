@@ -83,10 +83,10 @@ def forward_reference(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     b, s, h = x.shape
     # x = RmsNorm.apply(x, post_attention_layernorm_weight, 1e-5, len(x.shape) - 1)
     # x = nki_rmsnorm_kernel_reference(x, post_attention_layernorm_weight)
-    up = nki_matmul_tiled_batched_(x.t(), up_proj_weight)
-    gate = nki_matmul_tiled_batched_(x.t(), gate_proj_weight)
+    up = nki_matmul_tiled_batched_(x.transpose(1, 2), up_proj_weight)
+    gate = nki_matmul_tiled_batched_(x.transpose(1, 2), gate_proj_weight)
     act = torch.nn.SiLU()(gate) * up
-    output = nki_matmul_tiled_batched_(act.t() , down_proj_weight)
+    output = nki_matmul_tiled_batched_(act.transpose(1, 2), down_proj_weight)
 
     return output
 
