@@ -74,6 +74,10 @@ if not google_cloud_location:
 if not google_cloud_project_id:
     google_cloud_project_id = "ch-llm" # your project ID here
 
+vllm_api_base = os.environ.get("VLLM_API_BASE")
+if not vllm_api_base:
+    vllm_api_base = "http://localhost:8000/v1"
+
 def is_openai_reasoning_model(model: str) -> bool:
     return "o1" in model or "o3" in model or "o4" in model or "gpt-5" in model
 def can_web_search_openai(model: str) -> bool:
@@ -292,39 +296,55 @@ async def fetch_completions(client: AsyncOpenAI | AsyncTogether | genai.Client |
     return responses
 
 class LLMClient():
-    def __init__(self, model: str):
+    def __init__(self, model: str, provider: str | None = None):
         self.model = model
         self.api_model_name = model
         self.client = None
         self.async_client = None
-        if ("gpt" in model and "gpt-oss" not in model) or re.search(r"o\d", model[:2]):
+
+        self.provider = provider
+        if self.provider is None:
+            # Try to guess the provider based on the model name
+            if "gpt" in model and "gpt-oss" not in model:
+                self.provider = "openai"
+            elif re.search(r"o\d", model[:2]):
+                self.provider = "openai"
+            elif "claude" in model:
+                self.provider = "aws"
+            elif "gemini" in model:
+                self.provider = "gcp"
+        
+        if self.provider == "openai" or ("gpt" in model and "gpt-oss" not in model) or re.search(r"o\d", model[:2]):
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
-        elif "gemini" in model:
+        elif self.provider == "gcp":
             # genai.configure(api_key=gemini_key_str)
             # self.client = genai.GenerativeModel(model_name=model)
             self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
-        elif "claude" in model:
-            # self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
-            self.async_client = anthropic.AsyncAnthropicBedrock(
-                aws_access_key=aws_access_key,
-                aws_secret_key=aws_secret_key,
-                aws_region="us-west-2",
-            )
-        elif "mistral" in model or "mixtral" in model:
+        elif self.provider == "mistralgcp":
             self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
-        elif "gemma" in model:
+        elif (self.provider == "anthropic" or self.provider == "aws") and "claude" in model:
+            if self.provider == "anthropic":
+                self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
+            elif self.provider == "aws":
+                self.async_client = anthropic.AsyncAnthropicBedrock(
+                    aws_access_key=aws_access_key,
+                    aws_secret_key=aws_secret_key,
+                    aws_region="us-west-2",
+                )
+        elif self.provider == "together":
+            self.async_client = AsyncTogether(api_key=together_key_str)
+        elif self.provider == "vllm":
             openai_api_key = "EMPTY"
-            openai_api_base = "http://localhost:8000/v1"
+            openai_api_base = vllm_api_base
             self.client = OpenAI(
                 api_key=openai_api_key,
                 base_url=openai_api_base,
             )
             model = self.client.models.list()
             self.model = model.data[0].id
-        else: # Route everything else to Together
-            self.async_client = AsyncTogether(api_key=together_key_str)
-        # elif "qwen" in model or "llama" in model or "deepseek" in model.lower():
+        else:
+            raise ValueError(f"Invalid provider: {self.provider}")
 
     def web_search(self, query: str) -> str:
         if can_web_search_openai(self.model):

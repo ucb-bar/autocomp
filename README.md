@@ -44,7 +44,28 @@ Partially supported backends:
 
 For instructions on adding a new backend, see [ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md).
 
-## LLM Endpoint Setup
+## LLM Setup
+
+Autocomp supports both local and remote endpoint LLM inference. For local inference, we support vLLM's OpenAI-compatible server. For endpoint inference, we support a variety of providers (see below).
+
+### Local Inference with vLLM
+
+1. **Install and launch vLLM:**
+   ```bash
+   pip install vllm
+   vllm serve --model Qwen/Qwen3-8B --port 8000 -tp <number of GPUs>
+   ```
+
+2. **Configure Autocomp:**
+   Set `models` in `search.py`:
+   ```python
+   models = ["vllm::Qwen/Qwen3-8B"]
+   ```
+   Optionally set `VLLM_API_BASE` if using a different host/port (default: `http://localhost:8000/v1`).
+
+For more details, see the [vLLM documentation](https://docs.vllm.ai/).
+
+### LLM Endpoint Setup
 
 Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`). The file should define the variable `key` as follows:
 
@@ -58,7 +79,8 @@ key = "YOUR_OPENAI_API_KEY"
 
 Notable parameters:
 - `backend`: The hardware backend to use. Currently supported backends are `gemmini`, `trn`, and `cuda`.
-- `models`: The list of models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints (OpenAI, Anthropic, Gemini, Together) are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
+- `models`: The list of models to use. Models are specific `"<provider>::<model>"`, for example `"openai::o3-mini"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI, Google Vertex AI, Anthropic, AWS Bedrock, and Together. Use provider `vLLM` for local serving.
+- `code_models`: The list of models to use for the implementation phase of prompting, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 - `simulator`: The evaluation method to use.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Trainium, `trn`

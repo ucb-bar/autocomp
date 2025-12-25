@@ -558,15 +558,17 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Generic search parameters
     backend = "trn"  # Options: "gemmini", "trn", "cuda"
-    # models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview","us.anthropic.claude-sonnet-4-5-20250929-v1:0"]  # Models for planning
-    models = ["o4-mini", "gpt-5.2", "gemini-3-pro-preview", "us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    code_models = ["gemini-3-pro-preview", "gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    # Models are specified as "provider::model"
+    # Valid providers are "openai", "gcp", "aws", "anthropic", "mistralgcp", "together", "vllm"
+    # If no provider is specified, the provider is inferred from the model name
+    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
     iterations = 12
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
-    prob_id = 13
+    prob_id = 12
 
     # Beam search parameters
     num_plan_candidates=5
@@ -574,7 +576,7 @@ def main():
     beam_size=6
 
     # Translation parameters
-    translate_iters = 12
+    translate_iters = 0
     translate_perf_threshold = 1.05
 
     # Planning prompt knobs
