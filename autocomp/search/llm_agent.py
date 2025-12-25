@@ -1217,6 +1217,42 @@ class TrnLLMAgent(LLMAgent):
             "Other methods not listed here.",
         ]
 
+    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
+        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+                #  "Use proper NKI syntax and decorators (@nki.jit).",
+                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
+                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
+                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
+                #  "Try to use the nki.language and nki.isa functions defined above.",
+                ]
+        if planning:
+            rules.append("Limit the scope of the plan to the selected optimization.")
+            if random.random() < 0.4:
+                rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
+            elif random.random() < 0.3:
+                rules.append("Plans can be highly targeted to one particular part of the code.")
+            rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
+        if coding:
+            rules.append("Optimize the test() function and do not change its name.")
+            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
+        rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_w.shape = (2048, 4096), gate_w.shape = (2048, 4096), down_w.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: R = 1, H = 2048, U = 8192, D = 2048. Make sure to take advantage of these shapes, especially the fact that x is a vector.")
+        # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        # rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
+        rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
+        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
+        prompt_text = ""
+        for i, rule in enumerate(rules):
+            prompt_text += f"{i+1}. {rule}\n"
+        return prompt_text
+
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
                                           force_opt_menu: int, 
@@ -1341,42 +1377,6 @@ class TrnLLMAgent(LLMAgent):
         prompt_text += "\nMake sure to follow these rules:"
         prompt_text += self._get_prompt_rules(planning=False, coding=True)
         prompt_text += "\nOptimized combined NKI code:"
-        return prompt_text
-
-    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
-        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-                #  "Use proper NKI syntax and decorators (@nki.jit).",
-                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
-                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
-                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
-                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
-                #  "Try to use the nki.language and nki.isa functions defined above.",
-                ]
-        if planning:
-            rules.append("Limit the scope of the plan to the selected optimization.")
-            if random.random() < 0.4:
-                rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
-            elif random.random() < 0.3:
-                rules.append("Plans can be highly targeted to one particular part of the code.")
-            rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
-        if coding:
-            rules.append("Optimize the test() function and do not change its name.")
-            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
-        rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_w.shape = (2048, 4096), gate_w.shape = (2048, 4096), down_w.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: R = 1, H = 2048, U = 8192, D = 2048. Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
-        rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
-        prompt_text = ""
-        for i, rule in enumerate(rules):
-            prompt_text += f"{i+1}. {rule}\n"
         return prompt_text
 
     def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
