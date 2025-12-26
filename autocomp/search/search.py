@@ -156,7 +156,7 @@ class SearchStrategy:
         # Filter out incorrect candidates
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
 
-        keep_factor = self.translate_perf_threshold if self.translate_iters >= cur_iter else 1
+        keep_factor = self.translate_perf_threshold if cur_iter <= self.translate_iters else 1
         # if cur_iter is not None and num_iters is not None:
         #     if cur_iter <= 2:
         #         keep_factor = 1.5
@@ -566,7 +566,7 @@ def main():
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
-    iterations = 10
+    iterations = 8
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
     prob_id = 9
 

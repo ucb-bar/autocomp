@@ -1176,6 +1176,7 @@ class TrnLLMAgent(LLMAgent):
             "overlap data movement and compute",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
+            "avoid rematerializing",
             "inline a function so it can be more easily optimized and fused",
             "skip computation when it is not needed (e.g. it is completely masked out)",
             "fuse loops (reordering if necessary)",
