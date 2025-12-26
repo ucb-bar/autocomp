@@ -568,7 +568,7 @@ def main():
     search_strategy = "beam"
     iterations = 8
     prob_type = "trn-e2e" # see README.md or sols directory for available problems
-    prob_id = 9
+    prob_id = 11
 
     # Beam search parameters
     num_plan_candidates=5
@@ -577,7 +577,7 @@ def main():
 
     # Translation parameters
     translate_iters = 0
-    translate_perf_threshold = 1.2
+    translate_perf_threshold = 1.05
 
     # Planning prompt knobs
     dropout_menu_options = 0.2

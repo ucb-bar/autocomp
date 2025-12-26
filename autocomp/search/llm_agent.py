@@ -1164,7 +1164,8 @@ class TrnLLMAgent(LLMAgent):
     def _get_convert_to_nki_menu_options(self) -> list[str]:
         return [
             "convert non-NKI code into NKI code",
-            "move a non-NKI transpose into the NKI kernel",
+            "move non-NKI code into a NKI kernel",
+            "move a non-NKI transpose into a NKI kernel",
             "fuse multiple NKI kernels into a single kernel",
         ]
 
@@ -1357,10 +1358,12 @@ class TrnLLMAgent(LLMAgent):
 
         if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
             rand_val = random.random()
-            if rand_val < 0.15:
+            if rand_val < 0.1:
                 prompt_text += "\n" + fusion_example.PROMPT() + "\n"
-            elif rand_val < 0.3:
+            elif rand_val < 0.2:
                 prompt_text += "\n" + fusion_example.PROMPT_2() + "\n"
+            elif rand_val < 0.3:
+                prompt_text += "\n" + fusion_example.PROMPT_3() + "\n"
 
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code

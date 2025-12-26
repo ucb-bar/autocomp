@@ -377,7 +377,9 @@ def test(x_tensor, gamma, ug_wT, down_wT):
 """
 
 def PROMPT_3():
-    return """@nki.jit
+    return """Here is an example of a fused kernel that inlines two matrix multiplications into a single loop to enable SBUF residency (among other optimizations).
+```
+@nki.jit
 def nki_fused_layer_(lhs, up_w, gate_w, down_w):
     '''
     Fused NKI kernel for MLP layer:
