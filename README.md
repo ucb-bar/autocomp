@@ -67,11 +67,31 @@ For more details, see the [vLLM documentation](https://docs.vllm.ai/).
 
 ### LLM Endpoint Setup
 
-Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`). The file should define the variable `key` as follows:
+#### OpenAI, Anthropic, Together
+
+Depending on the specific models you want to use, you will need to define the appropriate environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TOGETHER_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `together_key.py`). The file should define the variable `key` as follows:
 
 ```python
 key = "YOUR_OPENAI_API_KEY"
 ```
+
+#### AWS Bedrock
+
+To use AWS Bedrock, set the environment variables 
+  `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or create the file `autocomp/common/aws_key.py` with the variables `aws_access_key` and `aws_secret_key` as follows:
+
+```python
+aws_access_key = "YOUR_AWS_ACCESS_KEY_ID"
+aws_secret_key = "YOUR_AWS_SECRET_ACCESS_KEY"
+```
+
+#### Gemini Endpoint Setup
+
+To use Gemini via Google cloud, install the Google Cloud CLI as described at https://docs.cloud.google.com/sdk/docs/install-sdk#linux.
+
+Run `gcloud auth application-default login` to enable the Google Cloud SDK.
+
+Configure the region, location, and/or project using the environment variables `GOOGLE_CLOUD_REGION`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_CLOUD_PROJECT_ID`, or in `autocomp/common/llm_utils.py`
 
 ## 🚀 Usage
 
