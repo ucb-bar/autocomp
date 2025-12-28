@@ -44,6 +44,8 @@ prob_to_name = {
         9: "llama_attention",
         10: "llama_mlp",
         11: "llama_mlp",
+        12: "llama_logits",
+        13: "llama_logits",
     },
 }
 
