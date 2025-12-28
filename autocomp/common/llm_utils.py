@@ -61,7 +61,7 @@ if not google_cloud_project:
     try:
         import autocomp.common.gcp_key as gcp_key
         google_cloud_location = gcp_key.location
-        google_cloud_project = gcp_key.project_id
+        google_cloud_project = gcp_key.project
     except ImportError:
         logger.info("No Google Cloud location/project ID found in env or import. Continuing with empty location/project ID.")
         google_cloud_location = None
