@@ -34,15 +34,6 @@ if not anthropic_key_str:
         logger.info("No Anthropic key found in env or import. Continuing with empty key.")
         anthropic_key_str = "EMPTY"
 
-# gemini_key_str = os.environ.get("GOOGLE_API_KEY")
-# if not gemini_key_str:
-#     try:
-#         import autocomp.common.gemini_key as gemini_key
-#         gemini_key_str = gemini_key.key
-#     except ImportError:
-#         logger.info("No Gemini key found in env or import. Continuing with empty key.")
-#         gemini_key_str = "EMPTY"
-
 together_key_str = os.environ.get("TOGETHER_API_KEY")
 if not together_key_str:
     try:
@@ -61,18 +52,20 @@ if not aws_access_key or not aws_secret_key:
         aws_secret_key = aws_key.aws_secret_key
     except ImportError:
         logger.info("No AWS credentials found in env or import. Continuing with empty key.")
-        aws_access_key = "EMPTY"
-        aws_secret_key = "EMPTY"
+        aws_access_key = None
+        aws_secret_key = None
 
-google_cloud_region = os.environ.get("GOOGLE_CLOUD_REGION")
 google_cloud_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
-google_cloud_project_id = os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
-if not google_cloud_region:
-    google_cloud_region = None # your region here
-if not google_cloud_location:
-    google_cloud_location = "global" # your location here
-if not google_cloud_project_id:
-    google_cloud_project_id = "ch-llm" # your project ID here
+google_cloud_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+if not google_cloud_project:
+    try:
+        import autocomp.common.gcp_key as gcp_key
+        google_cloud_location = gcp_key.location
+        google_cloud_project = gcp_key.project_id
+    except ImportError:
+        logger.info("No Google Cloud location/project ID found in env or import. Continuing with empty location/project ID.")
+        google_cloud_location = None
+        google_cloud_project = None
 
 vllm_api_base = os.environ.get("VLLM_API_BASE")
 if not vllm_api_base:
@@ -320,9 +313,9 @@ class LLMClient():
         elif self.provider == "gcp":
             # genai.configure(api_key=gemini_key_str)
             # self.client = genai.GenerativeModel(model_name=model)
-            self.async_client = genai.Client(vertexai=True, project=google_cloud_project_id, location=google_cloud_region)
-        elif self.provider == "mistralgcp":
-            self.client = MistralGoogleCloud(region=google_cloud_region, project_id=google_cloud_project_id)
+            self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+        # elif self.provider == "mistralgcp":
+        #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
         elif (self.provider == "anthropic" or self.provider == "aws") and "claude" in model:
             if self.provider == "anthropic":
                 self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)

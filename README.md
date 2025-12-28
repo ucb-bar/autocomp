@@ -91,7 +91,12 @@ To use Gemini via Google cloud, install the Google Cloud CLI as described at htt
 
 Run `gcloud auth application-default login` to enable the Google Cloud SDK.
 
-Configure the region, location, and/or project using the environment variables `GOOGLE_CLOUD_REGION`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_CLOUD_PROJECT_ID`, or in `autocomp/common/llm_utils.py`
+Configure the location and/or project using the environment variables `GOOGLE_CLOUD_LOCATION` and `GOOGLE_CLOUD_PROJECT`, or in `autocomp/common/gcp_key.py`, as follows:
+
+```python
+location = "YOUR_GOOGLE_CLOUD_LOCATION"
+project = "YOUR_GOOGLE_CLOUD_PROJECT"
+```
 
 ## 🚀 Usage
 

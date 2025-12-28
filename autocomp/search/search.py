@@ -559,7 +559,7 @@ def main():
     # Generic search parameters
     backend = "trn"  # Options: "gemmini", "trn", "cuda"
     # Models are specified as "provider::model"
-    # Valid providers are "openai", "gcp", "aws", "anthropic", "mistralgcp", "together", "vllm"
+    # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
     models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
     code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
