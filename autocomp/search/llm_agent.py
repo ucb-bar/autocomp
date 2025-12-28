@@ -6,6 +6,7 @@ from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
 # from autocomp.search.annotate_perf import GemminiCode
 from prompts.gemmini import isa_prompt_conv, isa_prompt_admm,plan_prompt, gemmini_rules, tiling_example, if_example, if_example_matmul
+from prompts.trn import fusion_example
 from prompts.trn.nki_isa_generator import NkiIsaGenerator
 from prompts.cuda import tensor_examples
 
@@ -50,6 +51,9 @@ def extract(code_str: str) -> str:
     
     if "```python" in code_str:
         code_str = code_str.split("```python")[1].split("```")[0]
+        return code_str
+    if "```cuda" in code_str:
+        code_str = code_str.split("```cuda")[1].split("```")[0]
         return code_str
 
     if "void test" in code_str:
@@ -102,12 +106,24 @@ def extract(code_str: str) -> str:
     #     new_body.append(line.strip())
     # return "\n".join(new_body)
 
+def extract_plan(plan_str: str) -> str:
+    """
+    Takes LLM-generated plan and extracts the plan
+    """
+    plan_str = plan_str.split("</think>")[-1].split("</budget:thinking>")[-1].split("</planning>")[-1]
+    return plan_str
+
 class LLMAgent:
     """
     A mock-up of the LLM used to propose, evaluate, and implement optimizations.
     """
-    def __init__(self, model):
-        self.llm_client = LLMClient(model)
+    def __init__(self, model_with_provider: str):
+        if "::" in model_with_provider:
+            provider, model = model_with_provider.split("::", 1)
+        else:
+            provider = None
+            model = model_with_provider
+        self.llm_client = LLMClient(model, provider)
 
     def get_opt_menu_options(self):
         # Mock-up method to get the optimization menu options
@@ -115,6 +131,14 @@ class LLMAgent:
 
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
         return ["Analysis 1", "Analysis 2", "Analysis 3"]
+
+    def evaluate_code_quality(self, candidates: list[CodeCandidate], save_dir: pathlib.Path = None) -> list[float]:
+        """
+        Evaluate the quality of code candidates using LLM before running benchmarks.
+        Returns a list of quality scores (0.0 to 1.0) where higher is better.
+        """
+        # Default implementation returns neutral scores for all candidates
+        return [0.5] * len(candidates)
 
     def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
                               prob: Prob,
@@ -130,6 +154,7 @@ class LLMAgent:
                               cur_iter: int = None,
                               num_iters: int = None,
                               dropout_menu_options: float = 1,
+                              translate: bool = False,
                              ) -> list[CodeCandidate]:
         """
         dropout_menu_options: probability of keeping each menu option
@@ -168,7 +193,7 @@ class LLMAgent:
             num_unique_prompts_per_cand = num_plans
         else:
             num_unique_prompts_per_cand = 1
-        msgs_lst = []
+        prompts_lst = []
         for c_i, candidate in enumerate(candidate_lst):
             save_str = save_strs[c_i]
             for p in range(num_unique_prompts_per_cand):
@@ -177,7 +202,7 @@ class LLMAgent:
                 force_opt_menu = None if force_opt_menu_lst is None else force_opt_menu_lst[c_i]
                 prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
                                                                     give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                    dropout_menu_options)
+                                                                    dropout_menu_options, translate)
 
                 # Save full prompt
                 prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
@@ -191,38 +216,48 @@ class LLMAgent:
                 with open(prompt_path, "w") as f:
                     f.write(prompt_text)
 
-                messages = [
-                    # {"role": "system", "content": TEMPLATE_SYS},
-                    {"role": "user", "content": prompt_text},
-                ]
-                msgs_lst.append(messages)
+                prompts_lst.append(prompt_text)
 
         temperature = 1
         candidates_to_gen = num_plans // num_unique_prompts_per_cand
 
         extended_responses = self.llm_client.chat_async(
-            msgs_lst=msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=candidates_to_gen,  # number of candidates,
             temperature=temperature
         )
         # Need to sort the responses back into a flattened list for each parent candidate
-        responses = [[] for _ in range(len(candidate_lst))]
+        full_responses = [[] for _ in range(len(candidate_lst))]
         for r_i, per_prompt_responses in enumerate(extended_responses):
             c_i = r_i // num_unique_prompts_per_cand
-            responses[c_i].extend(per_prompt_responses)
+            full_responses[c_i].extend(per_prompt_responses)
 
+        # responses contains the extracted plans
+        responses = [[] for _ in range(len(candidate_lst))]
+        for c_i in range(len(full_responses)):
+            for s_i in range(len(full_responses[c_i])):
+                responses[c_i].append(extract_plan(full_responses[c_i][s_i]))
+
+        # Save the extracted plans and the full plans
         for c_i in range(len(responses)):
             save_str = save_strs[c_i]
             for s_i in range(num_plans):
                 path = f"plan{'' if not save_str else '_' + save_str}"
                 if force_opt_menu_lst is not None:
                     path += "_" + str(force_opt_menu_lst[c_i])
-                path += "_" + str(s_i) + ".txt"
-                path = save_dir / path
-                with open(path, "w") as f:
-                    f.write(responses[c_i][s_i])
-                logger.debug("Saved optimization plan to %s", path)
+                path += "_" + str(s_i)
+                full_plan_path = save_dir / (path + "_full.txt")
+                plan_path = save_dir / (path + ".txt")
+                full_plan = full_responses[c_i][s_i]
+                extracted_plan = responses[c_i][s_i]
+                if extracted_plan != full_plan:
+                    with open(full_plan_path, "w") as f:
+                        f.write(full_plan)
+                with open(plan_path, "w") as f:
+                    f.write(extracted_plan)
+                logger.debug("Saved optimization plan to %s", plan_path)
 
+        # Create the new candidates
         new_cands = []
         for c_i, cand_resps in enumerate(responses):
             for plan in cand_resps:
@@ -242,6 +277,7 @@ class LLMAgent:
                               cur_iter: int = None,
                               num_iters: int = None,
                               dropout_menu_options: float = 1,
+                              translate: bool = False,
                              ) -> list[CodeCandidate]:
         """
         dropout_menu_options: probability of keeping each menu option
@@ -274,7 +310,7 @@ class LLMAgent:
             # Add the previously iterated plans and code to the prompt
             prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
                                                                  give_score_feedback, give_util_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
-                                                                 dropout_menu_options)
+                                                                 dropout_menu_options, translate)
 
             # Save full prompt
             prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
@@ -288,15 +324,11 @@ class LLMAgent:
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
 
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
             temperature = 1
             candidates_to_gen = num_plans // num_unique_prompts_per_cand
 
             resp = self.llm_client.chat_async(
-                msgs_lst=[messages],
+                prompts_lst=[prompt_text],
                 num_candidates=candidates_to_gen,  # number of candidates,
                 temperature=temperature
             )[0]
@@ -353,22 +385,18 @@ class LLMAgent:
             logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
             return loaded_candidates
 
-        msgs_lst = []
+        prompts_lst = []
         for c_i in range(len(candidate_lst)):
             prompt_text = self._get_implement_code_prompt(candidate_lst[c_i], prob, code_icl_examples)
             # Save full prompt
             prompt_path = save_dir / f"prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
-            messages = [
-                # {"role": "system", "content": TEMPLATE_SYS},
-                {"role": "user", "content": prompt_text},
-            ]
-            msgs_lst.append(messages)
+            prompts_lst.append(prompt_text)
 
         temperature = 1
         responses = self.llm_client.chat_async(
-            msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -428,13 +456,9 @@ class LLMAgent:
         with open(prompt_path, "w") as f:
             f.write(prompt_text)
 
-        messages = [
-            # {"role": "system", "content": TEMPLATE_SYS},
-            {"role": "user", "content": prompt_text},
-        ]
         temperature = 1
         responses = self.llm_client.chat(
-            messages=messages,
+            prompt=prompt_text,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -461,7 +485,7 @@ class LLMAgent:
             candidates.append(new_cand)
         return candidates
 
-    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
+    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         loaded_code = []
         for c_i in range(num_samples):
             path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
@@ -479,19 +503,16 @@ class LLMAgent:
                 loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
             return loaded_candidates
 
-        prompt_text = self._get_combine_candidates_prompt(candidates)
+        prompt_text = self._get_combine_candidates_prompt(candidates, prob)
 
         # Save full prompt
         prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
         with open(prompt_path, "w") as f:
             f.write(prompt_text)
         
-        messages = [
-            {"role": "user", "content": prompt_text},
-        ]
         temperature = 1
         responses = self.llm_client.chat(
-            messages=messages,
+            prompt=prompt_text,
             num_candidates=num_samples,  # number of candidates,
             temperature=temperature
         )
@@ -551,21 +572,19 @@ class LLMAgent:
             logger.info("Loaded %d reimplemented code implementations rather than generating new ones", len(loaded_candidates))
             return loaded_candidates
 
-        msgs_lst = []
+        prompts_lst = []
         for c_i in range(len(candidate_lst)):
             prompt_text = self._get_reimplement_failed_code_prompt(candidate_lst[c_i], prob)
             # Save full prompt
             prompt_path = save_dir / f"reimplement_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
                 f.write(prompt_text)
-            messages = [
-                {"role": "user", "content": prompt_text},
-            ]
-            msgs_lst.append(messages)
+            prompts_lst.append(prompt_text)
 
         responses = self.llm_client.chat_async(
-            msgs_lst,
+            prompts_lst=prompts_lst,
             num_candidates=num_samples,
+            temperature=1,
         )
 
         candidates: list[CodeCandidate] = []
@@ -796,6 +815,7 @@ class GemminiLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> list[str]:
         # Select which menu options will appear
         plan_prompt_texts = plan_prompt.PROMPT(self.pe_dim)
@@ -894,7 +914,7 @@ class GemminiLLMAgent(LLMAgent):
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
         elif self.pe_dim == 16:
@@ -1036,9 +1056,10 @@ class CudaLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> list[str]:
         # Select which menu options will appear
-        if cur_iter <= 2:
+        if translate:
             opt_lst = self._get_convert_to_cuda_menu_options()
         else:
             opt_lst = self.get_opt_menu_options()
@@ -1122,7 +1143,7 @@ Speedup can be increased by using the following optimizations:
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         prompt_text = "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's combine the following optimized code samples to extract the high-performance characteristics of each:\n"
         for i, c in enumerate(candidates):
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
@@ -1140,14 +1161,23 @@ class TrnLLMAgent(LLMAgent):
     def __repr__(self):
         return f"TrnLLMAgent({self.llm_client.model})"
 
+    def _get_convert_to_nki_menu_options(self) -> list[str]:
+        return [
+            "convert non-NKI code into NKI code",
+            "move non-NKI code into a NKI kernel",
+            "move a non-NKI transpose into a NKI kernel",
+            "fuse multiple NKI kernels into a single kernel",
+        ]
+
     def get_opt_menu_options(self, prob: Prob):
         """Get optimization menu options for NKI/Trainium kernels"""
         return [
-            # "distribute evenly across different engines (tensor/vector/scalar) and overlap work to maximize throughput",
             "eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead",
             "minimize data movement",
+            "overlap data movement and compute",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
+            "avoid rematerializing",
             "inline a function so it can be more easily optimized and fused",
             "skip computation when it is not needed (e.g. it is completely masked out)",
             "fuse loops (reordering if necessary)",
@@ -1156,32 +1186,21 @@ class TrnLLMAgent(LLMAgent):
             "delay softmax division until after all reductions are complete",
             "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
             "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
-            # "reorder operations to work on a tile after it has been collapsed/reduced when mathematically equivalent",
-            # "accumulate directly in the Scalar Engine’s reduction registers",
             "do operations in lower precision such as nl.bfloat16",
-            # "move operations inside affine_range loops to parallelize and avoid synchronization",
             "double buffering",
             "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
-            # "dispatch operations ahead of time to pipeline them",
-            "pipeline operations to better overlap computation and data movement (using sequential_range)",
+            "software pipelining",
             "keep data in SBUF/PSUM instead of storing to and loading from HBM",
-            # "use nc_matmul with an identity matrix, is_transpose=True, is_moving_onezero=True to transpose a matrix in place",
-            # "transpose only one tile of a matrix (using nc_matmul with is_transpose=True and is_moving_onezero=True) so that it can be kept in SBUF",
-            # "use mod_alloc to pre-allocate workspace in SBUF/PSUM",
             "stronger tiling for contraction / moving-free split",
-            # "work on buffer-sized tiles to increase data reuse",
             "reorder operations to improve locality",
             "fuse dependent operations",
             "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
             "fuse loops that iterate over the same dimension to improve intermediate data reuse",
-            # "split loops to enable independent optimization",
             "allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM",
             "allocate buffers in lower precision such as nl.bfloat16",
-            # "allocate and accumulate in PSUM to reduce communication to SBUF",
             "downcast to lower precision during operations that take dtype as an argument",
             "keep data in the same layout to avoid transpose operations",
             "eliminate intermediate tensor materialization by using in-place operations (storing the output in the same buffer as the input)",
-            # "optimize reduction by performing tile-wise reductions first, fusing reduction and transformation passes",
             "use the streaming softmax with running max and scaling trick",
             "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
@@ -1189,10 +1208,70 @@ class TrnLLMAgent(LLMAgent):
             "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
             "Scan carry-over to parallelize the scan operation",
-            "Replace general-purpose code with faster specialized instructions",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            "Kernel Fusion via SBUF residency",
+            "Modify one particular parameter to maximize performance",
+            "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
+            "Tile Vector Engine instructions in loops of size 128 to coalesce them",
+            "Use a different engine for an operation",
+            # "Replace general-purpose code with faster specialized instructions",
+            # "transpose inside the NKI kernel",
+            # "move non-NKI code into the NKI kernel",
+            "Overlap execution across compute engines through pipelining",
+            "Swap stationary and moving tensors in nc_matmul",
+            "Use conditional execution instead of masking, or vice versa",
+            "Simplify or eliminate any unnecessary code"
             "Other methods not listed here.",
         ]
+
+    def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
+        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+                #  "Use proper NKI syntax and decorators (@nki.jit).",
+                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
+                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
+                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
+                #  "Try to use the nki.language and nki.isa functions defined above.",
+                ]
+        if planning:
+            rules.append("Limit the scope of the plan to the selected optimization.")
+            if random.random() < 0.4:
+                rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
+            elif random.random() < 0.3:
+                rules.append("Plans can be highly targeted to one particular part of the code.")
+            rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
+        if coding:
+            rules.append("Optimize the test() function and do not change its name.")
+            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
+        rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
+
+        # Problem-specific rules
+        if prob.prob_type == "trn-e2e" and (prob.prob_id == 0 or prob.prob_id == 1):
+            # Llama-3.2-1B MLP prefill, batch = 1
+            rules.append("You are optimizing for constant shapes: x.shape = (1, 64, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 2 or prob.prob_id == 3):
+            # Llama-3.2-1B MLP decode, batch = 1
+            rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 4 or prob.prob_id == 5):
+            # Llama-3.2-1B attention, batch = 1
+            rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 6 or prob.prob_id == 7):
+            # Llama-3.2-1B logits, batch = 1
+            rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 8 or prob.prob_id == 9):
+            # Llama-3.2-1B attention, batch = 32
+            rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 10 or prob.prob_id == 11):
+            # Llama-3.2-1B MLP decode, batch = 32
+            rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 12 or prob.prob_id == 13):
+            # Llama-3.2-1B logits, batch = 32
+            rules.append("You are optimizing for constant shapes: hidden_states.shape = (32, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
+        prompt_text = ""
+        for i, rule in enumerate(rules):
+            prompt_text += f"{i+1}. {rule}\n"
+        return prompt_text
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
@@ -1208,14 +1287,18 @@ class TrnLLMAgent(LLMAgent):
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
+                                          translate: bool,
                                          ) -> str:
         # Select which menu options will appear
         menu_options_text = ""
-        opt_lst = self.get_opt_menu_options(prob)
-        if dropout_menu_options < 1 and not force_opt_menu:
-            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
-        if shuffle_opts:
-            random.shuffle(opt_lst)
+        if translate:
+            opt_lst = self._get_convert_to_nki_menu_options()
+        else:
+            opt_lst = self.get_opt_menu_options(prob)
+            if dropout_menu_options < 1 and not force_opt_menu:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+            if shuffle_opts:
+                random.shuffle(opt_lst)
         include_score_feedback = random.random() < give_score_feedback
 
         parents_prompt = ""
@@ -1225,12 +1308,12 @@ class TrnLLMAgent(LLMAgent):
             if include_score_feedback and (cur_cand.score is not None):
                 parents_prompt = f"The latency of this code was {cur_cand.score} ms.\n" + parents_prompt
             if not include_ancestors:
-                parents_prompt = "\nThe original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
                 break # No need to go up past the immediate parent
             elif cur_cand.plan is not None:
                 parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
             else:
-                parents_prompt = "The original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
             cur_cand = cur_cand.parent
 
         if analysis:
@@ -1258,10 +1341,10 @@ class TrnLLMAgent(LLMAgent):
             # prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. The plan should be specific to this code and explain how to change it."
             # TODO make it a parameter
             choose_or_invent = random.random()
-            if choose_or_invent < 0.1:
+            if choose_or_invent < 0.1 and not translate:
                 # Prompt to invent a new optimization inspired by the <optimizations>
                 prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-            elif choose_or_invent < 0.2:
+            elif choose_or_invent < 0.2 and not translate:
                 # Prompt to invent a new optimization different from the <optimizations>
                 prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
             else:
@@ -1272,7 +1355,7 @@ class TrnLLMAgent(LLMAgent):
         # if random.random() < 0.5:
         #     prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=True, coding=False)
+        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob)
 
         if prompt_end:
             logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
@@ -1285,6 +1368,15 @@ class TrnLLMAgent(LLMAgent):
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
+        if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
+            rand_val = random.random()
+            if rand_val < 0.1:
+                prompt_text += "\n" + fusion_example.PROMPT() + "\n"
+            elif rand_val < 0.2:
+                prompt_text += "\n" + fusion_example.PROMPT_2() + "\n"
+            elif rand_val < 0.3:
+                prompt_text += "\n" + fusion_example.PROMPT_3() + "\n"
+
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
         prompt_text += "\nYou are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
@@ -1292,12 +1384,12 @@ class TrnLLMAgent(LLMAgent):
         prompt_text += candidate.plan
 
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nOptimized NKI code:"
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
         prompt_text += "Let's combine the following optimized NKI code samples to extract the high-performance characteristics of each:\n"
@@ -1305,40 +1397,18 @@ class TrnLLMAgent(LLMAgent):
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nOptimized combined NKI code:"
-        return prompt_text
-
-    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
-        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-                #  "Use proper NKI syntax and decorators (@nki.jit).",
-                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
-                 "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
-                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
-                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
-                #  "Try to use the nki.language and nki.isa functions defined above.",
-                ]
-        if planning:
-            rules.append("Limit the scope of the plan to the selected optimization.")
-            if random.random() < 0.5:
-                rules.append("Limit the scope of the plan so that the rewritten program is still correct.")
-            rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
-        if coding:
-            rules.append("Optimize the test() function and do not change its name.")
-            rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
-        rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
-        prompt_text = ""
-        for i, rule in enumerate(rules):
-            prompt_text += f"{i+1}. {rule}\n"
         return prompt_text
 
     def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
         """
         Generate a prompt to reimplement failed code based on stdout/stderr feedback.
         """
-        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
             raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
         # prompt_text += "The original code is as follows:\n"
@@ -1370,7 +1440,7 @@ class TrnLLMAgent(LLMAgent):
         
         prompt_text += "\nPlease fix the code to address the errors while still applying the optimization plan. "
         prompt_text += "Make sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nFixed and optimized NKI code:"
 
         return prompt_text

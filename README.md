@@ -44,13 +44,54 @@ Partially supported backends:
 
 For instructions on adding a new backend, see [ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md).
 
-## LLM Endpoint Setup
+## LLM Setup
 
-Depending on the specific models you want to use, you will need to define the appropriate environment variables (e.g., `OPENAI_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `gemini_key.py`, `together_key.py`). The file should define the variable `key` as follows:
+Autocomp supports both local and remote endpoint LLM inference. For local inference, we support vLLM's OpenAI-compatible server. For endpoint inference, we support a variety of providers (see below).
+
+### Local Inference with vLLM
+
+1. **Install and launch vLLM:**
+   ```bash
+   pip install vllm
+   vllm serve --model Qwen/Qwen3-8B --port 8000 -tp <number of GPUs>
+   ```
+
+2. **Configure Autocomp:**
+   Set `models` in `search.py`:
+   ```python
+   models = ["vllm::Qwen/Qwen3-8B"]
+   ```
+   Optionally set `VLLM_API_BASE` if using a different host/port (default: `http://localhost:8000/v1`).
+
+For more details, see the [vLLM documentation](https://docs.vllm.ai/).
+
+### LLM Endpoint Setup
+
+#### OpenAI, Anthropic, Together
+
+Depending on the specific models you want to use, you will need to define the appropriate environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TOGETHER_API_KEY`), or create the file `autocomp/common/openai_key.py` (or `anthropic_key.py`, `together_key.py`). The file should define the variable `key` as follows:
 
 ```python
 key = "YOUR_OPENAI_API_KEY"
 ```
+
+#### AWS Bedrock
+
+To use AWS Bedrock, set the environment variables 
+  `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or create the file `autocomp/common/aws_key.py` with the variables `aws_access_key` and `aws_secret_key` as follows:
+
+```python
+aws_access_key = "YOUR_AWS_ACCESS_KEY_ID"
+aws_secret_key = "YOUR_AWS_SECRET_ACCESS_KEY"
+```
+
+#### Gemini Endpoint Setup
+
+To use Gemini via Google cloud, install the Google Cloud CLI as described at https://docs.cloud.google.com/sdk/docs/install-sdk#linux.
+
+Run `gcloud auth application-default login` to enable the Google Cloud SDK.
+
+Configure the region, location, and/or project using the environment variables `GOOGLE_CLOUD_REGION`, `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_CLOUD_PROJECT_ID`, or in `autocomp/common/llm_utils.py`
 
 ## 🚀 Usage
 
@@ -58,7 +99,8 @@ key = "YOUR_OPENAI_API_KEY"
 
 Notable parameters:
 - `backend`: The hardware backend to use. Currently supported backends are `gemmini`, `trn`, and `cuda`.
-- `models`: The list of models to use. For example, `o3-mini`, `gpt-4o`. A variety of endpoints (OpenAI, Anthropic, Gemini, Together) are supported but routing is somewhat hacky; see `autocomp/common/llm_utils.py`.
+- `models`: The list of models to use. Models are specific `"<provider>::<model>"`, for example `"openai::o3-mini"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI, Google Vertex AI, Anthropic, AWS Bedrock, and Together. Use provider `vLLM` for local serving.
+- `code_models`: The list of models to use for the implementation phase of prompting, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 - `simulator`: The evaluation method to use.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Trainium, `trn`
