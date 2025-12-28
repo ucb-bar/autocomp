@@ -485,7 +485,7 @@ class LLMAgent:
             candidates.append(new_cand)
         return candidates
 
-    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
+    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         loaded_code = []
         for c_i in range(num_samples):
             path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}.txt"
@@ -503,7 +503,7 @@ class LLMAgent:
                 loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
             return loaded_candidates
 
-        prompt_text = self._get_combine_candidates_prompt(candidates)
+        prompt_text = self._get_combine_candidates_prompt(candidates, prob)
 
         # Save full prompt
         prompt_path = save_dir / f"prompt{'' if not save_str else '_' + save_str}.txt"
@@ -914,7 +914,7 @@ class GemminiLLMAgent(LLMAgent):
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
         elif self.pe_dim == 16:
@@ -1143,7 +1143,7 @@ Speedup can be increased by using the following optimizations:
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         prompt_text = "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. Let's combine the following optimized code samples to extract the high-performance characteristics of each:\n"
         for i, c in enumerate(candidates):
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
@@ -1224,7 +1224,7 @@ class TrnLLMAgent(LLMAgent):
             "Other methods not listed here.",
         ]
 
-    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
+    def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
         rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
                 #  "Use proper NKI syntax and decorators (@nki.jit).",
                 #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
@@ -1244,17 +1244,29 @@ class TrnLLMAgent(LLMAgent):
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), post_attention_layernorm_weight.shape = (2048,), up_proj_weight.shape = (8192, 2048), gate_proj_weight.shape = (8192, 2048), down_proj_weight.shape = (2048, 8192), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_w.shape = (2048, 4096), gate_w.shape = (2048, 4096), down_w.shape = (4096, 2048), output.shape = (1, 2048). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: R = 1, H = 2048, U = 8192, D = 2048. Make sure to take advantage of these shapes, especially the fact that x is a vector.")
-        # rules.append("You are optimizing for constant shapes. Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_k.shape = (1, 4, 512, 64), past_v.shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: lhsT.shape = (K, M) = (2048, 64128), rhs.shape = (K, N) = (2048, 1). Make sure to take advantage of these shapes.")
-        rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
-        # rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+
+        # Problem-specific rules
+        if prob.prob_type == "trn-e2e" and (prob.prob_id == 0 or prob.prob_id == 1):
+            # Llama-3.2-1B MLP prefill, batch = 1
+            rules.append("You are optimizing for constant shapes: x.shape = (1, 64, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 2 or prob.prob_id == 3):
+            # Llama-3.2-1B MLP decode, batch = 1
+            rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 4 or prob.prob_id == 5):
+            # Llama-3.2-1B attention, batch = 1
+            rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 6 or prob.prob_id == 7):
+            # Llama-3.2-1B logits, batch = 1
+            rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 8 or prob.prob_id == 9):
+            # Llama-3.2-1B attention, batch = 32
+            rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 10 or prob.prob_id == 11):
+            # Llama-3.2-1B MLP decode, batch = 32
+            rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
+        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 12 or prob.prob_id == 13):
+            # Llama-3.2-1B logits, batch = 32
+            rules.append("You are optimizing for constant shapes: hidden_states.shape = (32, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
         # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
@@ -1343,7 +1355,7 @@ class TrnLLMAgent(LLMAgent):
         # if random.random() < 0.5:
         #     prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=True, coding=False)
+        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob)
 
         if prompt_end:
             logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
@@ -1372,12 +1384,12 @@ class TrnLLMAgent(LLMAgent):
         prompt_text += candidate.plan
 
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nOptimized NKI code:"
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate]) -> str:
+    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
         prompt_text += "Let's combine the following optimized NKI code samples to extract the high-performance characteristics of each:\n"
@@ -1385,7 +1397,7 @@ class TrnLLMAgent(LLMAgent):
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nOptimized combined NKI code:"
         return prompt_text
 
@@ -1428,7 +1440,7 @@ class TrnLLMAgent(LLMAgent):
         
         prompt_text += "\nPlease fix the code to address the errors while still applying the optimization plan. "
         prompt_text += "Make sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
         prompt_text += "\nFixed and optimized NKI code:"
 
         return prompt_text

@@ -133,12 +133,12 @@ class LLMEnsemble:
                 cands.extend(this_agent_resps)
         return cands
 
-    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="") -> list[CodeCandidate]:
+    def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         cands = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.combine_candidates(candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model)
+                this_agent_resps = llm.combine_candidates(candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob=prob)
                 cands.extend(this_agent_resps)
         return cands
 

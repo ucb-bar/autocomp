@@ -253,7 +253,7 @@ def test_nki(ref_func, test_func):
     weights = get_test_weights(hidden_size, intermediate_size, dtype, device)
     
     for _ in range(2):
-        batch, seq = 1, 32
+        batch, seq = 1, 64
         x = torch.randn(batch, seq, hidden_size, dtype=dtype, device=device)
         ref_out = ref_func(x, *weights)
         test_out = test_func(x, *weights)
@@ -268,7 +268,7 @@ def benchmark_nki(nki_func):
     hidden_size = 2048
     intermediate_size = 8192
     weights = get_test_weights(hidden_size, intermediate_size, dtype, device)
-    batch, seq = 1, 32
+    batch, seq = 1, 64
     x = torch.randn(batch, seq, hidden_size, dtype=dtype, device=device)
     
     test_ms = benchmark_forward(nki_func, x, weights, 50)

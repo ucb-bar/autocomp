@@ -429,7 +429,7 @@ class BeamSearchStrategy(SearchStrategy):
         for i, j in pairs:
             parent_i = parent_candidates[i]
             parent_j = parent_candidates[j]
-            this_pair_combined_candidates = self.code_llm.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}")
+            this_pair_combined_candidates = self.code_llm.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}", prob=self.prob)
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
