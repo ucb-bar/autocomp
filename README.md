@@ -104,7 +104,7 @@ project = "YOUR_GOOGLE_CLOUD_PROJECT"
 
 Notable parameters:
 - `backend`: The hardware backend to use. Currently supported backends are `gemmini`, `trn`, and `cuda`.
-- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::o3-mini"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI, Google Vertex AI, Anthropic, AWS Bedrock, and Together. Use provider `vLLM` for local serving.
+- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::o3-mini"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
 - `code_models`: The list of models to use for the implementation phase of prompting, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 - `simulator`: The evaluation method to use.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
