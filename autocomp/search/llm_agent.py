@@ -398,7 +398,8 @@ class LLMAgent:
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_candidates=num_samples,  # number of candidates,
-            temperature=temperature
+            temperature=temperature,
+            reasoning_effort="medium"
         )
 
         candidates: list[CodeCandidate] = [] # Flat list of new implemented candidates

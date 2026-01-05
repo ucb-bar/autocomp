@@ -392,7 +392,7 @@ class LLMClient():
                     results.append("Web search failed")
             return results
     
-    def chat_async(self, prompts_lst: list[str], num_candidates=10, temperature=None) -> list[list[str]]:
+    def chat_async(self, prompts_lst: list[str], num_candidates=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
         if self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
@@ -403,9 +403,8 @@ class LLMClient():
                 kwargs["temperature"] = temperature
             if "kevin" in self.model:
                 kwargs["max_tokens"] = 16384
-            if is_openai_reasoning_model(self.model):
-                if random.random() < 0.5:
-                    kwargs["reasoning"] = {"effort": "high"}
+            if is_openai_reasoning_model(self.model) and reasoning_effort is not None:
+                kwargs["reasoning"] = {"effort": reasoning_effort}
             responses = asyncio.run(fetch_completions(self.async_client, prompts_lst, **kwargs))
             return responses
         else:
