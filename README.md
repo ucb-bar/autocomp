@@ -54,7 +54,7 @@ Autocomp supports both local and remote endpoint LLM inference. For local infere
    ```
 
 2. **Configure Autocomp:**
-   Set `models` in `search.py`:
+   Set `models`/`code_models` in `search.py`:
    ```python
    models = ["vllm::Qwen/Qwen3-8B"]
    ```
