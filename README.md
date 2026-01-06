@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="img/autocomp_logo_dark.svg">
-    <img alt="Autocomp Logo" src="img/autocomp_logo.svg" width=80%>
+    <img alt="Autocomp Logo" src="img/autocomp_logo.svg" width=65%>
   </picture>
 </p>
 
