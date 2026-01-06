@@ -21,7 +21,7 @@ Welcome to the code repository of **Autocomp**. Check out our introductory [📝
 
 ### What is Autocomp?
 
-Autocomp is an LLM-driven code optimizer for tensor accelerators. Autocomp is designed to be portable and easy to use across a variety of hardware backends, and has already demonstrated strong performance across Gemmini, AWS Trainium, RVV, and CUDA.
+Autocomp is an LLM-driven code optimizer for tensor accelerators. Autocomp is designed to be portable and easy to use across a variety of hardware backends, and has already demonstrated strong performance on an industry accelerator ([AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)), an academic accelerator ([Gemmini](https://github.com/ucb-bar/gemmini)), NVIDIA GPUs, and even the RISC-V Vector Extension.
 
 ### How does Autocomp work?
 
@@ -31,7 +31,7 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 
 ## Backend Setup
 
-Currently supported backends:
+Autocomp can currently optimize code for the following backends:
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
 - Trainium ([trn_setup.md](autocomp/backend/trn_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
@@ -43,7 +43,7 @@ For instructions on adding a new backend, see [ADDING_A_BACKEND.md](autocomp/bac
 
 ## LLM Setup
 
-Autocomp supports both local and remote endpoint LLM inference. For local inference, we support vLLM's OpenAI-compatible server. For endpoint inference, we support a variety of providers (see below).
+Autocomp supports both local and remote endpoint LLM inference. For local inference, we support vLLM's [OpenAI-compatible server](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/). For endpoint inference, we support a variety of providers (see below).
 
 ### Local Inference with vLLM
 
