@@ -32,8 +32,8 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 ## Backend Setup
 
 Autocomp can currently optimize code for the following backends:
-- Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
 - Trainium ([trn_setup.md](autocomp/backend/trn_setup.md))
+- Gemmini ([gemmini_setup.md](autocomp/backend/gemmini_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kb_setup.md))
 
 Partially supported backends:
@@ -104,14 +104,14 @@ Notable parameters:
 - `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.2"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
 - `code_models`: The list of models to use for the implementation phase of prompting, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 - `simulator`: The evaluation method to use.
-  - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Trainium, `trn`
+  - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For CUDA, `kernelbench`
 - `iterations`: The number of iterations to run.
 - `search_strategy`: The search strategy to use. Currently only `beam` is supported.
 - `prob_type`: The problem type to use.
-  - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For Trainium, `trn-tutorial` or `trn-advanced`.
+  - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
 - `prob_id`: The problem ID to use.
 
@@ -130,29 +130,22 @@ Notable parameters:
   - `trn_eval.py` - Hardware evaluation utilities for Trainium.
   - `kb_eval.py` - Hardware evaluation utilities for KernelBench. Must configure path to KernelBench here.
 - `common/` - Shared utilities and helper functions
-  - `llm_utils.py` - LLM interaction utilities. Works with OpenAI, Anthropic, Gemini, Together. Implements parallel calls for OpenAI and Together.
+  - `llm_utils.py` - LLM interaction utilities. Implements the interface to the LLM providers listed above.
   - `my_logging.py` - Custom logging functionality.
   - `utils.py` - General utility functions.
 
 **`prompts/`** - Contains various prompts imported by `autocomp/search/llm_agent.py`.
-- `gemmini/` - Prompts and examples used for Gemmini code optimization
-  - `isa_prompt_conv.py` - Accelerator ISA section of the prompt, used for GEMM and convolution.
-  - `isa_prompt_admm.py` - Accelerator ISA section of the prompt, used for TinyMPC.
-  - `gemmini_rules.py` - Rules section of the prompt (helps constrain output and encourage functional correctness).
-  - `plan_prompt.py` - Planning phase prompt (note that implementation prompt is entirely contained within `autocomp/search/llm_agent.py` above).
-  - `tiling_example.py` - Tiling optimization example.
-  - `if_example.py` - Conditional optimization example (from convolution).
-  - `if_example_matmul.py` - Conditional optimization example (from GEMM).
 - `trn/` - Prompts and examples used for NKI (Trainium) optimization
   - `nki_isa_generator.py` - Generates the ISA string for the NKI ISA. If optimizing a new workload, configure the set of instructions to use here.
+- `gemmini/` - Prompts and examples used for Gemmini code optimization
 
 **`sols/`** - Contains baseline code for the benchmarks in the paper.
-- `exo/` - Exo unoptimized and optimized baseline code for the GEMM benchmarks in the paper. `sol{id}_exo_baseline.c` is the unoptimized code and is used by `autocomp/search/search.py` as the starting code fro optimization.
-- `gemm/` - Additional GEMM benchmarks used for schedule reuse. No hand-optimized code available.
-- `exo-conv/` - Exo unoptimized and optimized baseline code for the convolution benchmarks in the paper.
-- `admm-multifunction/` - TinyMPC unoptimized and optimized baseline code. Only problem IDs 1 and 2 are used in the paper. Run with FP32 4x4 Gemmini.
 - `trn-tutorial/` - NKI (Trainium) unoptimized and optimized baseline code for the tutorial benchmarks in the paper.
 - `trn-advanced/` - NKI (Trainium) unoptimized and optimized baseline code for the advanced benchmarks in the paper.
+- `exo/` - Exo unoptimized and optimized baseline code for the Gemmini GEMM benchmarks in the paper. `sol{id}_exo_baseline.c` is the unoptimized code and is used by `autocomp/search/search.py` as the starting code fro optimization.
+- `gemm/` - Additional Gemmini GEMM benchmarks used for schedule reuse. No hand-optimized code available.
+- `exo-conv/` - Exo unoptimized and optimized baseline code for the Gemmini convolution benchmarks in the paper.
+- `admm-multifunction/` - TinyMPC unoptimized and optimized baseline code. Only problem IDs 1 and 2 are used in the paper. Run with FP32 4x4 Gemmini.
 
 **`tests/`** - Contains test cases corresponding to `sols/` above.
 
@@ -161,7 +154,7 @@ Notable parameters:
 ## 📜 Citation
 ```
 @misc{hong2025autocomp,
-      title={Autocomp: LLM-Driven Code Optimization for Tensor Accelerators}, 
+      title={Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators}, 
       author={Charles Hong and Sahil Bhatia and Alvin Cheung and Yakun Sophia Shao},
       year={2025},
       eprint={2505.18574},
