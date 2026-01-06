@@ -10,7 +10,7 @@ AI-Driven Code Optimizer for Tensor Accelerators
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/abs/2505.18574">arXiv</a> | <a href="https://charleshong3.github.io/blog/autocomp.html">Blog</a> |
+| <a href="https://arxiv.org/abs/2505.18574"><b>arXiv</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> |
 </p>
 
 Welcome to the code repository of **Autocomp**. Check out our introductory [📝 blog post](https://charleshong3.github.io/blog/autocomp.html)!
