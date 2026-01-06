@@ -1,13 +1,17 @@
- <div align="center">
-    <img src="img/accelerator.png" alt="Accelerator" style="width:35%;">
-    <img src="img/code.png" alt="Optimized code example" style="width:27%;">
-    <img src="img/2phase.svg" alt="Plan-then-implement prompting strategy" style="width:30%;">
-</div> 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/autocomp_logo.svg">
+    <img alt="Autocomp Logo" src="img/autocomp_logo.svg" width=80%>
+  </picture>
+</p>
 
-# Autocomp: AI Code Optimizer for Tensor Accelerators
+<h3 align="center">
+AI-Driven Code Optimizer for Tensor Accelerators
+</h3>
 
-[![arXiv](https://img.shields.io/badge/arXiv-2505.18574-b31b1b.svg)](https://arxiv.org/abs/2505.18574)
-[![Blog Post](https://img.shields.io/badge/Blog-github.io-blue)](https://charleshong3.github.io/blog/autocomp.html)
+<p align="center">
+| <a href="https://arxiv.org/abs/2505.18574">arXiv</a> | <a href="https://charleshong3.github.io/blog/autocomp.html">Blog</a> |
+</p>
 
 Welcome to the code repository of **Autocomp**. Check out our introductory [📝 blog post](https://charleshong3.github.io/blog/autocomp.html)!
 
