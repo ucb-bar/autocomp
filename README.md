@@ -168,9 +168,11 @@ Notable parameters:
 
 ## 📝 Changelog
 
-**Update (11/18/2025)**: Added documentation for adding a new backend ([ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md)), added the `examples` directory for example optimization traces, and published [📝 blog post 4](https://charleshong3.github.io/blog/autocomp_trainium_conv1d.html) about how we optimized conv1d on Trainium.
+**(11/18/2025)** Added documentation for adding a new backend ([ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md)), added the `examples` directory for example optimization traces, and published [📝 blog post 4](https://charleshong3.github.io/blog/autocomp_trainium_conv1d.html) about how we optimized conv1d on Trainium.
 
-**Update (11/3/2025)**: Added code/documentation for setting up Trainium backend.
+**(11/3/2025)** Added code/documentation for setting up Trainium backend.
 Check out [📝 blog post 3](https://charleshong3.github.io/blog/autocomp_trainium.html) for more details.
 
-**Update (9/22/2025)**: Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out [📝 blog post 2](https://charleshong3.github.io/blog/autocomp_update.html) for more details.
+**(9/22/2025)** Added code/documentation for setting up CUDA/KernelBench backend, plus code for RVV optimization. Check out [📝 blog post 2](https://charleshong3.github.io/blog/autocomp_update.html) for more details.
+
+**(6/6/2025)** Initial code + [📝 blog post 1](https://charleshong3.github.io/blog/autocomp.html) release!
