@@ -306,8 +306,7 @@ class LLMClient():
                 self.provider = "aws"
             elif "gemini" in model:
                 self.provider = "gcp"
-        
-        if self.provider == "openai" or ("gpt" in model and "gpt-oss" not in model) or re.search(r"o\d", model[:2]):
+        elif self.provider == "openai":
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
@@ -316,10 +315,9 @@ class LLMClient():
             self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
         # elif self.provider == "mistralgcp":
         #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
-        elif (self.provider == "anthropic" or self.provider == "aws") and "claude" in model:
-            if self.provider == "anthropic":
-                self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
-            elif self.provider == "aws":
+        elif self.provider == "anthropic":
+            self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
+        elif self.provider == "aws" and "claude" in model:
                 self.async_client = anthropic.AsyncAnthropicBedrock(
                     aws_access_key=aws_access_key,
                     aws_secret_key=aws_secret_key,

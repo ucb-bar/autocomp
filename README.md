@@ -13,7 +13,7 @@ AI-Driven Code Optimizer for Tensor Accelerators
 | <a href="https://arxiv.org/abs/2505.18574"><b>arXiv</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> |
 </p>
 
-Welcome to the code repository of **Autocomp**. Check out our introductory [📝 blog post](https://charleshong3.github.io/blog/autocomp.html)!
+Welcome to the code repository of **Autocomp**. Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
 
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
@@ -81,6 +81,8 @@ To use AWS Bedrock, set the environment variables
 aws_access_key = "YOUR_AWS_ACCESS_KEY_ID"
 aws_secret_key = "YOUR_AWS_SECRET_ACCESS_KEY"
 ```
+
+Note that we currently only support Anthropic models on AWS Bedrock.
 
 #### Gemini Endpoint Setup
 
