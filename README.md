@@ -13,7 +13,7 @@ AI-Driven Code Optimizer for Tensor Accelerators
 | <a href="https://arxiv.org/abs/2505.18574"><b>arXiv</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> |
 </p>
 
-Welcome to the code repository of **Autocomp**. Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
+**(1/8/2026)**: Welcome to the code repository of **Autocomp**. Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
 
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
