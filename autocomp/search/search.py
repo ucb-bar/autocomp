@@ -386,8 +386,8 @@ class BeamSearchStrategy(SearchStrategy):
     """
     def __init__(self,
                  output_dir: pathlib.Path,
-                 backend: str,
-                 llm: LLMEnsemble,
+                 hw_backend: HardwareBackend,
+                 agent: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
                  metric: str,
@@ -412,9 +412,9 @@ class BeamSearchStrategy(SearchStrategy):
                  reimplement_failed: bool,
                  translate_iters: int,
                  translate_perf_threshold: float,
-                 code_llm: LLMEnsemble = None,
+                 code_agent: LLMEnsemble = None,
                 ):
-        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_llm=code_llm)
+        super().__init__(output_dir, hw_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
