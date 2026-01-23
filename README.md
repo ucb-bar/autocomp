@@ -13,7 +13,7 @@ AI-Driven Code Optimizer for Tensor Accelerators
 | <a href="https://arxiv.org/abs/2505.18574"><b>arXiv</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> |
 </p>
 
-**(1/22/2026)** Simplified repo structure to make it easier to add a new backend.
+**(1/22/2026)** Reorganized repo structure to make it easier to add a new backend.
 **(1/8/2026)** Welcome to the code repository of **Autocomp**. Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
 
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
@@ -40,7 +40,7 @@ Autocomp can currently optimize code for the following backends:
 Partially supported backends:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this backend.
 
-For instructions on adding a new backend, see [ADDING_A_BACKEND.md](autocomp/backend/ADDING_A_BACKEND.md).
+For instructions on adding a new backend, see [ADDING_A_BACKEND.md](ADDING_A_BACKEND.md).
 
 ## LLM Setup
 
