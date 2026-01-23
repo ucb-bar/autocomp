@@ -16,7 +16,7 @@ To add a new backend, you need to:
 
 ## Step 1: Create a Hardware Backend Class
 
-Create a new file `autocomp/backend/{backend_name}_eval.py` that implements a class inheriting from `HardwareBackend`.
+Create a new directory `autocomp/backend/{backend_name}/` with a file `{backend_name}_eval.py` that implements a class inheriting from `HardwareBackend`.
 
 ### Required Implementation
 
@@ -59,13 +59,13 @@ class YourHardwareBackend(HardwareBackend):
 
 ### Code Cleaning
 
-Backends generally need to clean LLM-generated code. There is some simple extraction logic implemented at the top of `autocomp/search/llm_agent.py`, but if this does not work for your backend, you can implement your own cleaning logic in the `evaluate_code` method of your hardware backend class or in `llm_agent.py`. You can also prompt the LLM to generate only the code and no other text, but this may actually reduce the quality of the code generated!
+Backends generally need to clean LLM-generated code. There is some simple extraction logic implemented at the top of `autocomp/agents/llm_agent.py`, but if this does not work for your backend, you can implement your own cleaning logic in the `evaluate_code` method of your hardware backend class or in `llm_agent.py`. You can also prompt the LLM to generate only the code and no other text, but this may actually reduce the quality of the code generated!
 
 ### Examples
 
-- **Gemmini**: See `autocomp/backend/gemmini_eval.py` - Uses FireSim or Spike for evaluation
-- **Trainium**: See `autocomp/backend/trn_eval.py` - Uses Trainium Neuron runtime
-- **CUDA/KernelBench**: See `autocomp/backend/kb_eval.py` - Uses KernelBench for evaluation
+- **Gemmini**: See `autocomp/backend/gemmini/gemmini_eval.py` - Uses FireSim or Spike for evaluation
+- **Trainium**: See `autocomp/backend/trn/trn_eval.py` - Uses Trainium Neuron runtime
+- **CUDA/KernelBench**: See `autocomp/backend/kernelbench/kb_eval.py` - Uses KernelBench for evaluation
 
 ### Other Considerations
 
@@ -75,21 +75,24 @@ Backends generally need to clean LLM-generated code. There is some simple extrac
 
 ## Step 2: Create an LLM Agent Class
 
-Create a new agent class in `autocomp/search/llm_agent.py` that inherits from `LLMAgent`.
+Create a new directory `autocomp/agents/{backend_name}/` with a file `{backend_name}_agent.py` that contains a class inheriting from `LLMAgent` (defined in `autocomp/agents/llm_agent.py`).
 
 ### Required Implementation
 
 Your agent class must override key methods for backend-specific prompting:
 
 ```python
-from autocomp.search.llm_agent import LLMAgent
+# In autocomp/agents/{backend_name}/{backend_name}_agent.py
+from autocomp.agents.llm_agent import LLMAgent
+from autocomp.search.prob import Prob
+from autocomp.search.code_repo import CodeCandidate
 
 class YourLLMAgent(LLMAgent):
     def __init__(self, model):
         super().__init__(model)
         # Initialize backend-specific configuration
     
-    def get_opt_menu_options(self):
+    def get_opt_menu_options(self, prob: Prob):
         """
         Return list of optimization options available for this backend.
         These appear in the planning prompt menu.
@@ -100,18 +103,19 @@ class YourLLMAgent(LLMAgent):
             # ... more options
         ]
     
-    def _get_propose_optimizations_prompt(self, candidate, prob, force_opt_menu, 
-                                         prompt_end, analysis, shuffle_opts,
-                                         give_score_feedback, give_util_feedback, 
-                                         give_spad_acc_feedback, include_ancestors,
-                                         plan_icl_examples, cur_iter, num_iters,
-                                         dropout_menu_options):
+    def _get_propose_optimizations_prompt(self, candidate: CodeCandidate, prob: Prob, 
+                                         force_opt_menu, prompt_end, analysis, 
+                                         shuffle_opts, give_score_feedback, 
+                                         give_util_feedback, give_spad_acc_feedback, 
+                                         include_ancestors, plan_icl_examples, 
+                                         cur_iter, num_iters, dropout_menu_options,
+                                         translate=False):
         """
         Generate the planning phase prompt. This includes:
         - The backend's ISA/API and architectural information
-        - The current code (prob.code)
+        - The current code (candidate.code)
         - Available optimizations (from get_opt_menu_options())
-        - Code structure and constraints (from _get_prompt_rules(planning=True, coding=False))
+        - Code structure and constraints
         """
         # Build your prompt here
         prompt = f"""
@@ -119,15 +123,15 @@ class YourLLMAgent(LLMAgent):
         """
         return prompt
     
-    def _get_implement_optimization_prompt(self, candidate, prob, prompt_end, 
-                                          analysis, code_icl_examples):
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob, 
+                                   code_icl_examples: bool = True):
         """
         Generate the implementation phase prompt. This includes:
         - The backend's ISA/API and architectural information
         - The optimization plan to implement (candidate.plan)
-        - The current code (prob.code)
-        - Backend-specific code format requirements (from _get_prompt_rules(planning=False, coding=True))
-        - Examples of correct code (from prompts/{backend_name}/)
+        - The current code (candidate.parent.code)
+        - Backend-specific code format requirements
+        - Examples of correct code (from autocomp/agents/{backend_name}/prompts/)
         """
         # Build your prompt here
         prompt = f"""
@@ -138,14 +142,15 @@ class YourLLMAgent(LLMAgent):
 
 ### Examples
 
-- **Gemmini**: `GemminiLLMAgent`
-- **Trainium**: `TrnLLMAgent`
-- **CUDA**: `CudaLLMAgent`
+- **Gemmini**: `autocomp/agents/gemmini/gemmini_agent.py` - `GemminiLLMAgent`
+- **Trainium**: `autocomp/agents/trn/trn_agent.py` - `TrnLLMAgent`
+- **CUDA**: `autocomp/agents/cuda/cuda_agent.py` - `CudaLLMAgent`
 
 ### Other Considerations
 
+- **Prompt Files**: Store backend-specific prompts and examples in `autocomp/agents/{backend_name}/prompts/`. This can include ISA documentation, code examples, and rules.
 - **Conditional Execution and Prompt Generation**: The prompts generated can be conditional on the plans generated (for the implementation phase) or on things like random.random() (for techniques like optimization menu dropout).
-- **ISA Documentation**: Include important ISA/API documentation and architectural information in prompts. The specific amount and info needed will depend on the backend. For Gemmini, we provide function signatures and descriptions for all functions in the ISA, located in `prompts/gemmini/`. For Trainium, we provide a subset of NKI instructions, using the NKI ISA generator from `prompts/trn/`. For CUDA, we provide tensor examples from `prompts/cuda/`, but no ISA documentation.
+- **ISA Documentation**: Include important ISA/API documentation and architectural information in prompts. The specific amount and info needed will depend on the backend. For Gemmini, we provide function signatures and descriptions for all functions in the ISA, located in `autocomp/agents/gemmini/prompts/`. For Trainium, we provide a subset of NKI instructions, using the NKI ISA generator from `autocomp/agents/trn/nki_isa_generator.py`. For CUDA, we provide tensor examples from `autocomp/agents/cuda/prompts/`, but no ISA documentation.
 - **Optimization Menu**: Define backend-specific optimizations (tiling, fusion, etc.). Remember to implement dropout inside `_get_propose_optimizations_prompt()`.
 - **Examples**: You may want to include in-context learning examples of optimized code.
 - **Rules**: Define constraints and correctness requirements. Specify exact code format expected (function signatures, wrappers, etc.).
@@ -156,9 +161,11 @@ Add backend and LLM agent instantiation logic in `autocomp/search/search.py` in 
 
 ### Import Your Classes
 
+Add imports at the top of `search.py`:
+
 ```python
-from autocomp.backend.{backend_name}_eval import YourHardwareBackend
-from autocomp.search.llm_agent import YourLLMAgent
+from autocomp.backend.{backend_name}.{backend_name}_eval import YourHardwareBackend
+from autocomp.agents.{backend_name}.{backend_name}_agent import YourLLMAgent
 ```
 
 ### Add Backend Instantiation
@@ -189,9 +196,9 @@ elif backend == "your_backend_name":
 
 ## Step 4: Create Setup Documentation
 
-Create a setup file `autocomp/backend/{backend_name}_setup.md` that explains how to set up and run the backend, following the pattern of existing setup files.
+Create a setup file `autocomp/backend/{backend_name}/{backend_name}_setup.md` that explains how to set up and run the backend, following the pattern of existing setup files.
 
-See `gemmini_setup.md`, `trn_setup.md`, or `kb_setup.md` for examples.
+See `autocomp/backend/gemmini/gemmini_setup.md`, `autocomp/backend/trn/trn_setup.md`, or `autocomp/backend/kernelbench/kb_setup.md` for examples.
 
 ## Step 5: Update README
 

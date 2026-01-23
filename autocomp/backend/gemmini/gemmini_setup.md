@@ -13,7 +13,7 @@ First, clone [Chipyard](https://github.com/ucb-bar/chipyard) and check out commi
 
 Next, make sure FireSim is set up and ready to run. FireSim has already been cloned as a submodule of Chipyard, but requires some additional setup as described in the [FireSim docs](https://docs.fires.im/en/1.20.1/). Within the `firesim` directory, you will need to run `firesim managerinit --platform <your_platform>` and configure files such as `firesim/deploy/config_hwdb.yaml` and `firesim/deploy/config_runtime.yaml`. Make sure to use a FireSim bitstream for your FPGA platform with the Gemmini configuration you want to use. You will also need to set up a FireSim workload `json` file with `"benchmark_name": "gemmini"`. An example of files we used is [here](https://github.com/charleshong3/auto-comp-firesim-files). 
 
-Under `firesim/deploy/workloads`, create a directory called `gemmini`. This will be pointed to by `config_runtime.yaml` and `autocomp/search/hardware_eval.py` within Autocomp.
+Under `firesim/deploy/workloads`, create a directory called `gemmini`. This will be pointed to by `config_runtime.yaml` and `autocomp/backend/gemmini/gemmini_eval.py` within Autocomp.
 
 ### TinyMPC Kernel Optimization
 TinyMPC kernels (stored under the name `admm-multifunction`) run on an FP32 4x4 Gemmini configuration, which requires building a new FireSim bitstream with Gemmini's FP32DefaultConfig.
@@ -30,4 +30,4 @@ make install
 ## Autocomp
 Finally, set up Autocomp and its Python dependencies: ``pip install -e .``
 
-In `autocomp/backend/gemmini_eval.py`, you will need to update at least one of the paths at the top of the file. By default, you will have set up Gemmini's "default" int8, 16x16 systolic array configuration, in which case you can set `INT8_16PE_CHIPYARD_PATH` to point to your Chipyard directory. For TinyMPC kernels, you would set the `FP32_4PE_CHIPYARD_PATH` to point to your Chipyard directory.
+In `autocomp/backend/gemmini/gemmini_eval.py`, you will need to update at least one of the paths at the top of the file. By default, you will have set up Gemmini's "default" int8, 16x16 systolic array configuration, in which case you can set `INT8_16PE_CHIPYARD_PATH` to point to your Chipyard directory. For TinyMPC kernels, you would set the `FP32_4PE_CHIPYARD_PATH` to point to your Chipyard directory.

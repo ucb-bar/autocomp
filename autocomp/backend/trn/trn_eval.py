@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime
 
-from autocomp.common import logger
+from autocomp.common import logger, TESTS_DIR
 from autocomp.search.prob import Prob
 from autocomp.backend.hardware_backend import HardwareBackend
 
@@ -43,7 +43,7 @@ class TrnHardwareBackend(HardwareBackend):
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Load the test code
-        test_dir = pathlib.Path(__file__).parent.parent.parent / "tests" / prob.prob_type
+        test_dir = TESTS_DIR / prob.prob_type
         test_file = list(test_dir.glob(f"{prob.prob_id}_*.py"))[0]
         if not test_file:
             raise FileNotFoundError(f"No test file found for {prob.prob_type} {prob.prob_id} in {test_dir}")

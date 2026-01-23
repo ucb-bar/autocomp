@@ -15,61 +15,47 @@ from mistralai_gcp import MistralGoogleCloud
 
 from autocomp.common import logger
 
-# Try environment variable first, then fallback to import
-openai_key_str = os.environ.get("OPENAI_API_KEY")
-if not openai_key_str:
-    try:
-        import autocomp.common.openai_key as openai_key
-        openai_key_str = openai_key.key
-    except ImportError:
-        logger.info("No OpenAI key found in env or import. Continuing with empty key.")
-        openai_key_str = "EMPTY"
+# Try to import keys from keys.py, use as fallback if env vars not set
+try:
+    from autocomp.common import keys
+except ImportError:
+    keys = None
 
-anthropic_key_str = os.environ.get("ANTHROPIC_API_KEY")
-if not anthropic_key_str:
-    try:
-        import autocomp.common.anthropic_key as anthropic_key
-        anthropic_key_str = anthropic_key.key
-    except ImportError:
-        logger.info("No Anthropic key found in env or import. Continuing with empty key.")
-        anthropic_key_str = "EMPTY"
+def _get_key(env_var: str, default: str = "EMPTY"):
+    """Get key from environment variable, falling back to keys.py."""
+    value = os.environ.get(env_var)
+    if value:
+        return value
+    if keys and hasattr(keys, env_var):
+        file_value = getattr(keys, env_var)
+        if file_value is not None:
+            return file_value
+    return default
 
-together_key_str = os.environ.get("TOGETHER_API_KEY")
-if not together_key_str:
-    try:
-        import autocomp.common.together_key as together_key
-        together_key_str = together_key.key
-    except ImportError:
-        logger.info("No Together key found in env or import. Continuing with empty key.")
-        together_key_str = "EMPTY"
+openai_key_str = _get_key("OPENAI_API_KEY")
+anthropic_key_str = _get_key("ANTHROPIC_API_KEY")
+together_key_str = _get_key("TOGETHER_API_KEY")
+aws_access_key = _get_key("AWS_ACCESS_KEY_ID", default=None)
+aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
+google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
+google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
+vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
 
-aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-if not aws_access_key or not aws_secret_key:
-    try:
-        import autocomp.common.aws_key as aws_key
-        aws_access_key = aws_key.aws_access_key
-        aws_secret_key = aws_key.aws_secret_key
-    except ImportError:
-        logger.info("No AWS credentials found in env or import. Continuing with empty key.")
-        aws_access_key = None
-        aws_secret_key = None
-
-google_cloud_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
-google_cloud_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-if not google_cloud_project:
-    try:
-        import autocomp.common.gcp_key as gcp_key
-        google_cloud_location = gcp_key.location
-        google_cloud_project = gcp_key.project
-    except ImportError:
-        logger.info("No Google Cloud location/project ID found in env or import. Continuing with empty location/project ID.")
-        google_cloud_location = None
-        google_cloud_project = None
-
-vllm_api_base = os.environ.get("VLLM_API_BASE")
-if not vllm_api_base:
-    vllm_api_base = "http://localhost:8000/v1"
+# Log key availability
+_key_status = {
+    "OPENAI_API_KEY": openai_key_str not in (None, "EMPTY"),
+    "ANTHROPIC_API_KEY": anthropic_key_str not in (None, "EMPTY"),
+    "TOGETHER_API_KEY": together_key_str not in (None, "EMPTY"),
+    "AWS_ACCESS_KEY_ID": aws_access_key is not None,
+    "AWS_SECRET_ACCESS_KEY": aws_secret_key is not None,
+    "GOOGLE_CLOUD_PROJECT": google_cloud_project is not None,
+}
+_available = [k for k, v in _key_status.items() if v]
+_unavailable = [k for k, v in _key_status.items() if not v]
+if _available:
+    logger.info(f"Keys available: {', '.join(_available)}")
+if _unavailable:
+    logger.info(f"Keys unavailable: {', '.join(_unavailable)}")
 
 def is_openai_reasoning_model(model: str) -> bool:
     return "o1" in model or "o3" in model or "o4" in model or "gpt-5" in model

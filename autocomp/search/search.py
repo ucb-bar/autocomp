@@ -4,15 +4,21 @@ import json
 
 import wandb
 
-from autocomp.common import logger
+from autocomp.common import logger, SOLS_DIR
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, TrnLLMAgent
-from autocomp.search.llm_ensemble import LLMEnsemble
-from autocomp.backend.hardware_backend import HardwareBackend
-from autocomp.backend.gemmini_eval import GemminiHardwareBackend
-from autocomp.backend.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
-from autocomp.backend.trn_eval import TrnHardwareBackend
 from autocomp.search.prob import Prob
+from autocomp.agents.llm_ensemble import LLMEnsemble
+from autocomp.backend.hardware_backend import HardwareBackend
+# Register LLM agents
+from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
+from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
+from autocomp.agents.trn.trn_agent import TrnLLMAgent
+# ... register more LLM agents here ...
+# Register hardware backends
+from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
+from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
+from autocomp.backend.trn.trn_eval import TrnHardwareBackend
+# ... register more hardware backends here ...
 
 class SearchStrategy:
     """
@@ -561,12 +567,13 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
     code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
-    iterations = 10
+    iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
 
@@ -648,7 +655,7 @@ def main():
                 initial_code = f.read().replace("Model", "ModelNew")
         else:
             # Find file matching pattern
-            sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type
+            sol_dir = SOLS_DIR / prob_type
             matches = list(sol_dir.glob(f"{prob_id}_*.py"))
             if not matches:
                 raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
@@ -656,14 +663,14 @@ def main():
                 initial_code = f.read()
     elif backend == "gemmini":
         if "admm" in prob_type:
-            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
+            with open(SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
                 initial_code = f.read()
         else:
-            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
+            with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 initial_code = f.read()
     elif backend == "trn":
         # Find file matching pattern for Trainium/NKI kernels
-        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob.prob_type
+        sol_dir = SOLS_DIR / prob.prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")

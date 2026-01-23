@@ -1,4 +1,4 @@
-from prompts.gemmini import gemmini_rules
+from autocomp.agents.gemmini.prompts import gemmini_rules
 
 def PROMPT(DIM):
     texts = {

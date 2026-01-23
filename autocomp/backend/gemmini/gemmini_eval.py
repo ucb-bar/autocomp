@@ -6,7 +6,7 @@ import time
 import glob
 import shutil
 
-from autocomp.common import logger
+from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
 from autocomp.backend.hardware_backend import HardwareBackend
 
@@ -481,7 +481,7 @@ class GemminiHardwareBackend(HardwareBackend):
 
 if __name__ == "__main__":
     prob = Prob("admm-multifunction", 2)
-    files = [pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / "sol2_5249.c"]
+    files = [SOLS_DIR / "admm-multifunction" / "sol2_5249.c"]
     code_strs = [file.read_text() for file in files]
     stats = GemminiHardwareBackend(4).evaluate_code(prob, code_strs, "firesim")
     # stats = GemminiHardwareBackend(4).get_spad_acc_utilization(prob, code_strs)

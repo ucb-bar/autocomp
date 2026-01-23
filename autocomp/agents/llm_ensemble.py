@@ -1,7 +1,7 @@
 import pathlib
 
 from autocomp.search.prob import Prob
-from autocomp.search.llm_agent import LLMAgent
+from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.code_repo import CodeCandidate
 
 class LLMEnsemble:
