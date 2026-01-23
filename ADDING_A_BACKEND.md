@@ -1,7 +1,5 @@
 # Adding a New Backend to Autocomp
 
-### ⚠️ We plan to make the process of adding a new backend easier and more streamlined in the future. This guide is a work in progress.
-
 This guide explains how to add support for a new hardware backend to Autocomp. Adding a backend involves implementing several components that integrate with Autocomp's search and optimization infrastructure.
 
 ## Overview
