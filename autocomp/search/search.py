@@ -4,15 +4,95 @@ import json
 
 import wandb
 
-from autocomp.common import logger
+from autocomp.common import logger, SOLS_DIR
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
-from autocomp.search.llm_agent import GemminiLLMAgent, CudaLLMAgent, TrnLLMAgent
-from autocomp.search.llm_ensemble import LLMEnsemble
-from autocomp.backend.hardware_backend import HardwareBackend
-from autocomp.backend.gemmini_eval import GemminiHardwareBackend
-from autocomp.backend.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
-from autocomp.backend.trn_eval import TrnHardwareBackend
 from autocomp.search.prob import Prob
+from autocomp.agents.llm_ensemble import LLMEnsemble
+from autocomp.backend.hardware_backend import HardwareBackend
+# Register LLM agents
+from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
+from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
+from autocomp.agents.trn.trn_agent import TrnLLMAgent
+# ... register more LLM agents here ...
+# Register hardware backends
+from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
+from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
+from autocomp.backend.trn.trn_eval import TrnHardwareBackend
+# ... register more hardware backends here ...
+
+
+def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", models: list, code_models: list = None):
+    """Create hardware backend and agent ensembles. Agent name defaults to backend_name (kernelbench -> cuda)."""
+    if not agent_name:
+        agent_name = "cuda" if backend_name == "kernelbench" else backend_name
+    
+    # Create hardware backend
+    if backend_name == "kernelbench":
+        hw = KBHardwareBackend()
+    elif backend_name == "gemmini":
+        pe_dim = 32 if "gpt" in prob.prob_type else (4 if "admm" in prob.prob_type else 16)
+        spad_kb = 512 if "gpt" in prob.prob_type else 256
+        acc_kb = 128 if "gpt" in prob.prob_type else 64
+        hw = GemminiHardwareBackend(pe_dim, spad_kb, acc_kb)
+    elif backend_name == "trn":
+        hw = TrnHardwareBackend()
+    else:
+        raise ValueError(f"Unknown backend: {backend_name}")
+    
+    # Create agents
+    if agent_name == "cuda":
+        agent = LLMEnsemble([CudaLLMAgent(m) for m in models])
+        code_agent = LLMEnsemble([CudaLLMAgent(m) for m in code_models]) if code_models else None
+    elif agent_name == "gemmini":
+        pe_dim = 32 if "gpt" in prob.prob_type else (4 if "admm" in prob.prob_type else 16)
+        agent = LLMEnsemble([GemminiLLMAgent(m, pe_dim) for m in models])
+        code_agent = LLMEnsemble([GemminiLLMAgent(m, pe_dim) for m in code_models]) if code_models else None
+    elif agent_name == "trn":
+        agent = LLMEnsemble([TrnLLMAgent(m) for m in models])
+        code_agent = LLMEnsemble([TrnLLMAgent(m) for m in code_models]) if code_models else None
+    else:
+        raise ValueError(f"Unknown agent name: {agent_name}")
+    
+    return hw, agent, code_agent
+
+
+def load_initial_code(backend_name: str, prob: "Prob") -> str:
+    """Load initial code for the given backend and problem."""
+    prob_type, prob_id = prob.prob_type, prob.prob_id
+    
+    if backend_name == "kernelbench":
+        if "kb-" in prob_type:
+            level_str = prob_type.split("-")[1]
+            kb_level_dir = pathlib.Path(KERNELBENCH_DIR) / "KernelBench" / level_str
+            matches = list(kb_level_dir.glob(f"{prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(f"No file matching {prob_id}_*.py in {kb_level_dir}")
+            with open(matches[0]) as f:
+                return f.read().replace("Model", "ModelNew")
+        else:
+            sol_dir = SOLS_DIR / prob_type
+            matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
+            with open(matches[0]) as f:
+                return f.read()
+    elif backend_name == "gemmini":
+        if "admm" in prob_type:
+            with open(SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
+                return f.read()
+        else:
+            with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
+                return f.read()
+    elif backend_name == "trn":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    else:
+        raise ValueError(f"Unknown backend: {backend_name}")
+
 
 class SearchStrategy:
     """
@@ -21,7 +101,7 @@ class SearchStrategy:
     def __init__(self, 
                  output_dir: pathlib.Path,
                  hw_backend: HardwareBackend,
-                 llm: LLMEnsemble,
+                 agent: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
                  metric: str,
@@ -36,11 +116,11 @@ class SearchStrategy:
                  prevent_duplicate_level: int,
                  translate_iters: int,
                  translate_perf_threshold: float,
-                 code_llm: LLMEnsemble = None,
+                 code_agent: LLMEnsemble = None,
                ):
         self.repository = CodeRepository()  # Stores the code candidates
-        self.llm = llm  # The LLM used to propose optimizations (planning)
-        self.code_llm = code_llm if code_llm is not None else llm  # The LLM used for code implementation
+        self.agent = agent  # The agent used to propose optimizations (planning)
+        self.code_agent = code_agent if code_agent is not None else agent  # The agent used for code implementation
         self.prob = prob
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -241,8 +321,8 @@ class ExhaustiveSearchStrategy(SearchStrategy):
         """
         unimplemented_candidates = []
         for candidate in parent_candidates:
-            for opt_menu_option in range(len(self.llm.get_opt_menu_options())):
-                new_cand = self.llm.propose_optimizations(candidate, num_plans=1, save_dir=save_dir, save_str=None, prob=self.prob, force_opt_menu=opt_menu_option)[0]
+            for opt_menu_option in range(len(self.agent.get_opt_menu_options())):
+                new_cand = self.agent.propose_optimizations(candidate, num_plans=1, save_dir=save_dir, save_str=None, prob=self.prob, force_opt_menu=opt_menu_option)[0]
                 unimplemented_candidates.append(new_cand)
         return unimplemented_candidates
 
@@ -271,7 +351,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             impl_candidates = []
             for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(plan_only_cand.parent)
-                this_plan_impl_candidates = self.code_llm.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}", prob=self.prob)
+                this_plan_impl_candidates = self.code_agent.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}", prob=self.prob)
                 impl_candidates.extend(this_plan_impl_candidates)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
@@ -306,8 +386,8 @@ class BeamSearchStrategy(SearchStrategy):
     """
     def __init__(self,
                  output_dir: pathlib.Path,
-                 backend: str,
-                 llm: LLMEnsemble,
+                 hw_backend: HardwareBackend,
+                 agent: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
                  metric: str,
@@ -332,9 +412,9 @@ class BeamSearchStrategy(SearchStrategy):
                  reimplement_failed: bool,
                  translate_iters: int,
                  translate_perf_threshold: float,
-                 code_llm: LLMEnsemble = None,
+                 code_agent: LLMEnsemble = None,
                 ):
-        super().__init__(output_dir, backend, llm, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_llm=code_llm)
+        super().__init__(output_dir, hw_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -391,13 +471,13 @@ class BeamSearchStrategy(SearchStrategy):
             "translate": translate,
         }
         # kwargs["force_opt_menu"] = 3
-        # new_cands = self.llm.propose_optimizations(parent_candidate, **kwargs)
+        # new_cands = self.agent.propose_optimizations(parent_candidate, **kwargs)
         # unimplemented_candidates.extend(new_cands)
         if exhaustive:
             # A bit of a hack: make a list pointing many times to each parent candidate so we can 
             # use propose_optimizations_parallel to parallelize requests for different menu options
-            kwargs["num_plans"] = len(self.llm.llms) # Exhaustive on each LLM in the ensemble
-            menu_options_lst = list(range(1, len(self.llm.get_opt_menu_options())+1))
+            kwargs["num_plans"] = len(self.agent.llms) # Exhaustive on each LLM in the ensemble
+            menu_options_lst = list(range(1, len(self.agent.get_opt_menu_options())+1))
             duplicated_parent_candidates: list[CodeCandidate] = []
             duplicated_save_strs: list[str] = []
             duplicated_force_opt_menu: list[int] = []
@@ -410,7 +490,7 @@ class BeamSearchStrategy(SearchStrategy):
             kwargs["save_strs"] = duplicated_save_strs
             kwargs["force_opt_menu_lst"] = duplicated_force_opt_menu
         
-        new_cands = self.llm.propose_optimizations_parallel(**kwargs)
+        new_cands = self.agent.propose_optimizations_parallel(**kwargs)
         return new_cands
 
     def combine_parents(self, parent_candidates: list[CodeCandidate], num_pairs: int, num_to_gen: int, save_dir: pathlib.Path) -> list[CodeCandidate]:
@@ -429,7 +509,7 @@ class BeamSearchStrategy(SearchStrategy):
         for i, j in pairs:
             parent_i = parent_candidates[i]
             parent_j = parent_candidates[j]
-            this_pair_combined_candidates = self.code_llm.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}", prob=self.prob)
+            this_pair_combined_candidates = self.code_agent.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}", prob=self.prob)
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
@@ -481,13 +561,13 @@ class BeamSearchStrategy(SearchStrategy):
             # impl_candidates = []
             # for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
             #     parent_idx = current_candidates.index(plan_only_cand.parent)
-            #     this_plan_impl_candidates = self.llm.implement_code(plan_only_cand, self.num_code_candidates, save_dir, save_str=f"{parent_idx}_{plan_idx}")
+            #     this_plan_impl_candidates = self.agent.implement_code(plan_only_cand, self.num_code_candidates, save_dir, save_str=f"{parent_idx}_{plan_idx}")
             #     impl_candidates.extend(this_plan_impl_candidates)
             save_strs = []
             for cand_idx, cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.code_llm.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
+            impl_candidates = self.code_agent.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
@@ -512,7 +592,7 @@ class BeamSearchStrategy(SearchStrategy):
                     save_dir.mkdir(parents=True, exist_ok=True)
                     save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
                     # Reimplement with the same number of samples as original code candidates
-                    reimplemented_candidates = self.code_llm.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
+                    reimplemented_candidates = self.code_agent.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
                     logger.info(f"Generated {len(reimplemented_candidates)} reimplemented candidates.")
                     
                     # Evaluate the reimplemented candidates
@@ -557,16 +637,18 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend = "trn"  # Options: "gemmini", "trn", "cuda"
+    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench"
+    agent_name = None  # Options: "gemmini", "trn", "cuda" (defaults based on backend_name)
+    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; unused otherwise
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
     code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
-    simulator = "trn" # "firesim" or "spike" if backend == "gemmini"; "kernelbench" if backend == "cuda"; "trn" if backend == "trn"
     search_strategy = "beam"
-    iterations = 10
+    iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
 
@@ -637,75 +719,19 @@ def main():
 
     # Get initial code
     prob = Prob(prob_type, prob_id)
-    if backend == "cuda":
-        if "kb-" in prob_type:
-            level_str = prob_type.split("-")[1]
-            kb_level_dir = pathlib.Path(KERNELBENCH_DIR) / "KernelBench" / level_str
-            matches = list(kb_level_dir.glob(f"{prob_id}_*.py"))
-            if not matches:
-                raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {kb_level_dir}")
-            with open(matches[0]) as f:
-                initial_code = f.read().replace("Model", "ModelNew")
-        else:
-            # Find file matching pattern
-            sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type
-            matches = list(sol_dir.glob(f"{prob_id}_*.py"))
-            if not matches:
-                raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
-            with open(matches[0]) as f:
-                initial_code = f.read()
-    elif backend == "gemmini":
-        if "admm" in prob_type:
-            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
-                initial_code = f.read()
-        else:
-            with open(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
-                initial_code = f.read()
-    elif backend == "trn":
-        # Find file matching pattern for Trainium/NKI kernels
-        sol_dir = pathlib.Path(__file__).parent.parent.parent / "sols" / prob.prob_type
-        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
-        if not matches:
-            raise FileNotFoundError(f"No solution file found matching pattern {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            initial_code = f.read()
+    initial_code = load_initial_code(backend_name, prob)
 
-    # Initialize hardware backend and LLM ensemble
-    if backend == "cuda":
-        if simulator == "kernelbench":
-            hw_backend = KBHardwareBackend()
-        else:
-            hw_backend = GpuModeHardwareBackend()
-        llm = LLMEnsemble([CudaLLMAgent(model) for model in models])
-        code_llm = LLMEnsemble([CudaLLMAgent(model) for model in code_models]) if code_models is not None else None
-    elif backend == "gemmini":
-        spad_size_kb = 256
-        acc_size_kb = 64
-        if "admm" in prob.prob_type:
-            pe_dim = 4
-        elif "exo" in prob.prob_type or "gemm" in prob.prob_type:
-            pe_dim = 16
-        elif "gpt" in prob.prob_type:
-            pe_dim = 32
-            spad_size_kb = 512
-            acc_size_kb = 128
-        hw_backend = GemminiHardwareBackend(pe_dim, spad_size_kb, acc_size_kb)
-        llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in models])
-        code_llm = LLMEnsemble([GemminiLLMAgent(model, pe_dim) for model in code_models]) if code_models is not None else None
-    elif backend == "trn":
-        hw_backend = TrnHardwareBackend()
-        llm = LLMEnsemble([TrnLLMAgent(model) for model in models])
-        code_llm = LLMEnsemble([TrnLLMAgent(model) for model in code_models]) if code_models is not None else None
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
+    # Initialize hardware backend and agent ensembles
+    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, prob, models, code_models)
+
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, code_llm=code_llm)
+        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, code_agent=code_agent)
     elif search_strategy == "beam":
-        optimizer = BeamSearchStrategy(output_dir, hw_backend, llm, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
+        optimizer = BeamSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_llm=code_llm)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent)
 
     # Start the optimization process
     optimizer.optimize(iterations)

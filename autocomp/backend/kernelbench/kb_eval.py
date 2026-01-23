@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime
 
-from autocomp.common import logger
+from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
 from autocomp.backend.hardware_backend import HardwareBackend
 
@@ -57,7 +57,7 @@ def main():
     prob_type = "kb-level1"
     prob_id = 1
     prob = Prob(prob_type, prob_id)
-    files = glob.glob(str(pathlib.Path(__file__).parent.parent.parent / "sols" / prob_type / f"{prob_id}_*.py"))
+    files = glob.glob(str(SOLS_DIR / prob_type / f"{prob_id}_*.py"))
     code_strs = [pathlib.Path(file).read_text() for file in files]
     stats = KBHardwareBackend().evaluate_code(prob, code_strs, "kernelbench")
     print(stats)

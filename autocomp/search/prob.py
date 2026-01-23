@@ -1,5 +1,7 @@
 import pathlib
 
+from autocomp.common import TESTS_DIR
+
 class Prob():
     def __init__(self, prob_type: str, prob_id: int):
         self.prob_type = prob_type
@@ -8,7 +10,7 @@ class Prob():
         # self.perf_tests: list[Test] = []
 
         # Find tests with matching name to prob_type and prob_id
-        test_dir = pathlib.Path(__file__).parent.parent.parent / "tests"
+        test_dir = TESTS_DIR
         test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
         # test_files.extend((test_dir / prob_type).glob(f"test{prob_id}_*.c"))
         for test_file in test_files:

@@ -1,6 +1,5 @@
 # API keys
-openai_key.py
-anthropic_key.py
+keys.py
 *_key.py
 
 # Byte-compiled / optimized / DLL files
