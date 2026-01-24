@@ -17,6 +17,7 @@ from autocomp.agents.trn.trn_agent import TrnLLMAgent
 # Register hardware backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
+from autocomp.backend.gpumode.gpumode_eval import GpuModeHardwareBackend
 from autocomp.backend.trn.trn_eval import TrnHardwareBackend
 # ... register more hardware backends here ...
 
@@ -24,11 +25,13 @@ from autocomp.backend.trn.trn_eval import TrnHardwareBackend
 def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", models: list, code_models: list = None):
     """Create hardware backend and agent ensembles. Agent name defaults to backend_name (kernelbench -> cuda)."""
     if not agent_name:
-        agent_name = "cuda" if backend_name == "kernelbench" else backend_name
+        agent_name = "cuda" if backend_name in ["kernelbench", "gpumode"] else backend_name
     
     # Create hardware backend
     if backend_name == "kernelbench":
         hw = KBHardwareBackend()
+    elif backend_name == "gpumode":
+        hw = GpuModeHardwareBackend()
     elif backend_name == "gemmini":
         pe_dim = 32 if "gpt" in prob.prob_type else (4 if "admm" in prob.prob_type else 16)
         spad_kb = 512 if "gpt" in prob.prob_type else 256
@@ -637,7 +640,7 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench"
+    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
     agent_name = None  # Options: "gemmini", "trn", "cuda" (defaults based on backend_name)
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; unused otherwise
     # Models are specified as "provider::model"
