@@ -43,6 +43,52 @@ SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
 }
 ```
 
+## Zephyr Setup
+
+### Installation
+
+These Installations instructions were taken from the [Zephyr repo](https://github.com/ucb-bar/zephyr-chipyard-sw) using the SDK installation.
+
+```bash
+# Clone the repository
+git clone git@github.com:ucb-bar/zephyr-chipyard-sw.git
+cd zephyr-chipyard-sw
+
+# Initialize submodules
+git submodule update --init
+
+# Install conda
+source scripts/install_conda.sh
+
+# Install submodules
+bash scripts/install_submodules.sh
+
+# Install toolchain SDK
+bash scripts/install_toolchain_sdk.sh
+```
+
+Update `SATURN_ZEPHYR_BASE` with zephyr repo in `saturn_eval.py` to point to your installation.
+### Workload Project Structure
+
+The RVV benchmark app requires:
+
+```
+rvv_bench/            # Name of your app
+├── CMakeLists.txt    # Zephyr build configuration
+├── prj.conf          # Project config (enables RVV, sets memory, etc.)
+└── src/
+    └── main.c        # Test harness template (overwritten during build)
+```
+
+| File | Purpose |
+|------|---------|
+| `CMakeLists.txt` | Zephyr CMake build file |
+| `prj.conf` | config options (e.g., `CONFIG_RISCV_ISA_EXT_V=y`) |
+| `main.c` | Placeholder (replaced by test template during build) |
+
+Update  `SATURN_ZEPHYR_APP_PATH` in `saturn_eval.py` to point to this Zephyr benchmark setup.
+
+
 ## FireSim Setup
 
 FireSim requires additional configuration:
