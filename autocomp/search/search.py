@@ -20,6 +20,7 @@ from autocomp.agents.saturn.saturn_config import SaturnConfig
 from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
 from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
 from autocomp.backend.trn.trn_eval import TrnHardwareBackend
+from autocomp.backend.saturn.saturn_eval import SaturnHardwareBackend
 # ... register more hardware backends here ...
 
 
@@ -32,7 +33,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", 
         prob: Problem specification
         models: List of model identifiers for planning
         code_models: List of model identifiers for code generation (optional)
-        saturn_config: Dict of Saturn hardware config overrides (optional, e.g., {"vlen": 512})
+        hw_config: Dict of hardware config overrides (optional, e.g., {"vlen": 512} for Saturn)
     """
     if not agent_name:
         agent_name = "cuda" if backend_name == "kernelbench" else backend_name
@@ -106,6 +107,13 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    elif backend_name == "saturn":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.c"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.c in {sol_dir}")
         with open(matches[0]) as f:
             return f.read()
     else:
@@ -655,8 +663,8 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Generic search parameters
-    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench"
-    agent_name = None  # Options: "gemmini", "trn", "cuda" (defaults based on backend_name)
+    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "saturn"
+    agent_name = None  # Options: "gemmini", "trn", "cuda", "saturn" (defaults based on backend_name)
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; unused otherwise
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
@@ -669,7 +677,10 @@ def main():
     iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
-    hw_config = None # Dict of hardware config overrides (optional, e.g., {"vlen": 512})
+    
+    # Hardware config overrides (optional)
+    # For Saturn: {"vlen": 512, "dlen": 256} to override defaults (GENV256D128ShuttleConfig)
+    hw_config = None
     
     # Beam search parameters
     num_plan_candidates=5
