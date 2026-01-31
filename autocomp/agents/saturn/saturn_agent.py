@@ -1,5 +1,5 @@
 """
-RVV LLM Agent for RISC-V Vector code optimization on Saturn.
+Saturn LLM Agent for RISC-V Vector code optimization on Saturn.
 
 This agent generates prompts for optimizing RVV code targeting the Saturn vector unit.
 Supports automatic ISA documentation selection based on code analysis.
@@ -13,10 +13,11 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
-from autocomp.agents.rvv.rvv_isa_generator import RvvIsaGenerator
+from autocomp.agents.saturn.saturn_config import SaturnConfig
+from autocomp.agents.saturn.saturn_isa_generator import SaturnIsaGenerator
 
 
-class RvvLLMAgent(LLMAgent):
+class SaturnLLMAgent(LLMAgent):
     """LLM Agent for optimizing RISC-V Vector code on Saturn.
     
     Supports automatic selection of relevant ISA documentation sections
@@ -24,29 +25,31 @@ class RvvLLMAgent(LLMAgent):
     at initialization (or on first use) and cached for all subsequent prompts.
     """
 
-    def __init__(self, model, use_llm_isa_selection: bool = False):
-        """Initialize the RVV LLM Agent.
+    def __init__(self, model, config: SaturnConfig = None, use_llm_isa_selection: bool = False):
+        """Initialize the Saturn LLM Agent.
         
         Args:
             model: Model identifier string (e.g., "gpt-4", "claude-3-opus")
+            config: Saturn hardware configuration. Uses defaults if not provided.
             use_llm_isa_selection: If True, use LLM to automatically select
                                    relevant ISA documentation sections based
                                    on the initial code being optimized.
                                    Default is False (include all sections).
         """
         super().__init__(model)
+        self.config = config or SaturnConfig()
         self.use_llm_isa_selection = use_llm_isa_selection
         
-        # Pass LLM client to ISA generator if using LLM selection
+        # Pass config and LLM client to ISA generator
         if use_llm_isa_selection:
-            self.rvv_isa_generator = RvvIsaGenerator(llm_client=self.llm_client)
+            self.isa_generator = SaturnIsaGenerator(config=self.config, llm_client=self.llm_client)
         else:
-            self.rvv_isa_generator = RvvIsaGenerator()
+            self.isa_generator = SaturnIsaGenerator(config=self.config)
         
         # Cached ISA documentation string (generated once, reused for all prompts)
         # By default, generate all sections immediately (no LLM call needed)
         if not use_llm_isa_selection:
-            self._cached_isa_docs: Optional[str] = self.rvv_isa_generator.generate_isa()
+            self._cached_isa_docs: Optional[str] = self.isa_generator.generate_isa()
         else:
             self._cached_isa_docs = None
         self._isa_selection_done: bool = not use_llm_isa_selection
@@ -70,7 +73,7 @@ class RvvLLMAgent(LLMAgent):
             return self._cached_isa_docs
         
         logger.info("Initializing ISA documentation (one-time LLM selection)")
-        self._cached_isa_docs = self.rvv_isa_generator.generate_isa(
+        self._cached_isa_docs = self.isa_generator.generate_isa(
             prob=prob,
             code=code,
             use_llm_selection=self.use_llm_isa_selection
@@ -102,7 +105,7 @@ class RvvLLMAgent(LLMAgent):
             return self.initialize_isa_docs(code, prob)
         
         # Fallback: generate all sections (shouldn't normally reach here)
-        self._cached_isa_docs = self.rvv_isa_generator.generate_isa()
+        self._cached_isa_docs = self.isa_generator.generate_isa()
         return self._cached_isa_docs
 
     def reset_isa_cache(self):
@@ -116,12 +119,12 @@ class RvvLLMAgent(LLMAgent):
             self._isa_selection_done = False
         else:
             # Without LLM selection, just regenerate all sections
-            self._cached_isa_docs = self.rvv_isa_generator.generate_isa()
+            self._cached_isa_docs = self.isa_generator.generate_isa()
             self._isa_selection_done = True
         logger.info("ISA documentation cache reset")
 
     def __repr__(self):
-        return f"RvvLLMAgent({self.llm_client.model})"
+        return f"SaturnLLMAgent({self.llm_client.model}, vlen={self.config.vlen})"
 
     def _get_convert_to_rvv_menu_options(self) -> list[str]:
         return [

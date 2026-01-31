@@ -1,5 +1,5 @@
 """
-RVV ISA generator for Saturn Vector Unit.
+Saturn ISA generator for Saturn Vector Unit.
 
 Generates documentation about the RISC-V Vector extension and Saturn microarchitecture
 to include in LLM prompts for code optimization.
@@ -12,6 +12,7 @@ import json
 
 from autocomp.common import logger, LLMClient
 from autocomp.search.prob import Prob
+from autocomp.agents.saturn.saturn_config import SaturnConfig
 
 # Map problem types to relevant kernel categories
 workload_to_kernel_dict = {
@@ -23,8 +24,8 @@ workload_to_kernel_dict = {
     "transpose": ["permutation"],
 }
 
-class RvvIsaGenerator:
-    """Generates RISC-V Vector ISA documentation for LLM prompts.
+class SaturnIsaGenerator:
+    """Generates Saturn/RVV ISA documentation for LLM prompts.
     
     Supports automatic selection of relevant ISA sections using an LLM to analyze
     the code and determine which documentation sections are most relevant.
@@ -54,13 +55,15 @@ class RvvIsaGenerator:
         "optimization_guide": "Saturn optimization tips: LMUL tuning, chaining, sequencer balancing, memory patterns, FMA saturation",
     }
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, config: SaturnConfig = None, llm_client: Optional[LLMClient] = None):
         """Initialize the ISA generator.
         
         Args:
+            config: Saturn hardware configuration. Uses defaults if not provided.
             llm_client: Optional LLM client for automatic section selection.
                        If None, all sections are included by default.
         """
+        self.config = config or SaturnConfig()
         self.llm_client = llm_client
         self.isa_dict = self._build_isa_dict()
 
@@ -80,14 +83,21 @@ class RvvIsaGenerator:
         }
 
     def _get_architecture_description(self) -> str:
-        return """## Saturn Vector Unit Architecture
+        cfg = self.config
+        return f"""## Saturn Vector Unit Architecture
 
 Saturn is a RISC-V Vector (RVV) implementation targeting DSP and domain-specialized cores.
 It implements a "short-vector" SIMD-style microarchitecture with efficient dynamic scheduling.
 
+### This Instance
+- VLEN: {cfg.vlen} bits (vector register length)
+- DLEN: {cfg.dlen} bits (datapath width)
+- MLEN: {cfg.mlen} bits (memory interface width)
+- Chime length: {cfg.chime_length} cycles (VLEN/DLEN)
+- Issue queue: {cfg.issue_queue}
+- FMA latency: {cfg.fma_latency} cycles (need LMUL ≥ {cfg.min_lmul_for_fma_saturation} to saturate)
+
 ### Key Parameters
-- VLEN: Hardware vector length in bits (typically 256-512 bits)
-- DLEN: Datapath width (typically VLEN/2, e.g., 128 bits for VLEN=256)
 - LMUL: Length multiplier (1/8, 1/4, 1/2, 1, 2, 4, 8) - groups consecutive vector registers
 - SEW: Selected Element Width (8, 16, 32, 64 bits)
 
@@ -100,12 +110,11 @@ It implements a "short-vector" SIMD-style microarchitecture with efficient dynam
 - Vector Load-Store Unit (VLSU) with independent load/store paths
 - Supports unit-stride, strided, and indexed memory access patterns
 - Segmented loads/stores for array-of-structs to struct-of-arrays conversion
-- Memory interface width MLEN (typically equals DLEN)
 
 ### Execution Units
-- Integer pipeline: add/sub/shift/bitwise operations (1-2 cycle latency)
-- Multiply pipeline: integer multiply (3-cycle latency)  
-- FMA pipeline: floating-point multiply-add (4-cycle latency)
+- Integer pipeline: add/sub/shift/bitwise operations ({cfg.int_latency}-cycle latency)
+- Multiply pipeline: integer multiply ({cfg.mul_latency}-cycle latency)  
+- FMA pipeline: floating-point multiply-add ({cfg.fma_latency}-cycle latency)
 - Iterative units: divide, sqrt (element-wise, variable latency)
 
 ### Vector Chaining
@@ -426,7 +435,8 @@ long first = __riscv_vfirst_m_b8(mask, vl);  // -1 if none set
 """
 
     def _get_optimization_guide(self) -> str:
-        return """## Saturn Optimization Guide
+        cfg = self.config
+        return f"""## Saturn Optimization Guide
 
 ### 1. Maximize LMUL
 - Use highest LMUL that avoids register spilling
@@ -439,6 +449,7 @@ long first = __riscv_vfirst_m_b8(mask, vl);  // -1 if none set
 - Chaining requires instructions in different sequencers (load vs execute)
 
 ### 3. Balance Across Sequencers
+- This instance uses {cfg.issue_queue} configuration
 - Split configuration: int and fp have separate queues (most flexible)
 - Shared configuration: interleave int and fp operations
 - Unified configuration: no parallel int/fp execution
@@ -458,7 +469,7 @@ long first = __riscv_vfirst_m_b8(mask, vl);  // -1 if none set
 - Use vfmacc for dot products, vredsum only at end
 
 ### 7. Avoid Pipeline Stalls
-- FMA latency = 4 cycles; need LMUL ≥ 4 or independent FMAs
+- FMA latency = {cfg.fma_latency} cycles; need LMUL ≥ {cfg.min_lmul_for_fma_saturation} or independent FMAs to saturate
 - Avoid division/sqrt in inner loops (iterative, element-wise)
 - Schedule scalar bookkeeping to overlap with vector execution
 

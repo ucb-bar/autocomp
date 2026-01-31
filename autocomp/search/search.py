@@ -13,6 +13,8 @@ from autocomp.backend.hardware_backend import HardwareBackend
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.agents.saturn.saturn_agent import SaturnLLMAgent
+from autocomp.agents.saturn.saturn_config import SaturnConfig
 # ... register more LLM agents here ...
 # Register hardware backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
@@ -21,8 +23,17 @@ from autocomp.backend.trn.trn_eval import TrnHardwareBackend
 # ... register more hardware backends here ...
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", models: list, code_models: list = None):
-    """Create hardware backend and agent ensembles. Agent name defaults to backend_name (kernelbench -> cuda)."""
+def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", models: list, code_models: list = None, hw_config: dict = None):
+    """Create hardware backend and agent ensembles. Agent name defaults to backend_name (kernelbench -> cuda).
+    
+    Args:
+        backend_name: Hardware backend name (kernelbench, gemmini, trn, saturn)
+        agent_name: Agent name (cuda, gemmini, trn, saturn). Defaults based on backend_name.
+        prob: Problem specification
+        models: List of model identifiers for planning
+        code_models: List of model identifiers for code generation (optional)
+        saturn_config: Dict of Saturn hardware config overrides (optional, e.g., {"vlen": 512})
+    """
     if not agent_name:
         agent_name = "cuda" if backend_name == "kernelbench" else backend_name
     
@@ -36,6 +47,9 @@ def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", 
         hw = GemminiHardwareBackend(pe_dim, spad_kb, acc_kb)
     elif backend_name == "trn":
         hw = TrnHardwareBackend()
+    elif backend_name == "saturn":
+        # Saturn doesn't have a hardware backend yet (would need simulator integration)
+        hw = None
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
     
@@ -50,6 +64,10 @@ def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", 
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m) for m in code_models]) if code_models else None
+    elif agent_name == "saturn":
+        config = SaturnConfig(**hw_config) if hw_config else SaturnConfig()
+        agent = LLMEnsemble([SaturnLLMAgent(m, config=config) for m in models])
+        code_agent = LLMEnsemble([SaturnLLMAgent(m, config=config) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
@@ -651,7 +669,8 @@ def main():
     iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
-
+    hw_config = None # Dict of hardware config overrides (optional, e.g., {"vlen": 512})
+    
     # Beam search parameters
     num_plan_candidates=5
     num_code_candidates=2
@@ -722,7 +741,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize hardware backend and agent ensembles
-    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, prob, models, code_models)
+    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, prob, models, code_models, hw_config)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, code_agent=code_agent)
