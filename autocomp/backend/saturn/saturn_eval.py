@@ -307,33 +307,29 @@ def run_firesim_batch(binary_path: pathlib.Path,
     # 2. Run infrasetup
     logger.info("Running `firesim infrasetup`")
     infrasetup_cmd = f"{firesim_setup} && firesim infrasetup"
-    p = subprocess.Popen(
+    infrasetup = subprocess.run(
         ["bash", "-c", infrasetup_cmd],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT
+        capture_output=True,
+        text=True
     )
-    with p.stdout:
-        for line in p.stdout:
-            logger.debug(line.decode().strip())
-    p.wait()
 
-    if p.returncode != 0:
-        logger.error("firesim infrasetup failed with return code %d", p.returncode)
-        return {}
+    if infrasetup.returncode != 0:
+        logger.error("firesim infrasetup failed with return code %d", infrasetup.returncode)
+        logger.error("FireSim stdout:\n%s", infrasetup.stdout or "")
+        logger.error("FireSim stderr:\n%s", infrasetup.stderr or "")
+        raise RuntimeError(f"firesim infrasetup failed with return code {infrasetup.returncode}")
 
     # 3. Run workload with timeout
     logger.info("Running `firesim runworkload`")
     runworkload_cmd = f"{firesim_setup} && firesim runworkload"
-    p = subprocess.Popen(
-        ["bash", "-c", runworkload_cmd],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT
-    )
     try:
-        p.wait(timeout=timeout)
+        runworkload = subprocess.run(
+            ["bash", "-c", runworkload_cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
     except subprocess.TimeoutExpired:
-        p.terminate()
-        p.wait()
         logger.warning("FireSim runworkload timed out after %d seconds.", timeout)
         # Kill any remaining FireSim processes
         logger.info("Running `firesim kill`")
@@ -343,11 +339,13 @@ def run_firesim_batch(binary_path: pathlib.Path,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT
         )
-        return {}
+        raise RuntimeError(f"firesim runworkload timed out after {timeout} seconds")
 
-    if p.returncode != 0:
-        logger.error("firesim runworkload failed with return code %d", p.returncode)
-        return {}
+    if runworkload.returncode != 0:
+        logger.error("firesim runworkload failed with return code %d", runworkload.returncode)
+        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
+        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
+        raise RuntimeError(f"firesim runworkload failed with return code {runworkload.returncode}")
 
     logger.info("FireSim runworkload finished")
     time.sleep(2)  
@@ -357,7 +355,9 @@ def run_firesim_batch(binary_path: pathlib.Path,
 
     if not new_dirs:
         logger.error("No new results directory found after running FireSim.")
-        return {}
+        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
+        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
+        raise RuntimeError("No new results directory found after running FireSim.")
 #
     relevant_logs = []
     for dir in new_dirs:
@@ -366,13 +366,20 @@ def run_firesim_batch(binary_path: pathlib.Path,
 
     if not relevant_logs:
         logger.error("No uartlog found after running FireSim.")
-        return {}
+        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
+        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
+        raise RuntimeError("No uartlog found after running FireSim.")
 
     if len(relevant_logs) > 1:
         logger.warning("Multiple logs found, using first one: %s", relevant_logs)
 
     logger.info("Parsing FireSim results from: %s", relevant_logs[0])
-    return parse_firesim_uartlog(relevant_logs[0])
+    results = parse_firesim_uartlog(relevant_logs[0])
+    if not results:
+        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
+        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
+        raise RuntimeError("No latency results found in FireSim uartlog.")
+    return results
 
 
 def parse_firesim_uartlog(log_path: str) -> dict[int, int]:
@@ -516,7 +523,12 @@ class SaturnHardwareBackend(HardwareBackend):
         # FireSim evaluation - run passing candidates on FireSim for accurate latency
         if simulator == "firesim":
             if not self.firesim_path or not self.firesim_path.exists():
-                logger.warning("FireSim path not configured")
+                msg = "FireSim path not configured"
+                logger.warning(msg)
+                for s in stats:
+                    if s["correct"]:
+                        s["correct"] = False
+                        s["stderr"] = msg
             else:
                 passing_indices = [i for i, s in enumerate(stats) if s["correct"]]
                 passing_codes = [clean_code_strs[i] for i in passing_indices]
@@ -526,19 +538,21 @@ class SaturnHardwareBackend(HardwareBackend):
                 else:
                     logger.info("Running %d passing candidates on FireSim...", len(passing_codes))
 
-                    try:
-                        firesim_latencies = self._run_firesim_batch(
-                            passing_codes, passing_indices, prob
-                        )
+                    firesim_latencies = self._run_firesim_batch(
+                        passing_codes, passing_indices, prob
+                    )
 
-                        # 3. Update stats with FireSim latencies
-                        for orig_idx, latency in firesim_latencies.items():
-                            if latency is not None:
-                                stats[orig_idx]["firesim_latency"] = latency
-                                logger.debug("FireSim latency for candidate %d: %d cycles", orig_idx, latency)
-
-                    except Exception as e:
-                        logger.warning("FireSim batch failed: %s.", e)
+                    # 3. Update stats with FireSim latencies
+                    for orig_idx, latency in firesim_latencies.items():
+                        if latency is not None:
+                            stats[orig_idx]["firesim_latency"] = latency
+                            logger.debug("FireSim latency for candidate %d: %d cycles", orig_idx, latency)
+                    missing_indices = set(passing_indices) - set(firesim_latencies.keys())
+                    if missing_indices:
+                        msg = "FireSim did not return latency for candidate"
+                        for orig_idx in missing_indices:
+                            stats[orig_idx]["correct"] = False
+                            stats[orig_idx]["stderr"] = msg
     
 
         logger.debug("Evaluation stats: %s", stats)

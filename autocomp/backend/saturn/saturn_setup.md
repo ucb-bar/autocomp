@@ -80,6 +80,7 @@ Inside of `zephyr-chipyard-sw`, we create a template app for Autocomp to use whe
 rvv_bench/            # Name of your app
 ├── CMakeLists.txt    # Zephyr build configuration
 ├── prj.conf          # Project config (enables RVV, sets memory, etc.)
+├── riscv_vector.conf # RVV config
 └── src/
     └── main.c        # Placeholder (replaced by test template during build)
 ```
@@ -139,7 +140,7 @@ In `deploy/config_runtime.yaml`, set `default_platform` to match your FPGA (acco
 
 ### Workload Setup
 
-Create the directory `deploy/workloads/saturn` and the file `deploy/workloads/saturn/saturn.json`:
+Create the directory `deploy/workloads/saturn` and the file `deploy/workloads/saturn.json`:
 
 ```json
 {
@@ -148,7 +149,8 @@ Create the directory `deploy/workloads/saturn` and the file `deploy/workloads/sa
     "workloads": [
         {
             "name": "saturn_test-baremetal",
-            "bootbinary": "saturn_test-baremetal"
+            "bootbinary": "saturn_test-baremetal",
+            "rootfs": "../../../../../software/firemarshal/boards/default/installers/     firesim/dummy.rootfs"
         }
     ]
 }
