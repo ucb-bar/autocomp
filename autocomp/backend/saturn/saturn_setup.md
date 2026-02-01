@@ -70,7 +70,7 @@ Update `SATURN_ZEPHYR_BASE` in `saturn_eval.py` to point to your installation.
 
 ### Workload Project Structure
 
-The RVV benchmark app requires:
+Inside of `zephyr-chipyard-sw`, we create a template app for Autocomp to use when compiling RVV code for Saturn:
 
 ```
 rvv_bench/            # Name of your app
@@ -99,7 +99,7 @@ FireSim is included as a Chipyard submodule but requires additional configuratio
 ### Initial Setup
 
 ```bash
-cd firesim
+cd chipyard/sims/firesim
 firesim managerinit --platform <your_platform>
 source sourceme-manager.sh
 ```
@@ -116,19 +116,26 @@ class FireSimREFV512D256RocketConfig extends Config(
 ```
 
 Then update the FireSim build configuration files:
-- `firesim/deploy/config_build.yaml`
 - `firesim/deploy/config_build_recipes.yaml`
+- `firesim/deploy/config_build.yaml`
+
+An example build recipe can be found in [config_build_recipes_example.yaml](config_build_recipes_example.yaml). In `config_build.yaml`, simply add the name of the build recipe under the list of `builds_to_run`.
+
+Then run the bitstream build. Make sure that FPGA-related toolchains are available in your PATH.
+
+```bash
+firesim buildbitstream
+```
+
+Once the command successfully completes, it will print out a YAML entry you can paste into `deploy/config_hwdb.yaml` to provide FireSim a pointer to the generated bitstream.
 
 ### Runtime Configuration
 
-| File | Required Changes |
-|------|------------------|
-| `deploy/config_hwdb.yaml` | Set `bitstream_tar` to your Saturn FPGA bitstream |
-| `deploy/config_runtime.yaml` | Set `default_platform`, `default_hw_config`, and `workload_name: saturn.json` |
+In `deploy/config_runtime.yaml`, set `default_platform` to match your FPGA (according to the FireSim docs), `default_hw_config` to the name of your bitstream from the last step, and `workload_name: saturn.json`. See [config_runtime_example.yaml](config_runtime_example.yaml) for an example.
 
 ### Workload Setup
 
-Create `deploy/workloads/saturn/saturn.json`:
+Create the directory `deploy/workloads/saturn` and the file `deploy/workloads/saturn/saturn.json`:
 
 ```json
 {
@@ -146,4 +153,8 @@ Create `deploy/workloads/saturn/saturn.json`:
 The evaluation script copies compiled binaries to `deploy/workloads/saturn/saturn_test-baremetal`.
 
 ## Autocomp
-Finally, set up Autocomp and its Python dependencies: ``pip install -e .``
+Finally, set up Autocomp and its Python dependencies: 
+```
+cd autocomp
+pip install -e .
+```

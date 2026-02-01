@@ -12,10 +12,10 @@ from autocomp.search.prob import Prob
 from autocomp.backend.hardware_backend import HardwareBackend
 
 # Environment path variables
-SATURN_CHIPYARD_PATH = "/scratch/kchern2/chipyard-again"
-SATURN_ZEPHYR_BASE = "/scratch/kchern2/zephyr-chipyard-sw"  # Zephyr installation root
-SATURN_ZEPHYR_APP_PATH = "/scratch/kchern2/zephyr-chipyard-sw/samples/rvv_bench"  # Contains src/main.c, CMakeLists.txt, prj.conf
-SATURN_TEMP_DIR =  "/scratch/kchern2/saturn_tmp"
+SATURN_CHIPYARD_PATH = "/scratch/charleshong/rvv/chipyard"
+SATURN_ZEPHYR_BASE = "/scratch/charleshong/rvv/zephyr-chipyard-sw"  # Zephyr installation root
+SATURN_ZEPHYR_APP_PATH = "/scratch/charleshong/rvv/zephyr-chipyard-sw/samples/rvv_bench"  # Contains src/main.c, CMakeLists.txt, prj.conf
+SATURN_TEMP_DIR =  "/scratch/charleshong/rvv/saturn_tmp"
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0

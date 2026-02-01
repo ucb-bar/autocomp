@@ -1,0 +1,14 @@
+alveo_u250_firesim_saturn:
+    PLATFORM: xilinx_alveo_u250
+    TARGET_PROJECT: firesim
+    TARGET_PROJECT_MAKEFRAG: /scratch/charleshong/rvv/chipyard/generators/firechip/chip/src/main/makefrag/firesim
+    DESIGN: FireSim
+    TARGET_CONFIG: FireSimSaturnConfig
+    PLATFORM_CONFIG: BaseXilinxAlveoU250Config
+    deploy_quintuplet: null
+    platform_config_args:
+        fpga_frequency: 50
+        build_strategy: TIMING
+    post_build_hook: null
+    metasim_customruntimeconfig: null
+    bit_builder_recipe: bit-builder-recipes/xilinx_alveo_u250.yaml
