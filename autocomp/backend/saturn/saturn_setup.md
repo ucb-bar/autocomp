@@ -12,10 +12,8 @@ Edit these constants at the top of `saturn_eval.py`:
 
 ```python
 # Paths
-SATURN_CHIPYARD_PATH = "/scratch/kchern2/chipyard-again"
-SATURN_ZEPHYR_BASE = "/scratch/kchern2/zephyr-chipyard-sw"
-SATURN_ZEPHYR_APP_PATH = "/scratch/kchern2/zephyr-chipyard-sw/samples/rvv_bench"
-SATURN_TEMP_DIR = "/scratch/kchern2/saturn_tmp"
+SATURN_CHIPYARD_PATH = "/scratch/charleshong/chipyard"
+SATURN_ZEPHYR_BASE = "/scratch/charleshong/zephyr-chipyard-sw"  # Zephyr installation root
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
@@ -24,12 +22,18 @@ SATURN_FIRESIM_TIMEOUT = 300.0
 SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
 ```
 
+Optionally modify the following: 
+```python
+SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
+SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench"
+```
+
 | Variable | Description |
 |----------|-------------|
 | `SATURN_CHIPYARD_PATH` | Root of Chipyard installation |
 | `SATURN_ZEPHYR_BASE` | Zephyr root |
-| `SATURN_ZEPHYR_APP_PATH` | Zephyr app template with `src/main.c`, `CMakeLists.txt`, and `prj.conf` |
 | `SATURN_TEMP_DIR` | Directory for build artifacts |
+| `SATURN_ZEPHYR_APP_PATH` | Zephyr app template with `src/main.c`, `CMakeLists.txt`, and `prj.conf` |
 
 ## Output Format
 

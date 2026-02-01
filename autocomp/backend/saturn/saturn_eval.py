@@ -14,8 +14,6 @@ from autocomp.backend.hardware_backend import HardwareBackend
 # Environment path variables
 SATURN_CHIPYARD_PATH = "/scratch/charleshong/rvv/chipyard"
 SATURN_ZEPHYR_BASE = "/scratch/charleshong/rvv/zephyr-chipyard-sw"  # Zephyr installation root
-SATURN_ZEPHYR_APP_PATH = "/scratch/charleshong/rvv/zephyr-chipyard-sw/samples/rvv_bench"  # Contains src/main.c, CMakeLists.txt, prj.conf
-SATURN_TEMP_DIR =  "/scratch/charleshong/rvv/saturn_tmp"
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
@@ -23,6 +21,8 @@ SATURN_COMPILE_TIMEOUT = 120
 SATURN_FIRESIM_TIMEOUT = 300.0
 SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
 
+SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
+SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench" # Contains src/main.c, CMakeLists.txt, prj.conf
 
 def clean_code(code_str: str) -> str:
     """
