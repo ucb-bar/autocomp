@@ -546,9 +546,10 @@ class SaturnHardwareBackend(HardwareBackend):
                     for orig_idx, latency in firesim_latencies.items():
                         if latency is not None:
                             stats[orig_idx]["firesim_latency"] = latency
+                            stats[orig_idx]["latency"] = latency 
                             logger.debug("FireSim latency for candidate %d: %d cycles", orig_idx, latency)
                     missing_indices = set(passing_indices) - set(firesim_latencies.keys())
-                    if missing_indices:
+                    if missing_indices: 
                         msg = "FireSim did not return latency for candidate"
                         for orig_idx in missing_indices:
                             stats[orig_idx]["correct"] = False
