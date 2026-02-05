@@ -483,29 +483,29 @@ long first = __riscv_vfirst_m_b8(mask, vl);  // -1 if none set
 ## Example: Optimized Dot Product
 Shows: LMUL=8, vector accumulation, single reduction at end
 ```c
-int64_t dotp_v64b(int64_t *a, int64_t *b, uint64_t avl) {
+int64_t dotp_v64b(int64_t *a, int64_t *b, uint64_t avl) {{
     size_t orig_avl = avl;
     size_t vl = __riscv_vsetvl_e64m8(avl);
-    
+
     vint64m8_t acc, buf_a, buf_b;
     vint64m1_t red = __riscv_vmv_s_x_i64m1(0, vl);
-    
-    for (; avl > 0; avl -= vl) {
+
+    for (; avl > 0; avl -= vl) {{
         vl = __riscv_vsetvl_e64m8(avl);
         buf_a = __riscv_vle64_v_i64m8(a, vl);
         buf_b = __riscv_vle64_v_i64m8(b, vl);
-        if (avl == orig_avl) {
+        if (avl == orig_avl) {{
             acc = __riscv_vmul_vv_i64m8(buf_a, buf_b, vl);
-        } else {
+        }} else {{
             acc = __riscv_vmacc_vv_i64m8(acc, buf_a, buf_b, vl);
-        }
+        }}
         a += vl;
         b += vl;
-    }
-    
+    }}
+
     red = __riscv_vredsum_vs_i64m8_i64m1(acc, red, vl);
     return __riscv_vmv_x_s_i64m1_i64(red);
-}
+}}
 ```
 
 ## Example: Register-Blocked GEMM
@@ -515,41 +515,41 @@ Shows: register blocking, multiple accumulators, scalar broadcast (vfmacc_vf)
 void sgemm_blocked(size_t M, size_t N, size_t K,
                    const float *A, size_t lda,
                    const float *B, size_t ldb,
-                   float *C, size_t ldc) {
+                   float *C, size_t ldc) {{
     const size_t TILE_M = 4;  // Rows of C tile
-    
-    for (size_t i = 0; i < M; i += TILE_M) {
+
+    for (size_t i = 0; i < M; i += TILE_M) {{
         size_t m_tile = (i + TILE_M <= M) ? TILE_M : (M - i);
-        
-        for (size_t j = 0; j < N; ) {
+
+        for (size_t j = 0; j < N; ) {{
             size_t vl = __riscv_vsetvl_e32m4(N - j);
-            
+
             // Initialize C accumulators
             vfloat32m4_t c0 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
             vfloat32m4_t c1 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
             vfloat32m4_t c2 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
             vfloat32m4_t c3 = __riscv_vfmv_v_f_f32m4(0.0f, vl);
-            
-            for (size_t k = 0; k < K; ++k) {
+
+            for (size_t k = 0; k < K; ++k) {{
                 vfloat32m4_t b_row = __riscv_vle32_v_f32m4(&B[k * ldb + j], vl);
-                
+
                 // vfmacc_vf broadcasts scalar A element
                 if (m_tile > 0) c0 = __riscv_vfmacc_vf_f32m4(c0, A[(i+0)*lda+k], b_row, vl);
                 if (m_tile > 1) c1 = __riscv_vfmacc_vf_f32m4(c1, A[(i+1)*lda+k], b_row, vl);
                 if (m_tile > 2) c2 = __riscv_vfmacc_vf_f32m4(c2, A[(i+2)*lda+k], b_row, vl);
                 if (m_tile > 3) c3 = __riscv_vfmacc_vf_f32m4(c3, A[(i+3)*lda+k], b_row, vl);
-            }
-            
+            }}
+
             // Store C tile
             if (m_tile > 0) __riscv_vse32_v_f32m4(&C[(i+0)*ldc+j], c0, vl);
             if (m_tile > 1) __riscv_vse32_v_f32m4(&C[(i+1)*ldc+j], c1, vl);
             if (m_tile > 2) __riscv_vse32_v_f32m4(&C[(i+2)*ldc+j], c2, vl);
             if (m_tile > 3) __riscv_vse32_v_f32m4(&C[(i+3)*ldc+j], c3, vl);
-            
+
             j += vl;
-        }
-    }
-}
+        }}
+    }}
+}}
 ```
 
 ## Example: Convolution with vslidedown
