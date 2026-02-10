@@ -17,9 +17,8 @@ SATURN_ZEPHYR_BASE = "/scratch/charleshong/rvv/zephyr-chipyard-sw"  # Zephyr ins
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
-SATURN_COMPILE_TIMEOUT = 120
-SATURN_FIRESIM_TIMEOUT = 300.0
-SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
+SATURN_COMPILE_TIMEOUT = 120.0
+SATURN_FIRESIM_TIMEOUT = 500.0
 
 SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
 SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench" # Contains src/main.c, CMakeLists.txt, prj.conf
@@ -125,16 +124,19 @@ def build_single(code_contents: str, candidate_idx: int, timestamp: str, return_
         return_dict["error"] = f"Build error: {str(e)}"
 
 
-def run_spike_on_binary(binary_path: pathlib.Path, return_dict: dict):
-    
+def run_spike_on_binary(binary_path: pathlib.Path, return_dict: dict, timeout: float = SATURN_SPIKE_TIMEOUT):
+
     try:
         result = subprocess.run(
             ["spike", f"--isa=rv64gcv_zicntr", str(binary_path)],
             capture_output=True,
             text=True,
-            errors="ignore"
+            errors="ignore",
+            timeout=timeout
         )
         return_dict["retval"] = result.stdout
+    except subprocess.TimeoutExpired:
+        return_dict["retval"] = "Timeout"
     except Exception as e:
         return_dict["retval"] = f"Spike error: {str(e)}"
 
@@ -358,7 +360,7 @@ def run_firesim_batch(binary_path: pathlib.Path,
         logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
         logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
         raise RuntimeError("No new results directory found after running FireSim.")
-#
+
     relevant_logs = []
     for dir in new_dirs:
         dir_logs = glob.glob(f"{dir}/*/uartlog", recursive=True)
@@ -403,25 +405,6 @@ def parse_firesim_uartlog(log_path: str) -> dict[int, int]:
 
     return results
 
-
-def run_firesim_individual(code_contents: str,
-                           firesim_path: pathlib.Path,
-                           candidate_idx: int,
-                           timeout: float = SATURN_FIRESIM_INDIVIDUAL_TIMEOUT) -> int | None:
-    """
-    Run a single candidate on FireSim (fallback for batch failures).
-
-    Returns latency on success, None on failure.
-    """
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    binary_result = build_firesim_binary(code_contents, f"{timestamp}_{candidate_idx}")
-
-    if isinstance(binary_result, str):
-        logger.warning("Failed to build FireSim binary for candidate %d: %s", candidate_idx, binary_result)
-        return None
-
-    results = run_firesim_batch(binary_result, firesim_path, timeout=timeout)
-    return results.get(candidate_idx)
 
 
 class SaturnHardwareBackend(HardwareBackend):
@@ -593,6 +576,48 @@ class SaturnHardwareBackend(HardwareBackend):
             timeout=SATURN_FIRESIM_TIMEOUT
         )
 
+    @staticmethod
+    def _extract_candidate_params(test_content: str) -> list[tuple[str, str]]:
+        """
+        Extract variable declarations before // SUBSTITUTE HERE from the test
+        template. These are the local variables that candidate code uses
+        (e.g. batch, input_a, output, params).
+
+        Returns list of (type, name) tuples. Empty for tests where candidates
+        access globals directly (e.g. gemm).
+        """
+        lines = test_content.splitlines()
+        sub_idx = None
+        for i, line in enumerate(lines):
+            if "// SUBSTITUTE HERE" in line:
+                sub_idx = i
+                break
+        if sub_idx is None:
+            return []
+
+        # Scan backwards from SUBSTITUTE HERE, collecting variable declarations
+        params = []
+        for i in range(sub_idx - 1, -1, -1):
+            line = lines[i].strip()
+            if not line or line.startswith("//"):
+                continue
+            # Match variable declarations: `type name = value;`
+            if '=' in line and line.endswith(';'):
+                left = line.split('=')[0].strip()
+                parts = left.rsplit(None, 1)
+                if len(parts) == 2:
+                    var_type, var_name = parts
+                    # Handle `float *name` style (star on name side)
+                    if var_name.startswith('*'):
+                        var_type += ' *'
+                        var_name = var_name[1:]
+                    params.append((var_type, var_name))
+                    continue
+            break
+
+        params.reverse()
+        return params
+
     def _build_firesim_combined_code(self,
                                       passing_codes: list[str],
                                       passing_indices: list[int],
@@ -600,35 +625,75 @@ class SaturnHardwareBackend(HardwareBackend):
         """
         Build combined C code with all passing candidates for FireSim batching.
 
-        Inlines each candidate's code with cycle counting around it.
+        Each candidate is wrapped in its own noinline function to isolate
+        vector register allocation (prevents register pressure from LMUL=8
+        candidates causing spills/crashes in a single giant function).
+
+        The function signature is derived from the test template's variable
+        declarations before // SUBSTITUTE HERE, so it works for any test type.
         """
-        # Generate inlined code blocks for each candidate
+        # Parse the test template to extract candidate function parameters
+        test_content = test.test_file.read_text()
+        params = self._extract_candidate_params(test_content)
+
+        if params:
+            param_sig = ", ".join(f"{t} {n}" for t, n in params)
+            param_args = ", ".join(n for _, n in params)
+        else:
+            param_sig = "void"
+            param_args = ""
+
+        # Generate noinline wrapper functions for each candidate
+        func_defs = []
+        for code, orig_idx in zip(passing_codes, passing_indices):
+            func_defs.append(f"""
+__attribute__((noinline)) void run_candidate_{orig_idx}({param_sig}) {{
+{code}
+}}
+""")
+
+        func_defs_str = "\n".join(func_defs)
+
+        # Generate call blocks in main
         code_blocks = []
         for code, orig_idx in zip(passing_codes, passing_indices):
             code_blocks.append(f"""
     // Run candidate {orig_idx}
-    RESET_STATE(); 
+    RESET_STATE();
     fence();
+    __asm__ volatile("vsetvli x0, x0, e8, m1, ta, ma");
     start_cycle = read_cycles();
-    {{
-{code}
-    }}
+    run_candidate_{orig_idx}({param_args});
     fence();
+    __asm__ volatile("vsetvli x0, x0, e8, m1, ta, ma");
     end_cycle = read_cycles();
     printf("ID {orig_idx} latency: %lu cycles\\n", end_cycle - start_cycle);
 """)
 
         code_blocks_str = "\n".join(code_blocks)
 
-        # Build the substitution block - all code inlined, no function definitions
+        # Build the substitution block
         substitution = f"""
-    int start_cycle, end_cycle;
+    unsigned long start_cycle, end_cycle;
 
 {code_blocks_str}
 """
 
-        # Use the test's modify_test_code to inject our combined code
-        return test.modify_test_code(substitution)
+        # Use the test's modify_test_code to inject our combined code,
+        # then prepend the noinline function definitions before main()
+        combined = test.modify_test_code(substitution)
+
+        # Insert function definitions before main()
+        main_pos = combined.find("\nint main(")
+        if main_pos == -1:
+            main_pos = combined.find("\nint main ")
+        if main_pos != -1:
+            combined = combined[:main_pos] + "\n" + func_defs_str + combined[main_pos:]
+        else:
+            # Fallback: prepend after includes
+            combined = func_defs_str + "\n" + combined
+
+        return combined
 
 
 if __name__ == "__main__":
