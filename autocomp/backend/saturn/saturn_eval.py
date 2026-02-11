@@ -559,7 +559,7 @@ class SaturnHardwareBackend(HardwareBackend):
         # Build concatenated test code
         # We use the test's template but with all passing codes as separate functions
         combined_code = self._build_firesim_combined_code(
-            passing_codes, passing_indices, first_test
+            passing_codes, passing_indices, first_test, prob
         )
 
         # Compile for FireSim
@@ -577,51 +577,59 @@ class SaturnHardwareBackend(HardwareBackend):
         )
 
     @staticmethod
-    def _extract_candidate_params(test_content: str) -> list[tuple[str, str]]:
+    def _extract_candidate_params(code_str: str) -> list[tuple[str, str]]:
         """
-        Extract variable declarations before // SUBSTITUTE HERE from the test
-        template. These are the local variables that candidate code uses
-        (e.g. batch, input_a, output, params).
+        Extract function parameters from the first function definition in a
+        solution file. Works with any function name (void test, void xnn_f32_..., etc).
 
-        Returns list of (type, name) tuples. Empty for tests where candidates
-        access globals directly (e.g. gemm).
+        Returns list of (type, name) tuples. Empty if no function definition found
+        (e.g. gemm tests where candidates access globals directly).
         """
-        lines = test_content.splitlines()
-        sub_idx = None
-        for i, line in enumerate(lines):
-            if "// SUBSTITUTE HERE" in line:
-                sub_idx = i
-                break
-        if sub_idx is None:
+        # Find the first function definition: look for `) {` or `)\n{` pattern
+        # and work backwards to find the matching `(`
+        # Use regex to find: return_type func_name(
+        match = re.search(r'\b\w[\w\s*]*\s+(\w+)\s*\(', code_str)
+        if not match:
             return []
 
-        # Scan backwards from SUBSTITUTE HERE, collecting variable declarations
-        params = []
-        for i in range(sub_idx - 1, -1, -1):
-            line = lines[i].strip()
-            if not line or line.startswith("//"):
-                continue
-            # Match variable declarations: `type name = value;`
-            if '=' in line and line.endswith(';'):
-                left = line.split('=')[0].strip()
-                parts = left.rsplit(None, 1)
-                if len(parts) == 2:
-                    var_type, var_name = parts
-                    # Handle `float *name` style (star on name side)
-                    if var_name.startswith('*'):
-                        var_type += ' *'
-                        var_name = var_name[1:]
-                    params.append((var_type, var_name))
-                    continue
-            break
+        # Find the opening paren position
+        paren_start = code_str.index('(', match.start())
+        after_paren = code_str[paren_start + 1:]
 
-        params.reverse()
+        # Find matching closing paren (handle nested parens)
+        paren_depth = 1
+        param_end = 0
+        for j, ch in enumerate(after_paren):
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth -= 1
+                if paren_depth == 0:
+                    param_end = j
+                    break
+        param_str = after_paren[:param_end]
+
+        # Parse comma-separated parameters
+        params = []
+        for param in param_str.split(','):
+            param = ' '.join(param.split())  # normalize whitespace
+            if not param:
+                continue
+            parts = param.rsplit(None, 1)
+            if len(parts) == 2:
+                var_type, var_name = parts
+                if var_name.startswith('*'):
+                    var_type += ' *'
+                    var_name = var_name[1:]
+                params.append((var_type, var_name))
+
         return params
 
     def _build_firesim_combined_code(self,
                                       passing_codes: list[str],
                                       passing_indices: list[int],
-                                      test) -> str:
+                                      test,
+                                      prob: Prob = None) -> str:
         """
         Build combined C code with all passing candidates for FireSim batching.
 
@@ -629,12 +637,16 @@ class SaturnHardwareBackend(HardwareBackend):
         vector register allocation (prevents register pressure from LMUL=8
         candidates causing spills/crashes in a single giant function).
 
-        The function signature is derived from the test template's variable
-        declarations before // SUBSTITUTE HERE, so it works for any test type.
+        The function signature is derived from the solution file in sols/.
         """
-        # Parse the test template to extract candidate function parameters
-        test_content = test.test_file.read_text()
-        params = self._extract_candidate_params(test_content)
+        # Read the solution file to extract function parameters
+        params = []
+        if prob:
+            sol_dir = SOLS_DIR / prob.prob_type
+            sol_files = list(sol_dir.glob(f"{prob.prob_id}_*.c"))
+            if sol_files:
+                sol_content = sol_files[0].read_text()
+                params = self._extract_candidate_params(sol_content)
 
         if params:
             param_sig = ", ".join(f"{t} {n}" for t, n in params)
