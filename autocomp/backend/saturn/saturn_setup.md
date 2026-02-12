@@ -135,7 +135,7 @@ Once the command successfully completes, it will print out a YAML entry you can 
 
 ### Runtime Configuration
 
-In `deploy/config_runtime.yaml`, set `default_platform` to match your FPGA (according to the FireSim docs), `default_hw_config` to the name of your bitstream from the last step, and `workload_name: saturn.json`. See [config_runtime_example.yaml](config_runtime_example.yaml) for an example.
+In `deploy/config_runtime.yaml`, set `default_platform` to match your FPGA (according to the FireSim docs), `default_simulation_dir` to your choice of directory (you can point to the `firesim` directory), `default_hw_config` to the name of your bitstream from the last step, and `workload_name: saturn.json`. See [config_runtime_example.yaml](config_runtime_example.yaml) for an example.
 
 ### Workload Setup
 
