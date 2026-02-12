@@ -311,15 +311,22 @@ class LLMClient():
                 )
         elif self.provider == "together":
             self.async_client = AsyncTogether(api_key=together_key_str)
-        elif self.provider == "vllm":
+        elif self.provider is not None and self.provider.startswith("vllm"):
             openai_api_key = "EMPTY"
-            openai_api_base = vllm_api_base
+            # Support per-model base URL via "vllm@<base_url>" provider format
+            if "@" in self.provider:
+                openai_api_base = self.provider.split("@", 1)[1]
+            else:
+                openai_api_base = vllm_api_base
+            self.provider = "vllm"
             self.client = OpenAI(
                 api_key=openai_api_key,
                 base_url=openai_api_base,
             )
-            model = self.client.models.list()
-            self.model = model.data[0].id
+            self.async_client = AsyncOpenAI(
+                api_key=openai_api_key,
+                base_url=openai_api_base,
+            )
         else:
             raise ValueError(f"Invalid provider: {self.provider}")
 

@@ -13,8 +13,11 @@ AI-Driven Code Optimizer for Tensor Accelerators
 | <a href="https://arxiv.org/abs/2505.18574"><b>arXiv</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> |
 </p>
 
+Welcome to the code repository of **Autocomp**. Recent updates:
+
 **(1/22/2026)** Reorganized repo structure to make it easier to add a new backend.
-**(1/8/2026)** Welcome to the code repository of **Autocomp**. Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
+
+**(1/8/2026)** Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
 
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
@@ -61,6 +64,21 @@ Autocomp supports both local and remote endpoint LLM inference. For local infere
    ```
    Optionally set `VLLM_API_BASE` if using a different host/port (default: `http://localhost:8000/v1`).
 
+3. **Multiple models on different ports:**
+   You can serve multiple vLLM models on separate ports and use them together by encoding the base URL in the provider string with the format `vllm@<base_url>::<model_name>`:
+   ```bash
+   # Terminal 1
+   vllm serve --model Qwen/Qwen3-8B --port 8000 -tp 1
+   # Terminal 2
+   vllm serve --model meta-llama/Llama-3-70B --port 8001 -tp 4
+   ```
+   ```python
+   models = [
+       "vllm@http://localhost:8000/v1::Qwen/Qwen3-8B",
+       "vllm@http://localhost:8001/v1::meta-llama/Llama-3-70B",
+   ]
+   ```
+
 For more details, see the [vLLM documentation](https://docs.vllm.ai/).
 
 ### LLM Endpoint Setup
@@ -71,7 +89,6 @@ API keys can be configured via environment variables or in `autocomp/common/keys
 
 | Provider | Environment Variable / Key Name | Provider Name in `search.py`
 |----------|--------------------------------|--------------------------------|
-|----------|--------------------------------|
 | OpenAI | `OPENAI_API_KEY` | `openai`
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic`
 | Together | `TOGETHER_API_KEY` | `together`
@@ -129,6 +146,7 @@ Notable parameters:
 - `agents/` - LLM agents for planning and code generation. Each backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `cuda/`) with agent code and prompts.
 - `backend/` - Hardware evaluation. Each backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `kernelbench/`) with evaluation code and setup instructions.
 - `common/` - Shared utilities (LLM interface, logging, etc.).
+  - `llm_utils.py` - LLM interface. Modify this file if you want to add a new LLM provider.
 
 **`sols/`** - Baseline code for benchmarks (organized by problem type).
 
