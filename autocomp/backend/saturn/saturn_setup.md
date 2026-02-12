@@ -19,10 +19,9 @@ SATURN_ZEPHYR_BASE = "/scratch/charleshong/zephyr-chipyard-sw"  # Zephyr install
 SATURN_SPIKE_TIMEOUT = 60.0
 SATURN_COMPILE_TIMEOUT = 120
 SATURN_FIRESIM_TIMEOUT = 500.0
-SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
 ```
 
-Optionally modify the following: 
+Optionally modify the following (more will be explained below):
 ```python
 SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
 SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench"
@@ -91,10 +90,7 @@ rvv_bench/            # Name of your app
 | `prj.conf` | Config options (e.g., `CONFIG_RISCV_ISA_EXT_V=y`) |
 | `main.c` | Placeholder (replaced by test template during build) |
 
-See the [samples](https://github.com/ucb-bar/zephyr-chipyard-sw/tree/dev/samples/) directory in Zephyr for other example app templates. Update `SATURN_ZEPHYR_APP_PATH` in `saturn_eval.py` to point to your benchmark app.
-```
-SATURN_ZEPHYR_APP_PATH = pathlib.Path("/scratch/charleshong/zephyr-chipyard-sw/rvv_bench")
-```
+See the [samples](https://github.com/ucb-bar/zephyr-chipyard-sw/tree/dev/samples/) directory in Zephyr for other example app templates. Make sure `SATURN_ZEPHYR_APP_PATH` in `saturn_eval.py` point to your benchmark app.
 
 ## Chipyard
 
