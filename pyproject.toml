@@ -12,6 +12,8 @@ dependencies = [
     "openai",
     "google-genai",
     "anthropic",
+    "botocore",
+    "boto3",
     "numpy",
     "pandas",
     "wandb",

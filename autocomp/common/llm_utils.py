@@ -37,8 +37,8 @@ anthropic_key_str = _get_key("ANTHROPIC_API_KEY")
 together_key_str = _get_key("TOGETHER_API_KEY")
 aws_access_key = _get_key("AWS_ACCESS_KEY_ID", default=None)
 aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
-google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
+google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
 
 # Log key availability
@@ -49,6 +49,7 @@ _key_status = {
     "AWS_ACCESS_KEY_ID": aws_access_key is not None,
     "AWS_SECRET_ACCESS_KEY": aws_secret_key is not None,
     "GOOGLE_CLOUD_PROJECT": google_cloud_project is not None,
+    "GOOGLE_CLOUD_LOCATION": google_cloud_location is not None,
 }
 _available = [k for k, v in _key_status.items() if v]
 _unavailable = [k for k, v in _key_status.items() if not v]
@@ -280,6 +281,9 @@ class LLMClient():
         self.api_model_name = model
         self.client = None
         self.async_client = None
+        self._vllm_api_base = None
+        # Persistent event loop so async clients can be reused across calls
+        self._loop = asyncio.new_event_loop()
 
         self.provider = provider
         if self.provider is None:
@@ -296,19 +300,17 @@ class LLMClient():
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
-            # genai.configure(api_key=gemini_key_str)
-            # self.client = genai.GenerativeModel(model_name=model)
             self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
         # elif self.provider == "mistralgcp":
         #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and "claude" in model:
-                self.async_client = anthropic.AsyncAnthropicBedrock(
-                    aws_access_key=aws_access_key,
-                    aws_secret_key=aws_secret_key,
-                    aws_region="us-west-2",
-                )
+            self.async_client = anthropic.AsyncAnthropicBedrock(
+                aws_access_key=aws_access_key,
+                aws_secret_key=aws_secret_key,
+                aws_region="us-west-2",
+            )
         elif self.provider == "together":
             self.async_client = AsyncTogether(api_key=together_key_str)
         elif self.provider is not None and self.provider.startswith("vllm"):
@@ -319,6 +321,7 @@ class LLMClient():
             else:
                 openai_api_base = vllm_api_base
             self.provider = "vllm"
+            self._vllm_api_base = openai_api_base
             self.client = OpenAI(
                 api_key=openai_api_key,
                 base_url=openai_api_base,
@@ -329,6 +332,11 @@ class LLMClient():
             )
         else:
             raise ValueError(f"Invalid provider: {self.provider}")
+
+    def _run_async(self, coro):
+        """Run an async coroutine on the persistent event loop.
+        Uses a single long-lived loop so async clients can reuse connections."""
+        return self._loop.run_until_complete(coro)
 
     def web_search(self, query: str) -> str:
         if can_web_search_openai(self.model):
@@ -366,7 +374,7 @@ class LLMClient():
         """
         if self.async_client is not None and isinstance(self.async_client, (AsyncOpenAI, AsyncTogether)):
             kwargs.setdefault("model", self.model)
-            return asyncio.run(fetch_web_search_completions(self.async_client, queries, **kwargs))
+            return self._run_async(fetch_web_search_completions(self.async_client, queries, **kwargs))
         elif isinstance(self.async_client, genai.Client):
             # Gemini not supported for web search yet
             logger.info("Web search not supported for Gemini clients yet")
@@ -396,7 +404,7 @@ class LLMClient():
                 kwargs["max_tokens"] = 16384
             if is_openai_reasoning_model(self.model) and reasoning_effort is not None:
                 kwargs["reasoning"] = {"effort": reasoning_effort}
-            responses = asyncio.run(fetch_completions(self.async_client, prompts_lst, **kwargs))
+            responses = self._run_async(fetch_completions(self.async_client, prompts_lst, **kwargs))
             return responses
         else:
             responses = []

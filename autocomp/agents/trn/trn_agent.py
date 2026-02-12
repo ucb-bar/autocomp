@@ -7,11 +7,15 @@ from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.trn.prompts import fusion_example
 from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
+from autocomp.hw_config.trn_config import TrnHardwareConfig
+from autocomp.backend.eval_backend import EvalBackend
 
 
 class TrnLLMAgent(LLMAgent):
-    def __init__(self, model):
+    def __init__(self, model, hw_config: TrnHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
+        self.hw_config = hw_config
+        self.eval_backend = eval_backend
         self.nki_isa_generator = NkiIsaGenerator()
 
     def __repr__(self):
@@ -76,19 +80,21 @@ class TrnLLMAgent(LLMAgent):
             "Overlap execution across compute engines through pipelining",
             "Swap stationary and moving tensors in nc_matmul",
             "Use conditional execution instead of masking, or vice versa",
-            "Simplify or eliminate any unnecessary code"
+            "Simplify or eliminate any unnecessary code",
             "Other methods not listed here.",
         ]
 
     def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
-        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-                #  "Use proper NKI syntax and decorators (@nki.jit).",
-                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+        rules = []
+        rules.extend(self.hw_config.get_hw_config_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
+        rules.extend([
+                 "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+                 "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
                  "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
-                #  "Try to use the nki.language and nki.isa functions defined above.",
-                ]
+                ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
             if random.random() < 0.4:
@@ -137,7 +143,7 @@ class TrnLLMAgent(LLMAgent):
                                           shuffle_opts: bool, 
                                           give_score_feedback: float,
                                           give_util_feedback: float,
-                                          give_spad_acc_feedback: float,
+                                          give_hw_feedback: float,
                                           include_ancestors: bool,
                                           plan_icl_examples: bool,
                                           cur_iter: int,

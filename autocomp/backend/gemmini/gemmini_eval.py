@@ -8,7 +8,8 @@ import shutil
 
 from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
+from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
 
 FP32_4PE_CHIPYARD_PATH = None
 INT8_16PE_CHIPYARD_PATH = "/scratch/charleshong/chipyard"
@@ -313,9 +314,13 @@ def parse_spad_acc_utilization(spike_output: str, pe_dim: int, spad_size_kb: int
     num_acc_rows = (acc_size_kb * 1024 / (pe_dim * 4))
     return len(spad_addresses_used) / num_spad_rows, len(acc_addresses_used) / num_acc_rows
 
-class GemminiHardwareBackend(HardwareBackend):
-    def __init__(self, pe_dim: int, spad_size_kb: int=256, acc_size_kb: int=64):
-        self.pe_dim = pe_dim
+class GemminiEvalBackend(EvalBackend):
+    def __init__(self, hw_config: GemminiHardwareConfig):
+        self.hw_config = hw_config
+        self.pe_dim = hw_config.pe_dim
+        self.spad_size_kb = hw_config.spad_size_kb
+        self.acc_size_kb = hw_config.acc_size_kb
+        pe_dim = self.pe_dim
         if pe_dim == 4:
             if not FP32_4PE_CHIPYARD_PATH:
                 raise ValueError("FP32_4PE_CHIPYARD_PATH not set at top of hardware_eval.py")
@@ -333,12 +338,28 @@ class GemminiHardwareBackend(HardwareBackend):
             self.firesim_path = pathlib.Path(INT8_32PE_CHIPYARD_PATH).resolve() / "sims" / "firesim"
         else:
             raise ValueError("supported Gemmini pe_dims: {4, 16, 32}")
-        self.spad_size_kb = spad_size_kb
-        self.acc_size_kb = acc_size_kb
         self.gemmini_sw_path = self.gemmini_path / "software" / "gemmini-rocc-tests"
 
     def __repr__(self):
-        return f"GemminiHardwareBackend({self.pe_dim})"
+        return f"GemminiEvalBackend({self.pe_dim})"
+
+    def get_hw_feedback(self, prob: Prob, code_strs: list[str]) -> list[list[str]]:
+        """Return per-candidate spad/acc utilization feedback strings."""
+        stats_list = self.get_spad_acc_utilization(prob, code_strs)
+        feedback_per_candidate = []
+        for stats in stats_list:
+            spad_cap_used = round(stats['spad_util'] * self.spad_size_kb)
+            acc_cap_used = round(stats['acc_util'] * self.acc_size_kb)
+            feedback = [
+                f"Scratchpad utilization is {spad_cap_used}KB out of {self.spad_size_kb}KB.",
+                f"Accumulator utilization is {acc_cap_used}KB out of {self.acc_size_kb}KB."
+            ]
+            if stats['spad_util'] < 1:
+                feedback[0] += " Consider increasing scratchpad utilization to improve performance."
+            if stats['acc_util'] < 1:
+                feedback[1] += " Consider increasing accumulator utilization to improve performance."
+            feedback_per_candidate.append(feedback)
+        return feedback_per_candidate
 
     def evaluate_code_parallel_spike(self, prob: Prob, code_strs: list[str]) -> float:
         return self.evaluate_code(prob, code_strs, "spike")
@@ -483,6 +504,6 @@ if __name__ == "__main__":
     prob = Prob("admm-multifunction", 2)
     files = [SOLS_DIR / "admm-multifunction" / "sol2_5249.c"]
     code_strs = [file.read_text() for file in files]
-    stats = GemminiHardwareBackend(4).evaluate_code(prob, code_strs, "firesim")
-    # stats = GemminiHardwareBackend(4).get_spad_acc_utilization(prob, code_strs)
+    stats = GemminiEvalBackend(4).evaluate_code(prob, code_strs, "firesim")
+    # stats = GemminiEvalBackend(4).get_spad_acc_utilization(prob, code_strs)
     print(stats)

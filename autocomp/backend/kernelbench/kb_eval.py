@@ -8,11 +8,19 @@ from datetime import datetime
 
 from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 KERNELBENCH_DIR = pathlib.Path("/scratch/charleshong/kernelbench/KernelBench")
 
-class KBHardwareBackend(HardwareBackend):
+class KBEvalBackend(EvalBackend):
+    def get_backend_specific_rules(self) -> list[str]:
+        return [
+            "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
+            "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
+            "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
+            "Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.",
+        ]
+
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
         level_str = prob.prob_type.split("-")[1]
         ref_file = glob.glob(f"{KERNELBENCH_DIR}/KernelBench/{level_str}/{prob.prob_id}_*.py")[0]
@@ -59,7 +67,7 @@ def main():
     prob = Prob(prob_type, prob_id)
     files = glob.glob(str(SOLS_DIR / prob_type / f"{prob_id}_*.py"))
     code_strs = [pathlib.Path(file).read_text() for file in files]
-    stats = KBHardwareBackend().evaluate_code(prob, code_strs, "kernelbench")
+    stats = KBEvalBackend().evaluate_code(prob, code_strs, "kernelbench")
     print(stats)
 
 if __name__ == "__main__":

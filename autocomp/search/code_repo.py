@@ -11,7 +11,7 @@ def copy_candidate(candidate: 'CodeCandidate') -> 'CodeCandidate':
         plan=candidate.plan,
         code=candidate.code,
         score=candidate.score,
-        spad_acc_stats=candidate.spad_acc_stats[:],  # Copy the spad_acc_stats list
+        hw_feedback=candidate.hw_feedback[:],  # Copy the hw_feedback list
         plan_gen_model=candidate.plan_gen_model,
         code_gen_model=candidate.code_gen_model,
         stdout=candidate.stdout,
@@ -28,7 +28,7 @@ class CodeCandidate:
     """
     Represents a single version of the code with an associated optimization plan.
     """
-    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, spad_acc_stats: list[str]=None,
+    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, hw_feedback: list[str]=None,
                  plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
@@ -40,10 +40,10 @@ class CodeCandidate:
             self.implemented = True
             self.code = code
 
-        if spad_acc_stats is None:
-            self.spad_acc_stats = list()
+        if hw_feedback is None:
+            self.hw_feedback = list()
         else:
-            self.spad_acc_stats = spad_acc_stats # spad_acc_stats to pass to the next iteration
+            self.hw_feedback = hw_feedback # hw_feedback to pass to the next iteration
 
         self.plan_gen_model = plan_gen_model
         self.code_gen_model = code_gen_model
@@ -58,11 +58,11 @@ class CodeCandidate:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
         escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
         return repr_str
 
-    def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:
-        self.spad_acc_stats.extend(spad_acc_stats)
+    def update_hw_feedback(self, hw_feedback: list[str]) -> None:
+        self.hw_feedback.extend(hw_feedback)
 
 class CodeRepository:
     """
