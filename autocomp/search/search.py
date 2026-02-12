@@ -20,10 +20,21 @@ from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_
 from autocomp.backend.gpumode.gpumode_eval import GpuModeHardwareBackend
 from autocomp.backend.trn.trn_eval import TrnHardwareBackend
 # ... register more hardware backends here ...
+# Hardware configs
+from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", models: list, code_models: list = None):
-    """Create hardware backend and agent ensembles. Agent name defaults to backend_name (kernelbench -> cuda)."""
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: "Prob", models: list, code_models: list = None):
+    """Create hardware backend and agent ensembles.
+    
+    Args:
+        backend_name: Which backend to use for evaluation.
+        agent_name: Which agent type. Defaults based on backend_name (kernelbench/gpumode -> cuda).
+        hw_config: A HardwareConfig instance describing the target hardware.
+        prob: The problem to optimize.
+        models: List of model strings for planning.
+        code_models: Optional list of model strings for code implementation.
+    """
     if not agent_name:
         agent_name = "cuda" if backend_name in ["kernelbench", "gpumode"] else backend_name
     
@@ -33,10 +44,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", 
     elif backend_name == "gpumode":
         hw = GpuModeHardwareBackend()
     elif backend_name == "gemmini":
-        pe_dim = 32 if "gpt" in prob.prob_type else (4 if "admm" in prob.prob_type else 16)
-        spad_kb = 512 if "gpt" in prob.prob_type else 256
-        acc_kb = 128 if "gpt" in prob.prob_type else 64
-        hw = GemminiHardwareBackend(pe_dim, spad_kb, acc_kb)
+        hw = GemminiHardwareBackend(hw_config)
     elif backend_name == "trn":
         hw = TrnHardwareBackend()
     else:
@@ -44,15 +52,14 @@ def create_backend_and_agents(backend_name: str, agent_name: str, prob: "Prob", 
     
     # Create agents
     if agent_name == "cuda":
-        agent = LLMEnsemble([CudaLLMAgent(m) for m in models])
-        code_agent = LLMEnsemble([CudaLLMAgent(m) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([CudaLLMAgent(m, hw_config, hw) for m in models])
+        code_agent = LLMEnsemble([CudaLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
     elif agent_name == "gemmini":
-        pe_dim = 32 if "gpt" in prob.prob_type else (4 if "admm" in prob.prob_type else 16)
-        agent = LLMEnsemble([GemminiLLMAgent(m, pe_dim) for m in models])
-        code_agent = LLMEnsemble([GemminiLLMAgent(m, pe_dim) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, hw) for m in models])
+        code_agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
     elif agent_name == "trn":
-        agent = LLMEnsemble([TrnLLMAgent(m) for m in models])
-        code_agent = LLMEnsemble([TrnLLMAgent(m) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([TrnLLMAgent(m, hw_config, hw) for m in models])
+        code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
@@ -72,13 +79,13 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
                 raise FileNotFoundError(f"No file matching {prob_id}_*.py in {kb_level_dir}")
             with open(matches[0]) as f:
                 return f.read().replace("Model", "ModelNew")
-        else:
-            sol_dir = SOLS_DIR / prob_type
-            matches = list(sol_dir.glob(f"{prob_id}_*.py"))
-            if not matches:
-                raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-            with open(matches[0]) as f:
-                return f.read()
+    elif backend_name == "gpumode":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
     elif backend_name == "gemmini":
         if "admm" in prob_type:
             with open(SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
@@ -111,7 +118,7 @@ class SearchStrategy:
                  simulator: str,
                  give_score_feedback: float,
                  give_util_feedback: float,
-                 give_spad_acc_feedback: float,
+                 give_hw_feedback: float,
                  include_ancestors: bool,
                  plan_icl_examples: bool,
                  code_icl_examples: bool,
@@ -132,7 +139,7 @@ class SearchStrategy:
         self.simulator = simulator
         self.give_score_feedback = give_score_feedback
         self.give_util_feedback = give_util_feedback
-        self.give_spad_acc_feedback = give_spad_acc_feedback
+        self.give_hw_feedback = give_hw_feedback
         self.include_ancestors = include_ancestors
         self.plan_icl_examples = plan_icl_examples
         self.code_icl_examples = code_icl_examples
@@ -210,25 +217,16 @@ class SearchStrategy:
 
     def add_feedback(self, candidates: list[CodeCandidate]) -> list[CodeCandidate]:
         # NOTE: Assumes that feedback for a particular candidate only gets added once and does not get updated
+        if self.give_hw_feedback <= 0:
+            return candidates
         for cand_i in range(len(candidates)):
-            if candidates[cand_i].spad_acc_stats: # If already has feedback, skip
+            if candidates[cand_i].hw_feedback: # If already has feedback, skip
                 continue
-            if self.give_spad_acc_feedback > 0:
-                spad_acc_stats = self.hw_backend.get_spad_acc_utilization(self.prob, [candidates[cand_i].code])[0]
-                spad_size_kb = self.hw_backend.spad_size_kb
-                acc_size_kb = self.hw_backend.acc_size_kb
-                spad_cap_used = round(spad_acc_stats['spad_util'] * spad_size_kb)
-                acc_cap_used = round(spad_acc_stats['acc_util'] * acc_size_kb)
-                feedback = [
-                    f"Scratchpad utilization is {spad_cap_used}KB out of {spad_size_kb}KB.",
-                    f"Accumulator utilization is {acc_cap_used}KB out of {acc_size_kb}KB."
-                ]
-                if spad_acc_stats['spad_util'] < 1:
-                    feedback[0] += " Consider increasing scratchpad utilization to improve performance."
-                if spad_acc_stats['acc_util'] < 1:
-                    feedback[1] += " Consider increasing accumulator utilization to improve performance."
+            feedback_per_cand = self.hw_backend.get_hw_feedback(self.prob, [candidates[cand_i].code])
+            feedback = feedback_per_cand[0]
+            if feedback:
                 logger.debug("Adding feedback to candidate %d: %s", cand_i, feedback)
-                candidates[cand_i].update_spad_acc_stats(feedback)
+                candidates[cand_i].update_hw_feedback(feedback)
         return candidates
 
     def filter_code_candidates(self, code_candidates: list[CodeCandidate], num_to_keep: int | None = None, cur_iter: int = None, num_iters: int = None) -> list:
@@ -397,7 +395,7 @@ class BeamSearchStrategy(SearchStrategy):
                  simulator: str,
                  give_score_feedback: float,
                  give_util_feedback: float,
-                 give_spad_acc_feedback: float,
+                 give_hw_feedback: float,
                  include_ancestors: bool,
                  plan_icl_examples: bool,
                  code_icl_examples: bool,
@@ -417,7 +415,7 @@ class BeamSearchStrategy(SearchStrategy):
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
                 ):
-        super().__init__(output_dir, hw_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        super().__init__(output_dir, hw_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -465,7 +463,7 @@ class BeamSearchStrategy(SearchStrategy):
             "shuffle_opts": False,
             "give_score_feedback": self.give_score_feedback,
             "give_util_feedback": self.give_util_feedback,
-            "give_spad_acc_feedback": self.give_spad_acc_feedback,
+            "give_hw_feedback": self.give_hw_feedback,
             "include_ancestors": self.include_ancestors,
             "plan_icl_examples": self.plan_icl_examples,
             "cur_iter": cur_iter,
@@ -639,10 +637,16 @@ class BeamSearchStrategy(SearchStrategy):
         }})
 
 def main():
-    # Generic search parameters
+    # Select backend, agent, and hardware configuration
     backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
     agent_name = None  # Options: "gemmini", "trn", "cuda" (defaults based on backend_name)
-    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; unused otherwise
+    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    # Hardware configuration
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    # Examples for other backends:
+    # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
+    # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
+
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
@@ -652,7 +656,7 @@ def main():
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
+    prob_type = "gpumode" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Beam search parameters
@@ -668,7 +672,7 @@ def main():
     dropout_menu_options = 0.2
     give_score_feedback = 1
     give_util_feedback = 0
-    give_spad_acc_feedback = 0
+    give_hw_feedback = 0
     include_ancestors = False
     plan_icl_examples = False
     code_icl_examples = False
@@ -700,6 +704,9 @@ def main():
             code_models[i] = code_models[i].replace("/", "_")
 
     output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
+    # Sanitize hw description for filesystem
+    hw_desc = hw_config.get_hw_description().replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_")
+    output_str += f"_{hw_desc}"
     for model in models:
         output_str += f"_{model[:15]}"
     if code_models is not None:
@@ -711,7 +718,7 @@ def main():
         output_str += f"_analyses{num_analyses}_plan{num_plan_candidates}_code{num_code_candidates}_beam{beam_size}"
     if translate_iters > 0:
         output_str += f"_translate{translate_iters}_{translate_perf_threshold}"
-    output_str += f"_score{give_score_feedback}_util{give_util_feedback}_spadacc{give_spad_acc_feedback}_ancestors{int(include_ancestors)}_preventdupe{prevent_duplicate_level}_planicl{int(plan_icl_examples)}_codeicl{int(code_icl_examples)}"
+    output_str += f"_score{give_score_feedback}_util{give_util_feedback}_hwfb{give_hw_feedback}_ancestors{int(include_ancestors)}_preventdupe{prevent_duplicate_level}_planicl{int(plan_icl_examples)}_codeicl{int(code_icl_examples)}"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -725,12 +732,12 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize hardware backend and agent ensembles
-    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, prob, models, code_models)
+    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
 
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, code_agent=code_agent)
+        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
     elif search_strategy == "beam":
-        optimizer = BeamSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
+        optimizer = BeamSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,

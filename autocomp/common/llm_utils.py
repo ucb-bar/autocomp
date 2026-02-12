@@ -37,8 +37,8 @@ anthropic_key_str = _get_key("ANTHROPIC_API_KEY")
 together_key_str = _get_key("TOGETHER_API_KEY")
 aws_access_key = _get_key("AWS_ACCESS_KEY_ID", default=None)
 aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
-google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
+google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
 
 # Log key availability
@@ -49,6 +49,7 @@ _key_status = {
     "AWS_ACCESS_KEY_ID": aws_access_key is not None,
     "AWS_SECRET_ACCESS_KEY": aws_secret_key is not None,
     "GOOGLE_CLOUD_PROJECT": google_cloud_project is not None,
+    "GOOGLE_CLOUD_LOCATION": google_cloud_location is not None,
 }
 _available = [k for k, v in _key_status.items() if v]
 _unavailable = [k for k, v in _key_status.items() if not v]

@@ -13,6 +13,12 @@ from autocomp.backend.hardware_backend import HardwareBackend
 KERNELBENCH_DIR = pathlib.Path("/scratch/charleshong/kernelbench/KernelBench")
 
 class KBHardwareBackend(HardwareBackend):
+    def get_backend_specific_rules(self) -> list[str]:
+        return [
+            "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
+            "Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.",
+        ]
+
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
         level_str = prob.prob_type.split("-")[1]
         ref_file = glob.glob(f"{KERNELBENCH_DIR}/KernelBench/{level_str}/{prob.prob_id}_*.py")[0]

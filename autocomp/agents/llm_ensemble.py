@@ -23,8 +23,8 @@ class LLMEnsemble:
 
         return job_assignments
 
-    def get_opt_menu_options(self):
-        return self.llms[0].get_opt_menu_options()
+    def get_opt_menu_options(self, prob=None):
+        return self.llms[0].get_opt_menu_options(prob)
 
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
         num_to_gen_per_agent = self.divide_work(num_to_gen)
@@ -43,7 +43,7 @@ class LLMEnsemble:
                               shuffle_opts: bool = False, 
                               give_score_feedback: float = 1,
                               give_util_feedback: float = 0,
-                              give_spad_acc_feedback: float = 1,
+                              give_hw_feedback: float = 1,
                               include_ancestors: bool = True,
                               plan_icl_examples: bool = False,
                               cur_iter: int = None,
@@ -64,7 +64,7 @@ class LLMEnsemble:
                                     shuffle_opts=shuffle_opts, 
                                     give_score_feedback=give_score_feedback,
                                     give_util_feedback=give_util_feedback,
-                                    give_spad_acc_feedback=give_spad_acc_feedback,
+                                    give_hw_feedback=give_hw_feedback,
                                     include_ancestors=include_ancestors,
                                     plan_icl_examples=plan_icl_examples,
                                     cur_iter=cur_iter,
@@ -83,7 +83,7 @@ class LLMEnsemble:
                                 shuffle_opts: bool = False, 
                                 give_score_feedback: float = 1,
                                 give_util_feedback: float = 0,
-                                give_spad_acc_feedback: float = 1,
+                                give_hw_feedback: float = 1,
                                 include_ancestors: bool = True,
                                 plan_icl_examples: bool = False,
                                 cur_iter: int = None,
@@ -103,7 +103,7 @@ class LLMEnsemble:
                                     shuffle_opts=shuffle_opts, 
                                     give_score_feedback=give_score_feedback,
                                     give_util_feedback=give_util_feedback,
-                                    give_spad_acc_feedback=give_spad_acc_feedback,
+                                    give_hw_feedback=give_hw_feedback,
                                     include_ancestors=include_ancestors,
                                     plan_icl_examples=plan_icl_examples,
                                     cur_iter=cur_iter,

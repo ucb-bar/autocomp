@@ -105,7 +105,7 @@ class LLMAgent:
                               shuffle_opts: bool = False, 
                               give_score_feedback: float = 1.0,
                               give_util_feedback: float = 0.0,
-                              give_spad_acc_feedback: float = 1.0,
+                              give_hw_feedback: float = 1.0,
                               include_ancestors: bool = True,
                               plan_icl_examples: bool = False,
                               cur_iter: int = None,
@@ -146,7 +146,7 @@ class LLMAgent:
             logger.info("Loaded %d optimization plans rather than generating new ones", len(loaded_cands))
             return loaded_cands
 
-        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_spad_acc_feedback < 1):
+        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_hw_feedback < 1):
             num_unique_prompts_per_cand = num_plans
         else:
             num_unique_prompts_per_cand = 1
@@ -158,7 +158,7 @@ class LLMAgent:
                 analysis = "" if analysis_lst is None else analysis_lst[c_i]
                 force_opt_menu = None if force_opt_menu_lst is None else force_opt_menu_lst[c_i]
                 prompt_text = self._get_propose_optimizations_prompt(candidate, prob, force_opt_menu, prompt_end, analysis, shuffle_opts,
-                                                                    give_score_feedback, give_util_feedback, give_spad_acc_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
+                                                                    give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, cur_iter, num_iters,
                                                                     dropout_menu_options, translate)
 
                 # Save full prompt

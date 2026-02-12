@@ -11,15 +11,20 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.backend.hardware_backend import HardwareBackend
 
-GPU_MODE_DIR = pathlib.Path("/scratch/charleshong/cuda-opt/reference-kernels/problems")
+GPUMODE_DIR = pathlib.Path("/scratch/charleshong/cuda-opt/reference-kernels/problems")
 prob_names = {
     0: "trimul",
 }
 paths_to_probs = {
-    0: GPU_MODE_DIR / "bioml" / "trimul",
+    0: GPUMODE_DIR / "bioml" / "trimul",
 }
 
 class GpuModeHardwareBackend(HardwareBackend):
+    def get_backend_specific_rules(self) -> list[str]:
+        return [
+            "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
+        ]
+
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str, benchmark_num: int = None) -> List[dict]:
         """
         simulator: "gpumode" or "gpumode-cli"
@@ -47,12 +52,17 @@ class GpuModeHardwareBackend(HardwareBackend):
                     f.write(code_str)
                 logger.info(f"Running command: {' '.join(cmd)} from cwd {prob_dir}")
                 try:
-                    result = subprocess.run(cmd, cwd=prob_dir, check=False, capture_output=True, text=True, timeout=60)
+                    result = subprocess.run(cmd, cwd=prob_dir, check=False, capture_output=True, text=True, timeout=120)
                 except Exception as e:
                     logger.info(f"Error running command: {e}")
                     results.append({"correct": False})
                     continue
                 stdout_output = result.stdout
+                if result.returncode != 0:
+                    logger.warning(f"Command returned non-zero exit code {result.returncode} for code {i}")
+                    logger.warning(f"stderr: {result.stderr[:500] if result.stderr else ''}")
+                    results.append({"correct": False})
+                    continue
                 if "status: fail" in stdout_output:
                     logger.info(f"Kernel did not pass correctness for code {i}")
                     results.append({"correct": False})

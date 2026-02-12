@@ -5,7 +5,9 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
-from autocomp.agents.gemmini.prompts import isa_prompt_conv, isa_prompt_admm, plan_prompt, gemmini_rules, tiling_example, if_example
+from autocomp.agents.gemmini.prompts import isa_prompt_conv, isa_prompt_admm, tiling_example, if_example
+from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
+from autocomp.backend.hardware_backend import HardwareBackend
 
 prob_macs_map = {
 "exo": [
@@ -28,12 +30,35 @@ prob_macs_map = {
 }
 
 class GemminiLLMAgent(LLMAgent):
-    def __init__(self, model, pe_dim):
+    def __init__(self, model, hw_config: GemminiHardwareConfig, hw_backend: HardwareBackend):
         super().__init__(model)
-        self.pe_dim = pe_dim
+        self.hw_config = hw_config
+        self.hw_backend = hw_backend
+        self.pe_dim = hw_config.pe_dim
 
     def __repr__(self):
         return f"GemminiLLMAgent({self.llm_client.model}, {self.pe_dim})"
+
+    def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
+        rules = []
+        rules.extend(self.hw_config.get_hw_config_specific_rules())
+        rules.extend(self.hw_backend.get_backend_specific_rules())
+        rules.extend([
+            "The rewritten program should be semantically equivalent to the original program",
+            "If modifying loops, modify other related loop bounds and adjust address and index calculations to ensure the code is still correct",
+            "If increasing loaded tile size, ensure that data is spread throughout the scratchpad across all relevant dimensions",
+            "If loading across new dimensions, add the loop indices of those dimensions to scratchpad address calculations",
+            "If increasing loaded tile size, update preload and compute instructions to match the new data layout",
+            "If increasing loaded tile size, update base scratchpad addresses to fit new tile size",
+        ])
+        if planning:
+            rules.append("Limit the scope of the plan to the selected optimization.")
+        if coding:
+            rules.append("Wrap the generated code with ```c at the beginning and ``` at the end.")
+        rules_text = "\nRules:\n"
+        for i, rule in enumerate(rules):
+            rules_text += f"{i+1}. {rule}\n"
+        return rules_text
 
     def get_opt_menu_options(self, prob: Prob):
         if "admm" in prob.prob_type:
@@ -85,10 +110,10 @@ class GemminiLLMAgent(LLMAgent):
         """
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim) + "\n"
-        elif self.pe_dim == 16:
+        else:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim) + "\n"
-        prompt_text += "Elements in the scratchpad are 1 byte, and elements in the accumulator are 4 bytes.\n"
-        prompt_text += "The scratchpad size is 256KB and the accumulator size is 64KB. The systolic array is 16 by 16.\n"
+        for rule in self.hw_config.get_hw_config_specific_rules():
+            prompt_text += rule + "\n"
         prompt_text += "The original code is as follows:\n" + candidate.code + "\n"
         prompt_text += "You are an optimizing compiler that produces high-performance Gemmini code. Based on this information, analyze the code and identify the single most impactful bottleneck increasing cycle count."
         # Save prompt
@@ -125,16 +150,15 @@ class GemminiLLMAgent(LLMAgent):
                                           shuffle_opts: bool, 
                                           give_score_feedback: float,
                                           give_util_feedback: float,
-                                          give_spad_acc_feedback: float,
+                                          give_hw_feedback: float,
                                           include_ancestors: bool,
                                           plan_icl_examples: bool,
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
                                           translate: bool,
-                                         ) -> list[str]:
+                                         ) -> str:
         # Select which menu options will appear
-        plan_prompt_texts = plan_prompt.PROMPT(self.pe_dim)
         menu_options_text = ""
         opt_lst = self.get_opt_menu_options(prob)
         if dropout_menu_options < 1 and not force_opt_menu:
@@ -143,15 +167,15 @@ class GemminiLLMAgent(LLMAgent):
             random.shuffle(opt_lst)
         include_util_feedback = random.random() < give_util_feedback
         include_score_feedback = random.random() < give_score_feedback
-        include_spad_acc_feedback = random.random() < give_spad_acc_feedback
+        include_hw_feedback = random.random() < give_hw_feedback
 
         parents_prompt = ""
         cur_cand = candidate
         while cur_cand is not None:
             # Go up to each parent and append to front of prompt
             # annotated_code = GemminiCode(cur_cand.code, self.pe_dim).annotate_perf()
-            if include_spad_acc_feedback:
-                parents_prompt = "\n".join(cur_cand.spad_acc_stats) + "\n" + parents_prompt
+            if include_hw_feedback:
+                parents_prompt = "\n".join(cur_cand.hw_feedback) + "\n" + parents_prompt
             if include_util_feedback and (cur_cand.score is not None):
                 macs = prob_macs_map[prob.prob_type][prob.prob_id]
                 theoretical_min_cycles = macs / (self.pe_dim ** 2)
@@ -172,10 +196,9 @@ class GemminiLLMAgent(LLMAgent):
             parents_prompt += "\n" + analysis
 
         # Initialize the prompt with the parents info
-        # prompt_text = ""
         if self.pe_dim == 4:
             prompt_text = "\nThe Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
-        elif self.pe_dim == 16:
+        else:
             prompt_text = "\nThe Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim)
         if plan_icl_examples:
             if "modify loop tiling" in opt_lst:
@@ -191,21 +214,27 @@ class GemminiLLMAgent(LLMAgent):
         # Now add the actual planning prompt
         for i, opt in enumerate(opt_lst):
             menu_options_text += f"{i+1}. {opt}\n"
-        prompt_text += plan_prompt_texts["PRE_OPT_TEXT"] + "\n" + menu_options_text + "\n" + plan_prompt_texts["POST_OPT_TEXT"]
+        prompt_text += """Please carefully review the program to identify any inefficiencies. 
+Cycles can be reduced by using the following optimizations:
+<optimizations>: \n""" + menu_options_text + "\n"
+
         if force_opt_menu:
             prompt_text += "Explain how to apply <optimization> " + str(force_opt_menu) + ": '" + opt_lst[force_opt_menu-1] + "' to the above code to reduce cycle count, and explain how it will improve performance."
         else:
-            prompt_text += plan_prompt_texts["FINAL_TEXT"]
+            prompt_text += "You are an optimizing compiler that generates high-performance Gemmini code. Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its cycle count. The plan should be specific to this code and explain how to change it."
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules(planning=True, coding=False)
 
         if prompt_end:
             logger.debug("Appended the following as prompt_end: '%s'", prompt_end)
             prompt_text += "\n" + prompt_end
         return prompt_text
 
-    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
-        elif self.pe_dim == 16:
+        else:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim)
 
         prompt_text += "\nThe original code is as follows:\n"
@@ -223,7 +252,7 @@ class GemminiLLMAgent(LLMAgent):
                 prompt_text += "\n" + if_example.PROMPT()
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += gemmini_rules.PROMPT()
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
 
         # prompt_text += "\nRespond with only the optimized code:"
         prompt_text += "Optimized code:"
@@ -233,13 +262,13 @@ class GemminiLLMAgent(LLMAgent):
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
-        elif self.pe_dim == 16:
+        else:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim)
         prompt_text += "\nYou are an optimizing compiler generating high-performance Gemmini code. Let's combine the following optimized code samples to extract the high-performance characteristics of each:\n"
         for i, c in enumerate(candidates):
             prompt_text += f"Sample {i+1}:\n{c.code}\n"
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += gemmini_rules.PROMPT()
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
         prompt_text += "Optimized code:"
         return prompt_text
