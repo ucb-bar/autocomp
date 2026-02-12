@@ -1,16 +1,30 @@
 # ⚙️ GPU MODE Backend Setup
 
-## Reference Kernels
+## Evaluation Modes
 
-First, clone [reference-kernels](https://github.com/gpu-mode/reference-kernels.git), the official problem set repository for the [GPU MODE Leaderboard](https://gpumode.com).
+The GPU MODE backend supports two evaluation methods, configured via the `simulator` parameter in `autocomp/search/search.py`:
+
+### `gpumode-local`
+
+Runs evaluation locally by calling the problem's `eval.py benchmark` script from the reference-kernels repo. This requires a local GPU and the appropriate PyTorch/CUDA environment. The generated code is written to `submission.py` inside the problem directory, and benchmark latencies are parsed from stdout.
+
+#### Reference Kernels
+
+This mode requires cloning [reference-kernels](https://github.com/gpu-mode/reference-kernels.git), the official problem set repository for the [GPU MODE Leaderboard](https://gpumode.com):
 
 ```sh
 git clone https://github.com/gpu-mode/reference-kernels.git
 ```
 
+Then, point `GPU_MODE_DIR` in `autocomp/backend/gpumode/gpumode_eval.py` to the `problems` directory inside your clone of the reference-kernels repository.
+
+### `gpumode-cli`
+
+Runs evaluation remotely via the `popcorn-cli` tool, which submits code to the GPU MODE cloud infrastructure for benchmarking. Install `popcorn-cli` by following the [Getting Started guide](https://gpu-mode.github.io/discord-cluster-manager/docs/intro/). Submissions are sent to the leaderboard specified in the CLI command, and results are written to an output file that is parsed for latency metrics. No local clone of reference-kernels is needed.
+
 ## Autocomp
 
-In a different location, clone Autocomp and set up its Python dependencies:
+Clone Autocomp and set up its Python dependencies:
 
 ```sh
 git clone https://github.com/ucb-bar/autocomp
@@ -18,11 +32,9 @@ cd autocomp
 pip install -e .
 ```
 
-Then, point `GPU_MODE_DIR` in `autocomp/backend/gpumode/gpumode_eval.py` to the `problems` directory inside your clone of the reference-kernels repository.
-
 ### Adding a Problem
 
-To register a new problem, add entries to the `prob_names` and `paths_to_probs` dicts at the top of `gpumode_eval.py`. For example, the `trimul` problem from the BioML competition is registered as:
+Register a new problem by adding entries to the `prob_names` and `paths_to_probs` dicts at the top of `gpumode_eval.py`. For example, the `trimul` problem from the BioML competition is registered as:
 
 ```python
 prob_names = {
@@ -33,19 +45,7 @@ paths_to_probs = {
 }
 ```
 
-Place the initial (unoptimized) solution file in `sols/gpumode/` following the naming convention `{prob_id}_{prob_name}.py` (e.g., `sols/gpumode/0_trimul.py`).
-
-## Evaluation Modes
-
-The GPU MODE backend supports two evaluation methods, configured via the `simulator` parameter in `autocomp/search/search.py`:
-
-### `gpumode-local`
-
-Runs evaluation locally by calling the problem's `eval.py benchmark` script from the reference-kernels repo. This requires a local GPU and the appropriate PyTorch/CUDA environment. The generated code is written to `submission.py` inside the problem directory, and benchmark latencies are parsed from stdout.
-
-### `gpumode-cli`
-
-Runs evaluation remotely via the `popcorn-cli` tool, which submits code to the GPU MODE cloud infrastructure for benchmarking. Install `popcorn-cli` by following the [Getting Started guide](https://gpu-mode.github.io/discord-cluster-manager/docs/intro/). Submissions are sent to the leaderboard specified in the CLI command, and results are written to an output file that is parsed for latency metrics.
+Place the initial (unoptimized) solution file in `sols/gpumode/` following the naming convention `{prob_id}_{prob_name}.py` (e.g., `sols/gpumode/0_trimul.py`). Make sure it implements the function `custom_kernel()`.
 
 ## Running Autocomp
 
