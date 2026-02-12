@@ -635,28 +635,30 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "gpumode"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "cuda"  # Options: "gemmini", "trn", "cuda"
-    simulator = "gpumode-local" # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
+    agent_name = "trn"  # Options: "gemmini", "trn", "cuda"
+    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
-    hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
-    # Examples for other backends:
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
 
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    models = ["gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    # code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
-    code_models = None
+    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
     prob_type = "gpumode" # see README.md or sols directory for available problems
     prob_id = 0
+
+    # Reimplement failed candidates
+    # Only works for trn
+    reimplement_failed = False
 
     # Beam search parameters
     num_plan_candidates=5
@@ -691,10 +693,6 @@ def main():
     # 2: prevent candidates with any parents in common (any nodes below root have branching factor 1)
     prevent_duplicate_level = 0
     
-    # Reimplement failed candidates
-    # Only works for trn
-    reimplement_failed = True
-
     # Sanitize model names for file system compatibility
     for i in range(len(models)):
         models[i] = models[i].replace("/", "_")

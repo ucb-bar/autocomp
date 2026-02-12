@@ -58,14 +58,18 @@ class GpuModeEvalBackend(EvalBackend):
                     results.append({"correct": False})
                     continue
                 stdout_output = result.stdout
+                with open(tmp_files_dir / f"code_{i}_output.txt", "w") as f:
+                    f.write("=== STDOUT ===\n")
+                    f.write(stdout_output)
+                    f.write("\n=== STDERR ===\n")
+                    f.write(result.stderr)
                 if result.returncode != 0:
-                    logger.warning(f"Command returned non-zero exit code {result.returncode} for code {i}")
-                    logger.warning(f"stderr: {result.stderr[:500] if result.stderr else ''}")
-                    results.append({"correct": False})
+                    logger.info(f"Command returned non-zero exit code {result.returncode} for code {i}")
+                    results.append({"correct": False, "stdout": stdout_output, "stderr": result.stderr})
                     continue
                 if "status: fail" in stdout_output:
                     logger.info(f"Kernel did not pass correctness for code {i}")
-                    results.append({"correct": False})
+                    results.append({"correct": False, "stdout": stdout_output, "stderr": result.stderr})
                     continue
                 # If no failures
                 # Extract the number of benchmarks from "benchmark-count: N"
@@ -84,7 +88,7 @@ class GpuModeEvalBackend(EvalBackend):
                 # Make sure we have all the test means
                 if len(test_latencies) != num_bmarks:
                     logger.info(f"Kernel did not pass correctness for code {i}")
-                    results.append({"correct": False})
+                    results.append({"correct": False, "stdout": stdout_output, "stderr": result.stderr})
                     continue
 
             elif simulator == "gpumode-cli":
@@ -118,7 +122,7 @@ class GpuModeEvalBackend(EvalBackend):
                     result = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
                 except Exception as e:
                     logger.info(f"Error running command: {e}")
-                    results.append({"correct": False})
+                    results.append({"correct": False, "stdout": stdout_output, "stderr": result.stderr})
                     continue
                 
                 # Wait for output file to be created, then kill the process
@@ -156,6 +160,7 @@ class GpuModeEvalBackend(EvalBackend):
                         results.append({
                             "correct": False,
                             "stdout": stdout_output,
+                            "stderr": result.stderr,
                         })
                         continue
                     # ⏱ 306 ± 17.0 µs
@@ -170,7 +175,7 @@ class GpuModeEvalBackend(EvalBackend):
                         test_latencies = test_latencies[len(test_latencies) // 2:]
                 if not test_latencies:
                     logger.info(f"Kernel did not pass correctness for code {i}")
-                    results.append({"correct": False, "stdout": stdout_output})
+                    results.append({"correct": False, "stdout": stdout_output, "stderr": result.stderr})
                     continue
 
             latency = round(math.prod(test_latencies) ** (1/len(test_latencies)), 3)  # geomean
