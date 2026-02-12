@@ -8,7 +8,7 @@
 
 ## Configuration
 
-Edit these constants at the top of `saturn_eval.py`:
+Add/Edit these constants at the top of `/autocomp/backend/saturn/saturn_eval.py`:
 
 ```python
 # Paths
@@ -18,7 +18,7 @@ SATURN_ZEPHYR_BASE = "/scratch/charleshong/zephyr-chipyard-sw"  # Zephyr install
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
 SATURN_COMPILE_TIMEOUT = 120
-SATURN_FIRESIM_TIMEOUT = 300.0
+SATURN_FIRESIM_TIMEOUT = 500.0
 SATURN_FIRESIM_INDIVIDUAL_TIMEOUT = 500.0
 ```
 
@@ -70,11 +70,11 @@ bash scripts/install_submodules.sh
 bash scripts/install_toolchain_sdk.sh
 ```
 
-Update `SATURN_ZEPHYR_BASE` in `saturn_eval.py` to point to your installation.
+As mentioned above, make sure `SATURN_ZEPHYR_BASE` in `saturn_eval.py` point to your installation.
 
 ### Workload Project Structure
 
-Inside of `zephyr-chipyard-sw`, we create a template app for Autocomp to use when compiling RVV code for Saturn:
+Inside of `/autocomp/backend/saturn`, we provide a template app `rvv_bench` for Autocomp to use when compiling RVV code for Saturn:
 
 ```
 rvv_bench/            # Name of your app
@@ -91,7 +91,10 @@ rvv_bench/            # Name of your app
 | `prj.conf` | Config options (e.g., `CONFIG_RISCV_ISA_EXT_V=y`) |
 | `main.c` | Placeholder (replaced by test template during build) |
 
-See the [samples](https://github.com/ucb-bar/zephyr-chipyard-sw/tree/dev/samples/) directory in Zephyr for example app templates. Update `SATURN_ZEPHYR_APP_PATH` in `saturn_eval.py` to point to your benchmark app.
+See the [samples](https://github.com/ucb-bar/zephyr-chipyard-sw/tree/dev/samples/) directory in Zephyr for other example app templates. Update `SATURN_ZEPHYR_APP_PATH` in `saturn_eval.py` to point to your benchmark app.
+```
+SATURN_ZEPHYR_APP_PATH = pathlib.Path("/scratch/charleshong/zephyr-chipyard-sw/rvv_bench")
+```
 
 ## Chipyard
 
@@ -105,13 +108,13 @@ FireSim is included as a Chipyard submodule but requires additional configuratio
 
 ```bash
 cd chipyard/sims/firesim
-firesim managerinit --platform <your_platform>
 source sourceme-manager.sh
+firesim managerinit --platform <your_platform> # e.g., xilinx_alveo_u250
 ```
 
 ### Adding a Saturn Target Configuration for Bitstream
 
-Add your Saturn configuration to `chipyard/generators/firechip/chip/src/main/TargetConfigs.scala`. An example Saturn Configuration to add to the file is:
+Add your Saturn configuration to `chipyard/generators/firechip/chip/src/main/scala/TargetConfigs.scala`. An example Saturn Configuration to add to the file is:
 
 ```scala
 class FireSimREFV512D256RocketConfig extends Config(
@@ -124,7 +127,7 @@ Then update the FireSim build configuration files:
 - `firesim/deploy/config_build_recipes.yaml`
 - `firesim/deploy/config_build.yaml`
 
-An example build recipe can be found in [config_build_recipes_example.yaml](config_build_recipes_example.yaml). In `config_build.yaml`, simply add the name of the build recipe under the list of `builds_to_run`.
+An example build recipe can be found in [config_build_recipes_example.yaml](config_build_recipes_example.yaml). In `config_build.yaml`, change `default_build_dir` to a directory of your choice and update the name of the build recipe under the list of `builds_to_run`.
 
 Then run the bitstream build. Make sure that FPGA-related toolchains are available in your PATH.
 
@@ -150,7 +153,7 @@ Create the directory `deploy/workloads/saturn` and the file `deploy/workloads/sa
         {
             "name": "saturn_test-baremetal",
             "bootbinary": "saturn_test-baremetal",
-            "rootfs": "../../../../../software/firemarshal/boards/default/installers/     firesim/dummy.rootfs"
+            "rootfs": "../../../../../software/firemarshal/boards/default/installers/firesim/dummy.rootfs"
         }
     ]
 }
