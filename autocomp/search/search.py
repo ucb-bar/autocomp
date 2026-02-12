@@ -635,11 +635,11 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "gpumode"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "cuda"  # Options: "gemmini", "trn", "cuda"
-    simulator = "gpumode-local" # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
+    agent_name = "trn"  # Options: "gemmini", "trn", "cuda"
+    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
@@ -648,14 +648,12 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    # code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
-    models = ["gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "gcp::gemini-3-flash-preview"]  # Models for planning
-    code_models = None # Models for code implementation (None means use same as planning models)
+    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "gpumode" # see README.md or sols directory for available problems
+    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Reimplement failed candidates
@@ -663,7 +661,7 @@ def main():
     reimplement_failed = False
 
     # Beam search parameters
-    num_plan_candidates=4
+    num_plan_candidates=5
     num_code_candidates=2
     beam_size=6
 
@@ -702,22 +700,40 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}_{simulator}"
+    output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
+    if simulator is not None:
+        output_str += f"_{simulator}"
     # Sanitize hw description for filesystem
     hw_desc = hw_config.get_hw_description().replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_")
     output_str += f"_{hw_desc}"
     for model in models:
-        output_str += f"_{model[:15]}"
+        output_str += f"_{model[:20]}"
     if code_models is not None:
         output_str += "_code"
         for model in code_models:
-            output_str += f"_{model[:15]}"
-    output_str += f"_dropout{dropout_menu_options}"
+            output_str += f"_{model[:20]}"
+    if dropout_menu_options:
+        output_str += f"_do{dropout_menu_options}"
     if search_strategy == "beam":
-        output_str += f"_analyses{num_analyses}_plan{num_plan_candidates}_code{num_code_candidates}_beam{beam_size}"
+        if num_analyses:
+            output_str += f"_an{num_analyses}"
+        output_str += f"_p{num_plan_candidates}_c{num_code_candidates}_b{beam_size}"
     if translate_iters > 0:
-        output_str += f"_translate{translate_iters}_{translate_perf_threshold}"
-    output_str += f"_score{give_score_feedback}_util{give_util_feedback}_hwfb{give_hw_feedback}_ancestors{int(include_ancestors)}_preventdupe{prevent_duplicate_level}_planicl{int(plan_icl_examples)}_codeicl{int(code_icl_examples)}"
+        output_str += f"_tr{translate_iters}_{translate_perf_threshold}"
+    if give_score_feedback:
+        output_str += f"_score{give_score_feedback}"
+    if give_util_feedback:
+        output_str += f"_util{give_util_feedback}"
+    if give_hw_feedback:
+        output_str += f"_hwfb{give_hw_feedback}"
+    if include_ancestors:
+        output_str += f"_anc1"
+    if prevent_duplicate_level:
+        output_str += f"_pd{prevent_duplicate_level}"
+    if plan_icl_examples:
+        output_str += f"_picl1"
+    if code_icl_examples:
+        output_str += f"_cicl1"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
