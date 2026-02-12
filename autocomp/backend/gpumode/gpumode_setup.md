@@ -1,4 +1,4 @@
-# ⚙️ GPU Mode Backend Setup
+# ⚙️ GPU MODE Backend Setup
 
 ## Reference Kernels
 
@@ -37,7 +37,7 @@ Place the initial (unoptimized) solution file in `sols/gpumode/` following the n
 
 ## Evaluation Modes
 
-The backend supports two evaluation simulators, configured via the `simulator` parameter in `autocomp/search/search.py`:
+The GPU MODE backend supports two evaluation methods, configured via the `simulator` parameter in `autocomp/search/search.py`:
 
 ### `gpumode-local`
 
