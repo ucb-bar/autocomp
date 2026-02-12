@@ -635,11 +635,11 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda"
-    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    backend_name = "gpumode"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
+    agent_name = "cuda"  # Options: "gemmini", "trn", "cuda"
+    simulator = "gpumode-local" # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
@@ -655,7 +655,7 @@ def main():
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
+    prob_type = "gpumode" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Reimplement failed candidates
@@ -663,7 +663,7 @@ def main():
     reimplement_failed = False
 
     # Beam search parameters
-    num_plan_candidates=3
+    num_plan_candidates=4
     num_code_candidates=2
     beam_size=6
 

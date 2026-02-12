@@ -25,7 +25,7 @@ class GpuModeEvalBackend(EvalBackend):
             "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
             "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
             "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
-            "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
+            "Keep the same function name and signature as the original program for custom_kernel() (helper functions can be renamed, deleted, etc.).",
         ]
 
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str, benchmark_num: int = None) -> List[dict]:
