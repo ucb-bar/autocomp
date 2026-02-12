@@ -9,7 +9,7 @@ import sys
 
 from autocomp.common import logger
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 GPUMODE_DIR = pathlib.Path("/scratch/charleshong/cuda-opt/reference-kernels/problems")
 prob_names = {
@@ -19,7 +19,7 @@ paths_to_probs = {
     0: GPUMODE_DIR / "bioml" / "trimul",
 }
 
-class GpuModeHardwareBackend(HardwareBackend):
+class GpuModeEvalBackend(EvalBackend):
     def get_backend_specific_rules(self) -> list[str]:
         return [
             "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
@@ -187,5 +187,5 @@ if __name__ == "__main__":
         benchmark_num = None
     # code_strs = [pathlib.Path("/scratch/charleshong/kernelbench/autocomp-kb/sols/gpumode/4_nvfp4_gemv.py").read_text()]
     code_strs = [pathlib.Path(args[1]).read_text()]
-    results = GpuModeHardwareBackend().evaluate_code(prob, code_strs, "gpumode-cli", benchmark_num)
+    results = GpuModeEvalBackend().evaluate_code(prob, code_strs, "gpumode-cli", benchmark_num)
     print(results)

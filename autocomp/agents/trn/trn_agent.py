@@ -8,14 +8,14 @@ from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.trn.prompts import fusion_example
 from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
 from autocomp.hw_config.trn_config import TrnHardwareConfig
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 
 class TrnLLMAgent(LLMAgent):
-    def __init__(self, model, hw_config: TrnHardwareConfig, hw_backend: HardwareBackend):
+    def __init__(self, model, hw_config: TrnHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
         self.hw_config = hw_config
-        self.hw_backend = hw_backend
+        self.eval_backend = eval_backend
         self.nki_isa_generator = NkiIsaGenerator()
 
     def __repr__(self):
@@ -87,7 +87,7 @@ class TrnLLMAgent(LLMAgent):
     def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
         rules = []
         rules.extend(self.hw_config.get_hw_config_specific_rules())
-        rules.extend(self.hw_backend.get_backend_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
                  "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
                 #  "Use proper NKI syntax and decorators (@nki.jit).",

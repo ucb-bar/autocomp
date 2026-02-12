@@ -8,7 +8,7 @@ import shutil
 
 from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
 
 FP32_4PE_CHIPYARD_PATH = None
@@ -314,7 +314,7 @@ def parse_spad_acc_utilization(spike_output: str, pe_dim: int, spad_size_kb: int
     num_acc_rows = (acc_size_kb * 1024 / (pe_dim * 4))
     return len(spad_addresses_used) / num_spad_rows, len(acc_addresses_used) / num_acc_rows
 
-class GemminiHardwareBackend(HardwareBackend):
+class GemminiEvalBackend(EvalBackend):
     def __init__(self, hw_config: GemminiHardwareConfig):
         self.hw_config = hw_config
         self.pe_dim = hw_config.pe_dim
@@ -341,7 +341,7 @@ class GemminiHardwareBackend(HardwareBackend):
         self.gemmini_sw_path = self.gemmini_path / "software" / "gemmini-rocc-tests"
 
     def __repr__(self):
-        return f"GemminiHardwareBackend({self.pe_dim})"
+        return f"GemminiEvalBackend({self.pe_dim})"
 
     def get_backend_specific_rules(self) -> list[str]:
         return [
@@ -510,6 +510,6 @@ if __name__ == "__main__":
     prob = Prob("admm-multifunction", 2)
     files = [SOLS_DIR / "admm-multifunction" / "sol2_5249.c"]
     code_strs = [file.read_text() for file in files]
-    stats = GemminiHardwareBackend(4).evaluate_code(prob, code_strs, "firesim")
-    # stats = GemminiHardwareBackend(4).get_spad_acc_utilization(prob, code_strs)
+    stats = GemminiEvalBackend(4).evaluate_code(prob, code_strs, "firesim")
+    # stats = GemminiEvalBackend(4).get_spad_acc_utilization(prob, code_strs)
     print(stats)

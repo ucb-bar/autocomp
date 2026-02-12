@@ -8,62 +8,59 @@ from autocomp.common import logger, SOLS_DIR
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 # Register LLM agents
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
 # ... register more LLM agents here ...
-# Register hardware backends
-from autocomp.backend.gemmini.gemmini_eval import GemminiHardwareBackend
-from autocomp.backend.kernelbench.kb_eval import KBHardwareBackend, KERNELBENCH_DIR
-from autocomp.backend.gpumode.gpumode_eval import GpuModeHardwareBackend
-from autocomp.backend.trn.trn_eval import TrnHardwareBackend
-# ... register more hardware backends here ...
+# Register eval backends
+from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
+from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
+from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
+from autocomp.backend.trn.trn_eval import TrnEvalBackend
+# ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig
 
 
 def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: "Prob", models: list, code_models: list = None):
-    """Create hardware backend and agent ensembles.
+    """Create eval backend and agent ensembles.
     
     Args:
-        backend_name: Which backend to use for evaluation.
+        backend_name: Which eval backend to use.
         agent_name: Which agent type. Defaults based on backend_name (kernelbench/gpumode -> cuda).
         hw_config: A HardwareConfig instance describing the target hardware.
         prob: The problem to optimize.
         models: List of model strings for planning.
         code_models: Optional list of model strings for code implementation.
     """
-    if not agent_name:
-        agent_name = "cuda" if backend_name in ["kernelbench", "gpumode"] else backend_name
-    
-    # Create hardware backend
+    # Create eval backend
     if backend_name == "kernelbench":
-        hw = KBHardwareBackend()
+        eval_backend = KBEvalBackend()
     elif backend_name == "gpumode":
-        hw = GpuModeHardwareBackend()
+        eval_backend = GpuModeEvalBackend()
     elif backend_name == "gemmini":
-        hw = GemminiHardwareBackend(hw_config)
+        eval_backend = GemminiEvalBackend(hw_config)
     elif backend_name == "trn":
-        hw = TrnHardwareBackend()
+        eval_backend = TrnEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
     
     # Create agents
     if agent_name == "cuda":
-        agent = LLMEnsemble([CudaLLMAgent(m, hw_config, hw) for m in models])
-        code_agent = LLMEnsemble([CudaLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([CudaLLMAgent(m, hw_config, eval_backend) for m in models])
+        code_agent = LLMEnsemble([CudaLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     elif agent_name == "gemmini":
-        agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, hw) for m in models])
-        code_agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, eval_backend) for m in models])
+        code_agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     elif agent_name == "trn":
-        agent = LLMEnsemble([TrnLLMAgent(m, hw_config, hw) for m in models])
-        code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, hw) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
+        code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
-    return hw, agent, code_agent
+    return eval_backend, agent, code_agent
 
 
 def load_initial_code(backend_name: str, prob: "Prob") -> str:
@@ -110,7 +107,7 @@ class SearchStrategy:
     """
     def __init__(self, 
                  output_dir: pathlib.Path,
-                 hw_backend: HardwareBackend,
+                 eval_backend: EvalBackend,
                  agent: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
@@ -134,7 +131,7 @@ class SearchStrategy:
         self.prob = prob
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.hw_backend = hw_backend
+        self.eval_backend = eval_backend
         self.metric = metric
         self.simulator = simulator
         self.give_score_feedback = give_score_feedback
@@ -184,7 +181,7 @@ class SearchStrategy:
                 with open(save_dir / f"code_{i}_result.txt", "r") as f:
                     per_cand_stats.append(json.load(f))
         else:
-            per_cand_stats = self.hw_backend.evaluate_code(self.prob, [candidate.code for candidate in candidates], self.simulator)
+            per_cand_stats = self.eval_backend.evaluate_code(self.prob, [candidate.code for candidate in candidates], self.simulator)
 
             # Save stats
             if save_dir is not None:
@@ -222,7 +219,7 @@ class SearchStrategy:
         for cand_i in range(len(candidates)):
             if candidates[cand_i].hw_feedback: # If already has feedback, skip
                 continue
-            feedback_per_cand = self.hw_backend.get_hw_feedback(self.prob, [candidates[cand_i].code])
+            feedback_per_cand = self.eval_backend.get_hw_feedback(self.prob, [candidates[cand_i].code])
             feedback = feedback_per_cand[0]
             if feedback:
                 logger.debug("Adding feedback to candidate %d: %s", cand_i, feedback)
@@ -387,7 +384,7 @@ class BeamSearchStrategy(SearchStrategy):
     """
     def __init__(self,
                  output_dir: pathlib.Path,
-                 hw_backend: HardwareBackend,
+                 eval_backend: EvalBackend,
                  agent: LLMEnsemble,
                  orig_code: str,
                  prob: Prob,
@@ -415,7 +412,7 @@ class BeamSearchStrategy(SearchStrategy):
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
                 ):
-        super().__init__(output_dir, hw_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -637,12 +634,13 @@ class BeamSearchStrategy(SearchStrategy):
         }})
 
 def main():
-    # Select backend, agent, and hardware configuration
-    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = None  # Options: "gemmini", "trn", "cuda" (defaults based on backend_name)
-    simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    # Select evaluation backend, LLM agent, and hardware config
+    backend_name = "gpumode"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
+    agent_name = "cuda"  # Options: "gemmini", "trn", "cuda"
+    simulator = "gpumode-local" # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    # hw_config = TrnHardwareConfig("trn1.2xlarge")
+    hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # Examples for other backends:
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
@@ -650,9 +648,10 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    models = ["gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    # code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    code_models = None
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
@@ -731,13 +730,13 @@ def main():
     prob = Prob(prob_type, prob_id)
     initial_code = load_initial_code(backend_name, prob)
 
-    # Initialize hardware backend and agent ensembles
-    hw_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
+    # Initialize eval backend and agent ensembles
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
 
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
     elif search_strategy == "beam":
-        optimizer = BeamSearchStrategy(output_dir, hw_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
+        optimizer = BeamSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,

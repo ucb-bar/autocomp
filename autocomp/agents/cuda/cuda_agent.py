@@ -7,13 +7,13 @@ from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.cuda.prompts import tensor_examples
 from autocomp.hw_config.cuda_config import CudaHardwareConfig
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 class CudaLLMAgent(LLMAgent):
-    def __init__(self, model, hw_config: CudaHardwareConfig, hw_backend: HardwareBackend):
+    def __init__(self, model, hw_config: CudaHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
         self.hw_config = hw_config
-        self.hw_backend = hw_backend
+        self.eval_backend = eval_backend
 
     def _get_convert_to_cuda_menu_options(self) -> list[str]:
         return [
@@ -59,7 +59,7 @@ class CudaLLMAgent(LLMAgent):
             "Use cuBLASLt for Tensor Core GEMM operations",
             "Use cuBLASLt, cuBLAS, or cuDNN for GEMM and convolution operations instead of custom kernels",
             "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
-            "Use PyTorch's tensor core APIs (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores",
+            "Use PyTorch's tensor core APIs (torch.eval_backends.cuda.matmul.allow_tf32, torch.eval_backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores",
             "Use lower precision (e.g. bfloat16, float16, float8_e4m3fn) for computations",
             "Quantize weights or activations where accuracy permits (e.g. bfloat16)",
             "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
@@ -108,7 +108,7 @@ class CudaLLMAgent(LLMAgent):
     def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
         rules = []
         rules.extend(self.hw_config.get_hw_config_specific_rules())
-        rules.extend(self.hw_backend.get_backend_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
             "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
             "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",

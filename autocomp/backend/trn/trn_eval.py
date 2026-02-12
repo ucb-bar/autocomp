@@ -8,9 +8,9 @@ from datetime import datetime
 
 from autocomp.common import logger, TESTS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
-class TrnHardwareBackend(HardwareBackend):
+class TrnEvalBackend(EvalBackend):
     def _extract_latency(self, stdout: str) -> float:
         """Extract latency from stdout using pattern 'Latency: <latency> ms'"""
         lines = stdout.split('\n')

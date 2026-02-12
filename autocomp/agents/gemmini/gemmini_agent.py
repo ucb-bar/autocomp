@@ -7,7 +7,7 @@ from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.gemmini.prompts import isa_prompt_conv, isa_prompt_admm, tiling_example, if_example
 from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 prob_macs_map = {
 "exo": [
@@ -30,10 +30,10 @@ prob_macs_map = {
 }
 
 class GemminiLLMAgent(LLMAgent):
-    def __init__(self, model, hw_config: GemminiHardwareConfig, hw_backend: HardwareBackend):
+    def __init__(self, model, hw_config: GemminiHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
         self.hw_config = hw_config
-        self.hw_backend = hw_backend
+        self.eval_backend = eval_backend
         self.pe_dim = hw_config.pe_dim
 
     def __repr__(self):
@@ -42,7 +42,7 @@ class GemminiLLMAgent(LLMAgent):
     def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
         rules = []
         rules.extend(self.hw_config.get_hw_config_specific_rules())
-        rules.extend(self.hw_backend.get_backend_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
             "The rewritten program should be semantically equivalent to the original program",
             "If modifying loops, modify other related loop bounds and adjust address and index calculations to ensure the code is still correct",

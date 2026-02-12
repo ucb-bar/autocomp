@@ -8,11 +8,11 @@ from datetime import datetime
 
 from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 KERNELBENCH_DIR = pathlib.Path("/scratch/charleshong/kernelbench/KernelBench")
 
-class KBHardwareBackend(HardwareBackend):
+class KBEvalBackend(EvalBackend):
     def get_backend_specific_rules(self) -> list[str]:
         return [
             "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
@@ -65,7 +65,7 @@ def main():
     prob = Prob(prob_type, prob_id)
     files = glob.glob(str(SOLS_DIR / prob_type / f"{prob_id}_*.py"))
     code_strs = [pathlib.Path(file).read_text() for file in files]
-    stats = KBHardwareBackend().evaluate_code(prob, code_strs, "kernelbench")
+    stats = KBEvalBackend().evaluate_code(prob, code_strs, "kernelbench")
     print(stats)
 
 if __name__ == "__main__":

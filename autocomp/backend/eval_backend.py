@@ -2,7 +2,7 @@ from typing import List
 
 from autocomp.search.prob import Prob
 
-class HardwareBackend:
+class EvalBackend:
     def __init__(self):
         pass
 
