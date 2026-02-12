@@ -45,6 +45,8 @@ class GemminiLLMAgent(LLMAgent):
         rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
             "The rewritten program should be semantically equivalent to the original program",
+            "All code must be inside the test() function",
+            "Do not use C preprocessing directives (#ifdef, #define, etc.)",
             "If modifying loops, modify other related loop bounds and adjust address and index calculations to ensure the code is still correct",
             "If increasing loaded tile size, ensure that data is spread throughout the scratchpad across all relevant dimensions",
             "If loading across new dimensions, add the loop indices of those dimensions to scratchpad address calculations",

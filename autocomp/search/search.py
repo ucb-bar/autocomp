@@ -648,12 +648,14 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    # models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
+    # code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    models = ["gcp::gemini-3-pro-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "gcp::gemini-3-flash-preview"]  # Models for planning
+    code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "gpumode" # see README.md or sols directory for available problems
+    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Reimplement failed candidates
@@ -661,7 +663,7 @@ def main():
     reimplement_failed = False
 
     # Beam search parameters
-    num_plan_candidates=5
+    num_plan_candidates=3
     num_code_candidates=2
     beam_size=6
 

@@ -7,7 +7,7 @@ class TrnHardwareConfig(HardwareConfig):
 
     def get_hw_config_specific_rules(self) -> list[str]:
         return [
-            f"You are targeting an {self.instance_type} instance.",
+            f"You are targeting a {self.instance_type} instance.",
         ]
 
     def get_hw_description(self) -> str:

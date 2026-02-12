@@ -16,6 +16,8 @@ class KBEvalBackend(EvalBackend):
     def get_backend_specific_rules(self) -> list[str]:
         return [
             "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
+            "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
+            "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
             "Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.",
         ]
 

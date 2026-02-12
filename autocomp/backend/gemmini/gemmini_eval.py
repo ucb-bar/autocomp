@@ -343,12 +343,6 @@ class GemminiEvalBackend(EvalBackend):
     def __repr__(self):
         return f"GemminiEvalBackend({self.pe_dim})"
 
-    def get_backend_specific_rules(self) -> list[str]:
-        return [
-            "All code must be inside the test() function",
-            "Do not use C preprocessing directives (#ifdef, #define, etc.)",
-        ]
-
     def get_hw_feedback(self, prob: Prob, code_strs: list[str]) -> list[list[str]]:
         """Return per-candidate spad/acc utilization feedback strings."""
         stats_list = self.get_spad_acc_utilization(prob, code_strs)

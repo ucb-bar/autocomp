@@ -111,8 +111,6 @@ class CudaLLMAgent(LLMAgent):
         rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
             "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-            "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
-            "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
             "Do not add fallback paths that revert to the original code.",
         ])
         if planning:

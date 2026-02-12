@@ -90,12 +90,10 @@ class TrnLLMAgent(LLMAgent):
         rules.extend(self.eval_backend.get_backend_specific_rules())
         rules.extend([
                  "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-                #  "Use proper NKI syntax and decorators (@nki.jit).",
-                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+                 "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
                  "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
-                #  "Try to use the nki.language and nki.isa functions defined above.",
                 ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
