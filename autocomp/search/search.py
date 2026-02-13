@@ -234,7 +234,7 @@ class SearchStrategy:
         # Filter out incorrect candidates
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
 
-        keep_factor = self.translate_perf_threshold if cur_iter <= self.translate_iters else 1
+        keep_factor = self.translate_perf_threshold if cur_iter <= self.translate_iters else 1.1
         # if cur_iter is not None and num_iters is not None:
         #     if cur_iter <= 2:
         #         keep_factor = 1.5
@@ -648,20 +648,20 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["openai::o4-mini", "openai::gpt-5.2", "gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview", "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"]  # Models for planning
-    code_models = ["gcp::gemini-3-pro-preview", "openai::gpt-5.2"] # Models for code implementation (None means use same as planning models)
+    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "aws::moonshotai.kimi-k2.5"]  # Models for planning
+    code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 8
+    iterations = 10
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 0
+    prob_id = 2
 
     # Reimplement failed candidates
     # Only works for trn
-    reimplement_failed = False
+    reimplement_failed = True
 
     # Beam search parameters
-    num_plan_candidates=5
+    num_plan_candidates=6
     num_code_candidates=2
     beam_size=6
 
