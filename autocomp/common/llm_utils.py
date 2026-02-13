@@ -4,6 +4,7 @@ import asyncio
 import random
 
 import backoff
+import boto3
 import openai
 from openai import OpenAI, AsyncOpenAI, RateLimitError, APITimeoutError, InternalServerError
 from google import genai
@@ -37,6 +38,7 @@ anthropic_key_str = _get_key("ANTHROPIC_API_KEY")
 together_key_str = _get_key("TOGETHER_API_KEY")
 aws_access_key = _get_key("AWS_ACCESS_KEY_ID", default=None)
 aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
+aws_region = _get_key("AWS_REGION", default="us-west-2")
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
 google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
@@ -305,12 +307,21 @@ class LLMClient():
         #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
-        elif self.provider == "aws" and "claude" in model:
+        elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
             self.async_client = anthropic.AsyncAnthropicBedrock(
                 aws_access_key=aws_access_key,
                 aws_secret_key=aws_secret_key,
-                aws_region="us-west-2",
+                aws_region=aws_region,
             )
+        elif self.provider == "aws":
+            # Generic Bedrock models (Llama, Mistral, Nova, etc.) via Converse API
+            self._bedrock_client = boto3.client(
+                "bedrock-runtime",
+                region_name=aws_region,
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key,
+            )
+            self.provider = "aws-bedrock"
         elif self.provider == "together":
             self.async_client = AsyncTogether(api_key=together_key_str)
         elif self.provider is not None and self.provider.startswith("vllm"):
@@ -337,6 +348,18 @@ class LLMClient():
         """Run an async coroutine on the persistent event loop.
         Uses a single long-lived loop so async clients can reuse connections."""
         return self._loop.run_until_complete(coro)
+
+    def _bedrock_converse(self, prompt: str, temperature=None, max_tokens=4096) -> str:
+        """Call Bedrock Converse API. Works for any Bedrock model (Llama, Mistral, Nova, etc.)."""
+        inference_config = {"maxTokens": max_tokens}
+        if temperature is not None:
+            inference_config["temperature"] = temperature
+        response = self._bedrock_client.converse(
+            modelId=self.model,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig=inference_config,
+        )
+        return response["output"]["message"]["content"][0]["text"]
 
     def web_search(self, query: str) -> str:
         if can_web_search_openai(self.model):
@@ -392,7 +415,25 @@ class LLMClient():
             return results
     
     def chat_async(self, prompts_lst: list[str], num_candidates=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
-        if self.async_client is not None:
+        if self.provider == "aws-bedrock":
+            # Generic Bedrock models use boto3 Converse API (synchronous),
+            # wrapped with asyncio.to_thread for concurrency.
+            async def _run():
+                semaphore = asyncio.Semaphore(9)
+                async def _call(p):
+                    async with semaphore:
+                        return await asyncio.to_thread(self._bedrock_converse, p, temperature)
+                tasks = []
+                for prompt in prompts_lst:
+                    for _ in range(num_candidates):
+                        tasks.append(_call(prompt))
+                results = await asyncio.gather(*tasks)
+                responses = []
+                for i in range(len(prompts_lst)):
+                    responses.append(list(results[i * num_candidates:(i + 1) * num_candidates]))
+                return responses
+            return self._run_async(_run())
+        elif self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
                 "model":self.model.replace("_", "/"),
@@ -510,5 +551,8 @@ class LLMClient():
                     # },
                 )
                 responses.append(claude_response.content[-1].text)
+        elif self.provider == "aws-bedrock":
+            for _ in range(num_candidates):
+                responses.append(self._bedrock_converse(prompt, temperature=temperature))
 
         return responses
