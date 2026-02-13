@@ -234,10 +234,11 @@ class SearchStrategy:
         # Filter out incorrect candidates
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
 
-        keep_factor = self.translate_perf_threshold if cur_iter <= self.translate_iters else 1.1
-        # if cur_iter is not None and num_iters is not None:
-        #     if cur_iter <= 2:
-        #         keep_factor = 1.5
+        keep_factor = 1
+        if cur_iter <= self.translate_iters:
+            keep_factor = self.translate_perf_threshold
+        elif cur_iter <= 2:
+            keep_factor = 1.1
         if num_to_keep is None:
             cur_candidates = []
             for c in code_candidates:
