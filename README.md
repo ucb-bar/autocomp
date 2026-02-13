@@ -93,7 +93,7 @@ API keys can be configured via environment variables or in `autocomp/common/keys
 | OpenAI | `OPENAI_API_KEY` | `openai`
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic`
 | Together | `TOGETHER_API_KEY` | `together`
-| AWS Bedrock | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `aws`
+| AWS Bedrock | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | `aws`
 | Google Cloud | `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT` | `gcp`
 
 **Example `autocomp/common/keys.py`:**
@@ -118,7 +118,18 @@ Run `gcloud auth application-default login` to enable the Google Cloud SDK.
 
 #### AWS Bedrock
 
-Note that we currently only support Anthropic models on AWS Bedrock.
+Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All other Bedrock models (e.g., Llama, Mistral, Amazon Nova) are supported via the Bedrock Converse API. Any model available in your Bedrock region can be used by passing its Bedrock model ID:
+
+```python
+models = [
+    "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",  # Claude (Anthropic adapter)
+    "aws::us.meta.llama3-3-70b-instruct-v1:0",          # Llama 3.3
+    "aws::mistral.mistral-large-2411-v1:0",              # Mistral Large
+    "aws::amazon.nova-pro-v1:0",                         # Amazon Nova Pro
+]
+```
+
+By default the `us-west-2` region is used. Set the `AWS_REGION` environment variable (or add it to `keys.py`) to override.
 
 ## 🚀 Usage
 

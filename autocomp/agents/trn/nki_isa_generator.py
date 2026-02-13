@@ -1555,7 +1555,7 @@ class NkiIsaGenerator:
             name = prob_or_name
         else:
             raise ValueError(f"Invalid input type: {type(prob_or_name)}")
-        logger.info(f"Generating ISA for problem type: {name}")
+        logger.debug(f"Generating ISA for problem type: {name}")
         kernels = self.workload_to_kernel_dict.get(name, [name]) # if not found, then <name> is a kernel
         kernels = ["standard"] + kernels # always include standard instructions
         insts = []
