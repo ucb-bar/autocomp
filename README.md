@@ -118,7 +118,7 @@ Run `gcloud auth application-default login` to enable the Google Cloud SDK.
 
 #### AWS Bedrock
 
-Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All other Bedrock models (e.g., Llama, Mistral, Amazon Nova) are supported via the Bedrock Converse API. Any model available in your Bedrock region can be used by passing its Bedrock model ID:
+Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All other Bedrock models (e.g., GLM, DeepSeek, Kimi) are supported via the Bedrock Converse API. Any model available in your Bedrock region can be used by passing its Bedrock model ID:
 
 ```python
 models = [
