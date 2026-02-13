@@ -735,6 +735,8 @@ def main():
         output_str += f"_picl1"
     if code_icl_examples:
         output_str += f"_cicl1"
+    if reimplement_failed:
+        output_str += f"_reimpl1"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
