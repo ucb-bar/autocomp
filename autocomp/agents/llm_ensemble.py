@@ -1,5 +1,7 @@
 import pathlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.code_repo import CodeCandidate
@@ -23,16 +25,43 @@ class LLMEnsemble:
 
         return job_assignments
 
+    def _run_parallel(self, fn_and_args: list[tuple]) -> list:
+        """Run a list of (callable, *args) in parallel threads, returning results in order.
+        
+        Each element of fn_and_args is a tuple of (fn, arg1, arg2, ...).
+        Results are returned in the same order as the input list.
+        """
+        if not fn_and_args:
+            return []
+        # Single agent – skip thread overhead
+        if len(fn_and_args) == 1:
+            fn, *args = fn_and_args[0]
+            return [fn(*args)]
+
+        results = [None] * len(fn_and_args)
+        with ThreadPoolExecutor(max_workers=len(fn_and_args)) as executor:
+            future_to_idx = {}
+            for idx, (fn, *args) in enumerate(fn_and_args):
+                future = executor.submit(fn, *args)
+                future_to_idx[future] = idx
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                results[idx] = future.result()  # will re-raise any exception
+        return results
+
     def get_opt_menu_options(self, prob=None):
         return self.llms[0].get_opt_menu_options(prob)
 
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
         num_to_gen_per_agent = self.divide_work(num_to_gen)
-        responses = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.analyze_code(candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model)
-                responses.extend(this_agent_resps)
+                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model))
+
+        responses = []
+        for result in self._run_parallel(tasks):
+            responses.extend(result)
         return responses
 
     def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
@@ -52,27 +81,30 @@ class LLMEnsemble:
                               translate: bool = False,
                              ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_plans)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
-                this_agent_resps = llm.propose_optimizations_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, 
-                                    prob=prob,
-                                    force_opt_menu_lst=force_opt_menu_lst, 
-                                    prompt_end=prompt_end, 
-                                    analysis_lst=analysis_lst, 
-                                    shuffle_opts=shuffle_opts, 
-                                    give_score_feedback=give_score_feedback,
-                                    give_util_feedback=give_util_feedback,
-                                    give_hw_feedback=give_hw_feedback,
-                                    include_ancestors=include_ancestors,
-                                    plan_icl_examples=plan_icl_examples,
-                                    cur_iter=cur_iter,
-                                    num_iters=num_iters,
-                                    dropout_menu_options=dropout_menu_options,
-                                    translate=translate,
-                                    )
-                cands.extend(this_agent_resps)
+                tasks.append((llm.propose_optimizations_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs,
+                                    prob,
+                                    force_opt_menu_lst, 
+                                    prompt_end, 
+                                    analysis_lst, 
+                                    shuffle_opts, 
+                                    give_score_feedback,
+                                    give_util_feedback,
+                                    give_hw_feedback,
+                                    include_ancestors,
+                                    plan_icl_examples,
+                                    cur_iter,
+                                    num_iters,
+                                    dropout_menu_options,
+                                    translate,
+                                    ))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
 
     def propose_optimizations(self, candidate: CodeCandidate, num_plans: int, save_dir: pathlib.Path, save_str: str, 
@@ -92,54 +124,66 @@ class LLMEnsemble:
                                 translate: bool = False,
                                 ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_plans)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.propose_optimizations(candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, 
-                                    prob=prob,
-                                    force_opt_menu=force_opt_menu, 
-                                    prompt_end=prompt_end, 
-                                    analysis=analysis, 
-                                    shuffle_opts=shuffle_opts, 
-                                    give_score_feedback=give_score_feedback,
-                                    give_util_feedback=give_util_feedback,
-                                    give_hw_feedback=give_hw_feedback,
-                                    include_ancestors=include_ancestors,
-                                    plan_icl_examples=plan_icl_examples,
-                                    cur_iter=cur_iter,
-                                    num_iters=num_iters,
-                                    dropout_menu_options=dropout_menu_options,
-                                    translate=translate,
-                                    )
-                cands.extend(this_agent_resps)
+                tasks.append((llm.propose_optimizations, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model,
+                                    prob,
+                                    force_opt_menu, 
+                                    prompt_end, 
+                                    analysis, 
+                                    shuffle_opts, 
+                                    give_score_feedback,
+                                    give_util_feedback,
+                                    give_hw_feedback,
+                                    include_ancestors,
+                                    plan_icl_examples,
+                                    cur_iter,
+                                    num_iters,
+                                    dropout_menu_options,
+                                    translate,
+                                    ))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
 
     def implement_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
-                this_agent_resps = llm.implement_code_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, save_strs=this_model_save_strs, code_icl_examples=code_icl_examples, prob=prob)
-                cands.extend(this_agent_resps)
+                tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
 
     def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="", code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.implement_code(candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, code_icl_examples=code_icl_examples, prob=prob)
-                cands.extend(this_agent_resps)
+                tasks.append((llm.implement_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, code_icl_examples, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_agent_resps = llm.combine_candidates(candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob=prob)
-                cands.extend(this_agent_resps)
+                tasks.append((llm.combine_candidates, candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
 
     def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
@@ -148,10 +192,13 @@ class LLMEnsemble:
         This method is parallelized across multiple LLM agents.
         """
         num_to_gen_per_agent = self.divide_work(num_samples)
-        cands = []
+        tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
-                this_agent_resps = llm.reimplement_failed_code_parallel(candidate_lst, num_to_gen_per_agent[i], save_dir, save_strs=this_model_save_strs, prob=prob)
-                cands.extend(this_agent_resps)
+                tasks.append((llm.reimplement_failed_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
         return cands
