@@ -123,9 +123,9 @@ Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All o
 ```python
 models = [
     "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",  # Claude (Anthropic adapter)
-    "aws::us.meta.llama3-3-70b-instruct-v1:0",          # Llama 3.3
-    "aws::mistral.mistral-large-2411-v1:0",              # Mistral Large
-    "aws::amazon.nova-pro-v1:0",                         # Amazon Nova Pro
+    "aws::zai.glm-4.7",                                 # GLM 4.7
+    "aws::deepseek.v3.2",                               # DeepSeek-V3.2
+    "aws::moonshotai.kimi-k2.5",                        # Kimi K2.5
 ]
 ```
 
