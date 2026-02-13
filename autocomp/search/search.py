@@ -670,7 +670,7 @@ def main():
     translate_perf_threshold = 1.2
 
     # Planning prompt knobs
-    dropout_menu_options = 0.2
+    dropout_menu_options = 0.25
     give_score_feedback = 1
     give_util_feedback = 0
     give_hw_feedback = 0
@@ -707,11 +707,11 @@ def main():
     hw_desc = hw_config.get_hw_description().replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_")
     output_str += f"_{hw_desc}"
     for model in models:
-        output_str += f"_{model[:20]}"
+        output_str += f"_{model[-20:]}"
     if code_models is not None:
         output_str += "_code"
         for model in code_models:
-            output_str += f"_{model[:20]}"
+            output_str += f"_{model[-20:]}"
     if dropout_menu_options:
         output_str += f"_do{dropout_menu_options}"
     if search_strategy == "beam":
