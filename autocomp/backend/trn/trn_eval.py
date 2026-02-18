@@ -1,3 +1,4 @@
+import os
 import pathlib
 import json
 import re
@@ -253,7 +254,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         compiled = {}        # label -> bool
         compile_errors = {}  # label -> error_msg (only for failures)
         all_labels = ["ref"] + list(range(len(code_strs)))
-        max_parallel = min(12, len(all_labels))
+        max_parallel = min(os.cpu_count() or 1, len(all_labels))
         with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             futures = {executor.submit(run_compile, label): label
                        for label in all_labels}
