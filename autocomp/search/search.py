@@ -65,6 +65,9 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
 
 def load_initial_code(backend_name: str, prob: "Prob") -> str:
     """Load initial code for the given backend and problem."""
+    if prob.sol_file:
+        return prob.sol_file.read_text()
+
     prob_type, prob_id = prob.prob_type, prob.prob_id
     
     if backend_name == "kernelbench":
