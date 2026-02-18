@@ -10,11 +10,11 @@ class Prob():
         self.sol_file = pathlib.Path(sol_file) if sol_file else None
         self.tests: list[Test] = []
 
-        # Find tests with matching name to prob_type and prob_id
-        test_dir = TESTS_DIR
-        test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
-        for test_file_path in test_files:
-            self.tests.append(Test(test_file_path))
+        if not self.test_file:
+            test_dir = TESTS_DIR
+            test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
+            for test_file_path in test_files:
+                self.tests.append(Test(test_file_path))
 
         # perf_test_files = list((test_dir / prob_type).glob(f"test{prob_id}_perf.c"))
         # for perf_test_file in perf_test_files:
