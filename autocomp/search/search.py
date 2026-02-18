@@ -13,12 +13,14 @@ from autocomp.backend.eval_backend import EvalBackend
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.agents.tpu.tpu_agent import TpuLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
 from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
 from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
+from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig
@@ -44,6 +46,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         eval_backend = GemminiEvalBackend(hw_config)
     elif backend_name == "trn":
         eval_backend = TrnEvalBackend()
+    elif backend_name == "tpu":
+        eval_backend = TpuEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
     
@@ -57,6 +61,9 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+    elif agent_name == "tpu":
+        agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in models])
+        code_agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
@@ -91,6 +98,13 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
                 return f.read()
     elif backend_name == "trn":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    elif backend_name == "tpu":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
