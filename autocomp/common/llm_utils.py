@@ -115,6 +115,11 @@ async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | A
         
         # except (RateLimitError, APITimeoutError, InternalServerError):
         except Exception as e:
+            err_str = str(e)
+            if "temperature" in err_str and "not supported" in err_str:
+                logger.info(f"Model does not support temperature, retrying without it: {e}")
+                kwargs.pop("temperature", None)
+                continue
             logger.info(f"Error: {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
             logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
