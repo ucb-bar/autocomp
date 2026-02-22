@@ -532,12 +532,16 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                     "trn_eval" / timestamp)
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        test_dir = TESTS_DIR / prob.prob_type
-        test_file = list(test_dir.glob(f"{prob.prob_id}_*.py"))[0]
-        if not test_file:
-            raise FileNotFoundError(
-                f"No test file found for {prob.prob_type} {prob.prob_id} "
-                f"in {test_dir}")
+        if prob.test_file:
+            test_file = prob.test_file
+        else:
+            test_dir = TESTS_DIR / prob.prob_type
+            matches = list(test_dir.glob(f"{prob.prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(
+                    f"No test file found for {prob.prob_type} {prob.prob_id} "
+                    f"in {test_dir}")
+            test_file = matches[0]
         test_code = test_file.read_text()
 
         results = None

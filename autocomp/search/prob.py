@@ -3,18 +3,18 @@ import pathlib
 from autocomp.common import TESTS_DIR
 
 class Prob():
-    def __init__(self, prob_type: str, prob_id: int):
+    def __init__(self, prob_type: str, prob_id: int, *, test_file: pathlib.Path | str | None = None, sol_file: pathlib.Path | str | None = None):
         self.prob_type = prob_type
         self.prob_id = prob_id
+        self.test_file = pathlib.Path(test_file) if test_file else None
+        self.sol_file = pathlib.Path(sol_file) if sol_file else None
         self.tests: list[Test] = []
-        # self.perf_tests: list[Test] = []
 
-        # Find tests with matching name to prob_type and prob_id
-        test_dir = TESTS_DIR
-        test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
-        # test_files.extend((test_dir / prob_type).glob(f"test{prob_id}_*.c"))
-        for test_file in test_files:
-            self.tests.append(Test(test_file))
+        if not self.test_file:
+            test_dir = TESTS_DIR
+            test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
+            for test_file_path in test_files:
+                self.tests.append(Test(test_file_path))
 
         # perf_test_files = list((test_dir / prob_type).glob(f"test{prob_id}_perf.c"))
         # for perf_test_file in perf_test_files:
