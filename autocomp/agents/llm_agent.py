@@ -458,7 +458,7 @@ class LLMAgent:
             logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
             loaded_candidates = []
             for c_i in range(num_samples):
-                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
+                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i], code_gen_model=self.llm_client.model))
             return loaded_candidates
 
         prompt_text = self._get_combine_candidates_prompt(candidates, prob)
