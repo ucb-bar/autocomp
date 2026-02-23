@@ -127,6 +127,8 @@ class SearchStrategy:
                  translate_iters: int,
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
+                 early_stop_iters: int = 0,
+                 early_stop_threshold: float = 1.0,
                ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.agent = agent  # The agent used to propose optimizations (planning)
@@ -147,6 +149,8 @@ class SearchStrategy:
         self.prevent_duplicate_level = prevent_duplicate_level
         self.translate_iters = translate_iters
         self.translate_perf_threshold = translate_perf_threshold
+        self.early_stop_iters = early_stop_iters
+        self.early_stop_threshold = early_stop_threshold
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
@@ -311,6 +315,22 @@ class SearchStrategy:
         )
         logger.info("Initialized wandb run, id: %s", wandb.run.name)
 
+    def should_early_stop(self, losses: list[float], cur_iter: int) -> bool:
+        if self.early_stop_iters <= 0 or cur_iter < self.early_stop_iters + 1:
+            return False
+        old_loss = losses[cur_iter - self.early_stop_iters - 1]
+        new_loss = losses[cur_iter - 1]
+        if old_loss == 0:
+            return False
+        ratio = new_loss / old_loss
+        if ratio >= self.early_stop_threshold:
+            logger.info(
+                "Early stopping: no improvement over %d iters (ratio %.4f >= %.4f)",
+                self.early_stop_iters, ratio, self.early_stop_threshold,
+            )
+            return True
+        return False
+
 class ExhaustiveSearchStrategy(SearchStrategy):
     """
     Manages the iterative optimization process, including proposing, filtering, 
@@ -330,6 +350,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
 
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
+        losses = []
         for i in range(1, iterations + 1):
             logger.info(f"Iteration {i} of optimization:")
 
@@ -340,6 +361,13 @@ class ExhaustiveSearchStrategy(SearchStrategy):
                 logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx-1)
                 cur_cand_idx -= 1
                 current_candidates = self.repository.get_candidates(cur_cand_idx)
+
+            cur_cand_scores = [cand.score for cand in current_candidates]
+            best_loss = min(cur_cand_scores)
+            losses.append(best_loss)
+
+            if self.should_early_stop(losses, i):
+                break
 
             # Step 1: Propose optimizations for each candidate
             save_dir = self.output_dir / f"generated-plans-iter-{i}"
@@ -415,8 +443,10 @@ class BeamSearchStrategy(SearchStrategy):
                  translate_iters: int,
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
+                 early_stop_iters: int = 0,
+                 early_stop_threshold: float = 1.0,
                 ):
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -536,6 +566,9 @@ class BeamSearchStrategy(SearchStrategy):
             }})
             losses.append(best_loss)
 
+            if self.should_early_stop(losses, i):
+                break
+
             # If candidates already exist for this iteration, load them and skip all other steps
             save_dir = self.output_dir / f"candidates-iter-{i}"
             num_cands_loaded = self.repository.load_candidates(i, save_dir)
@@ -632,7 +665,8 @@ class BeamSearchStrategy(SearchStrategy):
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
 
-        last_iter_cands = self.repository.get_candidates(iterations)
+        last_iter = len(self.repository.candidates_per_iteration) - 1
+        last_iter_cands = self.repository.get_candidates(last_iter)
         wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
             "best-loss": min([cand.score for cand in last_iter_cands]),
         }})
@@ -656,18 +690,22 @@ def main():
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 10
+    iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 2
+    prob_id = 1
 
     # Reimplement failed candidates
     # Only works for trn
-    reimplement_failed = True
+    reimplement_failed = False
+
+    # Early stopping parameters
+    early_stop_iters = 0       # 0 = disabled; stop after N iters without improvement
+    early_stop_threshold = 1.0 # ratio threshold: current_best / best_N_ago >= threshold means no improvement
 
     # Beam search parameters
     num_plan_candidates=6
     num_code_candidates=2
-    beam_size=6
+    beam_size=3
 
     # Translation parameters
     translate_iters = 0
@@ -740,6 +778,8 @@ def main():
         output_str += f"_cicl1"
     if reimplement_failed:
         output_str += f"_reimpl1"
+    if early_stop_iters > 0:
+        output_str += f"_es{early_stop_iters}_{early_stop_threshold}"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -756,13 +796,13 @@ def main():
     eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
 
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
     elif search_strategy == "beam":
         optimizer = BeamSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
 
     # Start the optimization process
     optimizer.optimize(iterations)
