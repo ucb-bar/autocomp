@@ -567,7 +567,7 @@ class BeamSearchStrategy(SearchStrategy):
             losses.append(best_loss)
 
             if self.should_early_stop(losses, i):
-                break
+                break  # post-loop wandb log skipped; this iter's best was already logged above
 
             # If candidates already exist for this iteration, load them and skip all other steps
             save_dir = self.output_dir / f"candidates-iter-{i}"
@@ -664,12 +664,12 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
-
-        last_iter = len(self.repository.candidates_per_iteration) - 1
-        last_iter_cands = self.repository.get_candidates(last_iter)
-        wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-            "best-loss": min([cand.score for cand in last_iter_cands]),
-        }})
+        else:
+            last_iter = len(self.repository.candidates_per_iteration) - 1
+            last_iter_cands = self.repository.get_candidates(last_iter)
+            wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
+                "best-loss": min([cand.score for cand in last_iter_cands]),
+            }})
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
