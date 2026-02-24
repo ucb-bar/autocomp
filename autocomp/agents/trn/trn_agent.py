@@ -69,6 +69,7 @@ class TrnLLMAgent(LLMAgent):
             "Scan carry-over to parallelize the scan operation",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Kernel Fusion via SBUF residency",
+            "Add a small fixed-size inner loop as a compiler hint",
             "Modify one particular parameter",
             "Target the specific data shapes and shapes of the input and output tensors",
             "Tile Vector Engine instructions in loops of size 128 to coalesce them",
