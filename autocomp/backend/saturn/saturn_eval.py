@@ -66,17 +66,13 @@ def clean_code(code_str: str) -> str:
 MAX_BUILD_SLOTS = min(8,os.cpu_count())
 
 
-def _build_in_slot(args: tuple) -> dict:
-    """
-    Build a candidate in a stable build slot. Used as a Pool worker.
-
-    Slot directories persist across batches so only the first build per slot
-    is pristine -- all subsequent builds are incremental (only main.c changes).
-    """
-    code_contents, slot_id = args
+def _build_and_run_spike(args: tuple) -> tuple:
+    
+    code_contents, slot_id, candidate_idx = args
     slot_dir = SATURN_TEMP_DIR / f"build_slot_{slot_id}"
     app_dir = slot_dir / "app"
     build_dir = slot_dir / "build"
+
 
     try:
         is_first = not (build_dir / "zephyr" / "zephyr.elf").exists()
@@ -99,7 +95,7 @@ def _build_in_slot(args: tuple) -> dict:
             source scripts/set_envvars_sdk.sh && \
             source tools/miniforge3/etc/profile.d/conda.sh && \
             conda activate zephyr && \
-            west build {pristine_flag} -b spike_riscv64 -d {build_dir} {app_dir}
+            west build {pristine_flag} -b spike_riscv64 -d {build_dir} {app_dir} -DXNNPACK_ENABLE_RISCV_VECTOR=ON -DXNNPACK_ENABLE_RISCV_GEMMINI=OFF 
         """
         result = subprocess.run(
             ["bash", "-c", build_cmd],
@@ -107,71 +103,44 @@ def _build_in_slot(args: tuple) -> dict:
             timeout=SATURN_COMPILE_TIMEOUT
         )
         if result.returncode != 0:
-            return {"binary": None, "error": f"Compile error: {result.stderr.decode()}"}
+            return (candidate_idx, f"Compile error: {result.stderr.decode()}")
 
         binary = build_dir / "zephyr" / "zephyr.elf"
         if not binary.exists():
-            return {"binary": None, "error": f"Binary not found at {binary}"}
-
-        return {"binary": str(binary), "error": None}
+            return (candidate_idx, f"Binary not found at {binary}")
 
     except subprocess.TimeoutExpired:
-        return {"binary": None, "error": "Compile timeout"}
+        return (candidate_idx, "Compile timeout")
     except Exception as e:
-        return {"binary": None, "error": f"Build error: {str(e)}"}
+        return (candidate_idx, f"Build error: {str(e)}")
 
-
-def _run_spike(args: tuple) -> tuple:
-    """Run spike on a binary. Used as a Pool worker. Returns (code_idx, stdout)."""
-    code_i, binary_path = args
+    # --- Run spike ---
     try:
         result = subprocess.run(
-            ["spike", "--isa=rv64gcv_zicntr", str(binary_path)],
+            ["spike", "--isa=rv64gcv_zicntr", str(binary)],
             capture_output=True,
             text=True,
             errors="ignore",
             timeout=SATURN_SPIKE_TIMEOUT
         )
-        return (code_i, result.stdout)
+        return (candidate_idx, result.stdout)
     except subprocess.TimeoutExpired:
-        return (code_i, "Timeout")
+        return (candidate_idx, "Timeout")
     except Exception as e:
-        return (code_i, f"Spike error: {str(e)}")
+        return (candidate_idx, f"Spike error: {str(e)}")
 
 
 def run_spike_mp(code_contents_lst: list[str]) -> list[str]:
 
     results = ["Error"] * len(code_contents_lst)
 
-    # Phase 1: Parallel builds (capped at MAX_BUILD_SLOTS)
-    build_tasks = [(code, i % MAX_BUILD_SLOTS) for i, code in enumerate(code_contents_lst)]
-    logger.info("Building %d candidates across %d build slots...",
+    tasks = [(code, i % MAX_BUILD_SLOTS, i) for i, code in enumerate(code_contents_lst)]
+    logger.info("Building & running spike on %d candidates across %d slots...",
                 len(code_contents_lst), min(len(code_contents_lst), MAX_BUILD_SLOTS))
 
     with multiprocessing.Pool(MAX_BUILD_SLOTS) as pool:
-        build_results = pool.map(_build_in_slot, build_tasks, chunksize=1)
-
-    # Collect build results
-    binary_paths = []
-    for code_i, br in enumerate(build_results):
-        if br["binary"]:
-            binary_paths.append((code_i, br["binary"]))
-        else:
-            results[code_i] = br.get("error", "Build failed")
-
-    logger.info("Built %d/%d candidates successfully", len(binary_paths), len(code_contents_lst))
-
-    if not binary_paths:
-        return results
-
-    # Phase 2: Parallel spike execution (no cap -- spike is read-only)
-    logger.info("Running spike on %d binaries in parallel...", len(binary_paths))
-
-    with multiprocessing.Pool(len(binary_paths)) as pool:
-        spike_results = pool.map(_run_spike, binary_paths, chunksize=1)
-
-    for code_i, stdout in spike_results:
-        results[code_i] = stdout
+        for candidate_idx, stdout in pool.imap_unordered(_build_and_run_spike, tasks):
+            results[candidate_idx] = stdout
 
     return results
 

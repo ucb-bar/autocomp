@@ -703,7 +703,7 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "aws::moonshotai.kimi-k2.5"]  # Models for planning
+    models = ["gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview"] # Models for planning
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
