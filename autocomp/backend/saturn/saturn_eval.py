@@ -5,6 +5,7 @@ import shutil
 import time
 import glob
 import re
+import os
 from typing import List
 
 from autocomp.common import logger, SOLS_DIR
@@ -19,6 +20,8 @@ SATURN_ZEPHYR_BASE = "/scratch/charleshong/saturn-tutorial/zephyr-chipyard-sw"  
 SATURN_SPIKE_TIMEOUT = 60.0
 SATURN_COMPILE_TIMEOUT = 120.0
 SATURN_FIRESIM_TIMEOUT = 500.0
+
+FIRESIM_REPEAT_ITERS = 15
 
 SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
 SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench" # Contains src/main.c, CMakeLists.txt, prj.conf
@@ -60,212 +63,149 @@ def clean_code(code_str: str) -> str:
     return body
 
 
-def build_single(code_contents: str, candidate_idx: int, timestamp: str, return_dict: dict):
-    """
-    Build a single candidate in an isolated directory using Zephyr.
+MAX_BUILD_SLOTS = min(8,os.cpu_count())
 
-    Results are stored in return_dict with keys:
-        - "binary": pathlib.Path on success, None on failure
-        - "stderr": error string on failure, None on success
-        - "work_dir": path to the work directory
+
+def _build_in_slot(args: tuple) -> dict:
     """
-    unique_id = f"{timestamp}_candidate{candidate_idx}"
-    work_dir = pathlib.Path(SATURN_TEMP_DIR) / f"saturn_build_{unique_id}"
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return_dict["work_dir"] = str(work_dir)
+    Build a candidate in a stable build slot. Used as a Pool worker.
+
+    Slot directories persist across batches so only the first build per slot
+    is pristine -- all subsequent builds are incremental (only main.c changes).
+    """
+    code_contents, slot_id = args
+    slot_dir = SATURN_TEMP_DIR / f"build_slot_{slot_id}"
+    app_dir = slot_dir / "app"
+    build_dir = slot_dir / "build"
 
     try:
-        # Copy Zephyr app template to isolated directory
-        app_template = pathlib.Path(SATURN_ZEPHYR_APP_PATH)
-        app_dir = work_dir / "app"
-        shutil.copytree(
-            app_template,
-            app_dir,
-            ignore=shutil.ignore_patterns('build*', '__pycache__', '*.o', '*.elf')
-        )
+        is_first = not (build_dir / "zephyr" / "zephyr.elf").exists()
 
-        # Write code to isolated copy
-        test_file = app_dir / "src" / "main.c"
-        test_file.write_text(code_contents)
+        if is_first:
+            if app_dir.exists():
+                shutil.rmtree(app_dir)
+            if build_dir.exists():
+                shutil.rmtree(build_dir)
+            shutil.copytree(
+                SATURN_ZEPHYR_APP_PATH, app_dir,
+                ignore=shutil.ignore_patterns('build*', '__pycache__', '*.o', '*.elf')
+            )
 
-        # Compile with Zephyr - each build has isolated dirs so parallel is safe
-        build_dir = work_dir / "build"
+        (app_dir / "src" / "main.c").write_text(code_contents)
+
+        pristine_flag = "-p" if is_first else ""
         build_cmd = f"""
             cd {SATURN_ZEPHYR_BASE} && \
             source scripts/set_envvars_sdk.sh && \
             source tools/miniforge3/etc/profile.d/conda.sh && \
             conda activate zephyr && \
-            west build -p -b spike_riscv64 -d {build_dir} {app_dir}
+            west build {pristine_flag} -b spike_riscv64 -d {build_dir} {app_dir}
         """
         result = subprocess.run(
             ["bash", "-c", build_cmd],
             capture_output=True,
-            timeout=SATURN_COMPILE_TIMEOUT,
-            errors="ignore",
+            timeout=SATURN_COMPILE_TIMEOUT
         )
         if result.returncode != 0:
-            return_dict["binary"] = None
-            return_dict["stderr"] = f"Compile error: {result.stderr}"
-            return
+            return {"binary": None, "error": f"Compile error: {result.stderr.decode()}"}
 
         binary = build_dir / "zephyr" / "zephyr.elf"
         if not binary.exists():
-            return_dict["binary"] = None
-            return_dict["stderr"] = f"Compile error: binary not found at {binary}"
-            return
+            return {"binary": None, "error": f"Binary not found at {binary}"}
 
-        return_dict["binary"] = str(binary)
-        return_dict["stderr"] = None
+        return {"binary": str(binary), "error": None}
 
     except subprocess.TimeoutExpired:
-        return_dict["binary"] = None
-        return_dict["stderr"] = "Compile timeout"
+        return {"binary": None, "error": "Compile timeout"}
     except Exception as e:
-        return_dict["binary"] = None
-        return_dict["stderr"] = f"Build error: {str(e)}"
+        return {"binary": None, "error": f"Build error: {str(e)}"}
 
 
-def run_spike_on_binary(binary_path: pathlib.Path, return_dict: dict, timeout: float = SATURN_SPIKE_TIMEOUT):
-
+def _run_spike(args: tuple) -> tuple:
+    """Run spike on a binary. Used as a Pool worker. Returns (code_idx, stdout)."""
+    code_i, binary_path = args
     try:
         result = subprocess.run(
-            ["spike", f"--isa=rv64gcv_zicntr", str(binary_path)],
+            ["spike", "--isa=rv64gcv_zicntr", str(binary_path)],
             capture_output=True,
             text=True,
             errors="ignore",
-            timeout=timeout
+            timeout=SATURN_SPIKE_TIMEOUT
         )
-        return_dict["retval"] = result.stdout
+        return (code_i, result.stdout)
     except subprocess.TimeoutExpired:
-        return_dict["retval"] = "Timeout"
+        return (code_i, "Timeout")
     except Exception as e:
-        return_dict["retval"] = f"Spike error: {str(e)}"
+        return (code_i, f"Spike error: {str(e)}")
 
 
-def run_spike_mp(code_contents_lst: list[str], timeout: float = SATURN_SPIKE_TIMEOUT) -> list[str]:
-    """
-    Build using Zephyr and run spike, both in parallel.
+def run_spike_mp(code_contents_lst: list[str]) -> list[str]:
 
-    Phase 1: Build all candidates in parallel (isolated directories)
-    Phase 2: Run spike on all binaries in parallel (read-only)
-    """
     results = ["Error"] * len(code_contents_lst)
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-    # Phase 1: Parallel builds
-    logger.info("Building %d candidates in parallel...", len(code_contents_lst))
-    manager = multiprocessing.Manager()
-    build_dicts = []
-    build_procs = []
+    # Phase 1: Parallel builds (capped at MAX_BUILD_SLOTS)
+    build_tasks = [(code, i % MAX_BUILD_SLOTS) for i, code in enumerate(code_contents_lst)]
+    logger.info("Building %d candidates across %d build slots...",
+                len(code_contents_lst), min(len(code_contents_lst), MAX_BUILD_SLOTS))
 
-    for code_i, code_contents in enumerate(code_contents_lst):
-        return_dict = manager.dict()
-        build_dicts.append((code_i, return_dict))
-        p = multiprocessing.Process(
-            target=build_single,
-            args=(code_contents, code_i, timestamp, return_dict)
-        )
-        p.start()
-        build_procs.append(p)
-
-    # Wait for builds with timeout
-    build_timeout = SATURN_COMPILE_TIMEOUT
-    start = time.time()
-    while time.time() - start <= build_timeout:
-        if not any(p.is_alive() for p in build_procs):
-            break
-        time.sleep(0.1)
-    else:
-        logger.warning("Build phase exceeded timeout, terminating remaining builds.")
-        for p in build_procs:
-            if p.is_alive():
-                p.terminate()
-                p.join()
+    with multiprocessing.Pool(MAX_BUILD_SLOTS) as pool:
+        build_results = pool.map(_build_in_slot, build_tasks, chunksize=1)
 
     # Collect build results
     binary_paths = []
-    for i, (code_i, return_dict) in enumerate(build_dicts):
-        if return_dict.get("binary"):
-            binary_paths.append((code_i, pathlib.Path(return_dict["binary"])))
+    for code_i, br in enumerate(build_results):
+        if br["binary"]:
+            binary_paths.append((code_i, br["binary"]))
         else:
-            results[code_i] = return_dict.get("stderr", "Build failed")
+            results[code_i] = br.get("error", "Build failed")
 
     logger.info("Built %d/%d candidates successfully", len(binary_paths), len(code_contents_lst))
 
     if not binary_paths:
         return results
 
-    # Phase 2: Parallel spike execution
+    # Phase 2: Parallel spike execution (no cap -- spike is read-only)
     logger.info("Running spike on %d binaries in parallel...", len(binary_paths))
-    manager = multiprocessing.Manager()
-    return_dicts = []
-    procs = []
 
-    for code_i, binary_path in binary_paths:
-        return_dict = manager.dict()
-        return_dicts.append((code_i, return_dict))
-        p = multiprocessing.Process(
-            target=run_spike_on_binary,
-            args=(binary_path, return_dict)
-        )
-        p.start()
-        procs.append(p)
+    with multiprocessing.Pool(len(binary_paths)) as pool:
+        spike_results = pool.map(_run_spike, binary_paths, chunksize=1)
 
-    # Polling loop with timeout
-    start = time.time()
-    while time.time() - start <= timeout:
-        if not any(p.is_alive() for p in procs):
-            break
-        time.sleep(0.1)
-    else:
-        logger.info("Spike ran for more than %d seconds, terminating.", timeout)
-        for p in procs:
-            if p.is_alive():
-                p.terminate()
-                p.join()
-
-    # Collect results
-    for i, (code_i, return_dict) in enumerate(return_dicts):
-        if procs[i].exitcode != 0 and "retval" not in return_dict:
-            results[code_i] = "Timeout"
-        else:
-            results[code_i] = return_dict.get("retval", "Error")
+    for code_i, stdout in spike_results:
+        results[code_i] = stdout
 
     return results
 
 
-def build_firesim_binary(code_contents: str, timestamp: str) -> pathlib.Path | str:
-    """
-    Build a single binary for FireSim execution.
+FIRESIM_BUILD_SLOT = 0  # Reuse spike slot 0 -- spike finishes before firesim starts
 
-    Returns binary path on success, error string on failure.
-    """
-    unique_id = f"{timestamp}_firesim"
-    work_dir = pathlib.Path(SATURN_TEMP_DIR) / f"saturn_firesim_{unique_id}"
-    work_dir.mkdir(parents=True, exist_ok=True)
+def build_firesim_binary(code_contents: str) -> pathlib.Path | str:
+   
+    slot_dir = SATURN_TEMP_DIR / f"build_slot_{FIRESIM_BUILD_SLOT}"
+    app_dir = slot_dir / "app"
+    build_dir = slot_dir / "build"
 
     try:
-        # Copy Zephyr app template
-        app_template = pathlib.Path(SATURN_ZEPHYR_APP_PATH)
-        app_dir = work_dir / "app"
-        shutil.copytree(
-            app_template,
-            app_dir,
-            ignore=shutil.ignore_patterns('build*', '__pycache__', '*.o', '*.elf')
-        )
+        is_first = not (build_dir / "zephyr" / "zephyr.elf").exists()
 
-        # Write code
-        test_file = app_dir / "src" / "main.c"
-        test_file.write_text(code_contents)
+        if is_first:
+            if app_dir.exists():
+                shutil.rmtree(app_dir)
+            if build_dir.exists():
+                shutil.rmtree(build_dir)
+            shutil.copytree(
+                SATURN_ZEPHYR_APP_PATH, app_dir,
+                ignore=shutil.ignore_patterns('build*', '__pycache__', '*.o', '*.elf')
+            )
 
-        # Compile with Zephyr for FireSim target
-        build_dir = work_dir / "build"
+        (app_dir / "src" / "main.c").write_text(code_contents)
+
+        pristine_flag = "-p" if is_first else ""
         build_cmd = f"""
             cd {SATURN_ZEPHYR_BASE} && \
             source scripts/set_envvars_sdk.sh && \
             source tools/miniforge3/etc/profile.d/conda.sh && \
             conda activate zephyr && \
-            west build -p -b spike_riscv64 -d {build_dir} {app_dir}
+            west build {pristine_flag} -b spike_riscv64 -d {build_dir} {app_dir}
         """
         result = subprocess.run(
             ["bash", "-c", build_cmd],
@@ -351,7 +291,7 @@ def run_firesim_batch(binary_path: pathlib.Path,
         raise RuntimeError(f"firesim runworkload failed with return code {runworkload.returncode}")
 
     logger.info("FireSim runworkload finished")
-    time.sleep(2)  
+    time.sleep(2)
 
     current_results_dirs = sorted(results_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True) if results_dir.exists() else []
     new_dirs = [d for d in current_results_dirs if d not in orig_results_dirs]
@@ -434,7 +374,7 @@ class SaturnEvalBackend(EvalBackend):
             self.firesim_path = None
 
     def __repr__(self):
-        return f"SaturnHardwareBackend(vlen={self.vlen}, elen={self.elen})"
+        return f"SaturnEvalBackend(vlen={self.vlen}, elen={self.elen})"
 
     def evaluate_code_spike(self, prob: Prob, code_strs: list[str]) -> List[dict]:
         """Convenience method for spike-only evaluation."""
@@ -471,17 +411,13 @@ class SaturnEvalBackend(EvalBackend):
             test_codes = [test.get_test_code([code_str]) for code_str in clean_code_strs]
 
             # Run spike in parallel
-            test_output_per_code_str = run_spike_mp(
-                test_codes,
-                timeout=SATURN_SPIKE_TIMEOUT * len(code_strs)  # Scale timeout with batch size
-            )
+            test_output_per_code_str = run_spike_mp(test_codes)
 
             # Parse results
             for code_i, test_output in enumerate(test_output_per_code_str):
                 if "Correct" in test_output:
                     logger.debug("Code %d, Test %d: Correct result", code_i, test_i)
                     stats[code_i]["test_results"][test_i] = True
-                    # stats[code_i]["stdout"] = test_output
 
                     # Extract latency from spike output
                     if simulator == "spike" and "Generated implementation latency" in test_output:
@@ -525,19 +461,18 @@ class SaturnEvalBackend(EvalBackend):
                         passing_codes, passing_indices, prob
                     )
 
-                    # 3. Update stats with FireSim latencies
+                    # Update stats with FireSim latencies
                     for orig_idx, latency in firesim_latencies.items():
                         if latency is not None:
                             stats[orig_idx]["firesim_latency"] = latency
-                            stats[orig_idx]["latency"] = latency 
+                            stats[orig_idx]["latency"] = latency
                             logger.debug("FireSim latency for candidate %d: %d cycles", orig_idx, latency)
                     missing_indices = set(passing_indices) - set(firesim_latencies.keys())
-                    if missing_indices: 
+                    if missing_indices:
                         msg = "FireSim did not return latency for candidate"
                         for orig_idx in missing_indices:
                             stats[orig_idx]["correct"] = False
                             stats[orig_idx]["stderr"] = msg
-    
 
         logger.debug("Evaluation stats: %s", stats)
         return stats
@@ -562,9 +497,8 @@ class SaturnEvalBackend(EvalBackend):
             passing_codes, passing_indices, first_test, prob
         )
 
-        # Compile for FireSim
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        binary_result = build_firesim_binary(combined_code, timestamp)
+        # Compile for FireSim (uses stable build slot for incremental builds)
+        binary_result = build_firesim_binary(combined_code)
 
         if isinstance(binary_result, str):
             raise RuntimeError(f"Failed to compile FireSim binary: {binary_result}")
@@ -713,8 +647,8 @@ if __name__ == "__main__":
     files = [SOLS_DIR / "qs8" / "qs8-vaddc.c"]
     if files[0].exists():
         code_str = files[0].read_text()
-        code_strs = [code_str, code_str, code_str] 
-        backend = SaturnHardwareBackend()
+        code_strs = [code_str, code_str, code_str]
+        backend = SaturnEvalBackend()
         stats = backend.evaluate_code(prob, code_strs, "firesim")
         for i, stat in enumerate(stats):
             print(f"  Candidate {i}: {stat}")
