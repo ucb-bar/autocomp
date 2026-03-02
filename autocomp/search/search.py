@@ -174,6 +174,8 @@ class SearchStrategy:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
             self.evaluate_candidates([orig_code_candidate], self.metric) # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
+                if orig_code_candidate.stderr:
+                    logger.error("Initial code failed with error: %s", orig_code_candidate.stderr)
                 raise ValueError("Initial code is incorrect.")
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates([orig_code_candidate], 0)  # Add the initial code as the first candidate
@@ -687,11 +689,11 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode", "saturn"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "saturn"
-    simulator = None # "firesim" or "spike" if backend_name == "gemmini" or backend_name == "saturn"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    backend_name = "saturn"  # Options: "gemmini", "trn", "kernelbench", "gpumode", "saturn"
+    agent_name = "saturn"  # Options: "gemmini", "trn", "cuda", "saturn"
+    simulator = "spike" # "firesim" or "spike" if backend_name == "gemmini" or backend_name == "saturn"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    hw_config = SaturnHardwareConfig(vlen=512, dlen=256)
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
@@ -706,7 +708,7 @@ def main():
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
+    prob_type = "f32" # see README.md or sols directory for available problems
     prob_id = 1
 
     # Reimplement failed candidates

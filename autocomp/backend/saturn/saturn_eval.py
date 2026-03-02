@@ -12,8 +12,8 @@ from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
-SATURN_CHIPYARD_PATH = "/scratch/charleshong/rvv/chipyard"
-SATURN_ZEPHYR_BASE = "/scratch/charleshong/rvv/zephyr-chipyard-sw"  # Zephyr installation root
+SATURN_CHIPYARD_PATH = "/scratch/charleshong/saturn-tutorial/chipyard"
+SATURN_ZEPHYR_BASE = "/scratch/charleshong/saturn-tutorial/zephyr-chipyard-sw"  # Zephyr installation root
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
@@ -66,7 +66,7 @@ def build_single(code_contents: str, candidate_idx: int, timestamp: str, return_
 
     Results are stored in return_dict with keys:
         - "binary": pathlib.Path on success, None on failure
-        - "error": error string on failure, None on success
+        - "stderr": error string on failure, None on success
         - "work_dir": path to the work directory
     """
     unique_id = f"{timestamp}_candidate{candidate_idx}"
@@ -100,28 +100,29 @@ def build_single(code_contents: str, candidate_idx: int, timestamp: str, return_
         result = subprocess.run(
             ["bash", "-c", build_cmd],
             capture_output=True,
-            timeout=SATURN_COMPILE_TIMEOUT
+            timeout=SATURN_COMPILE_TIMEOUT,
+            errors="ignore",
         )
         if result.returncode != 0:
             return_dict["binary"] = None
-            return_dict["error"] = f"Compile error: {result.stderr.decode()}"
+            return_dict["stderr"] = f"Compile error: {result.stderr}"
             return
 
         binary = build_dir / "zephyr" / "zephyr.elf"
         if not binary.exists():
             return_dict["binary"] = None
-            return_dict["error"] = f"Compile error: binary not found at {binary}"
+            return_dict["stderr"] = f"Compile error: binary not found at {binary}"
             return
 
         return_dict["binary"] = str(binary)
-        return_dict["error"] = None
+        return_dict["stderr"] = None
 
     except subprocess.TimeoutExpired:
         return_dict["binary"] = None
-        return_dict["error"] = "Compile timeout"
+        return_dict["stderr"] = "Compile timeout"
     except Exception as e:
         return_dict["binary"] = None
-        return_dict["error"] = f"Build error: {str(e)}"
+        return_dict["stderr"] = f"Build error: {str(e)}"
 
 
 def run_spike_on_binary(binary_path: pathlib.Path, return_dict: dict, timeout: float = SATURN_SPIKE_TIMEOUT):
@@ -187,7 +188,7 @@ def run_spike_mp(code_contents_lst: list[str], timeout: float = SATURN_SPIKE_TIM
         if return_dict.get("binary"):
             binary_paths.append((code_i, pathlib.Path(return_dict["binary"])))
         else:
-            results[code_i] = return_dict.get("error", "Build failed")
+            results[code_i] = return_dict.get("stderr", "Build failed")
 
     logger.info("Built %d/%d candidates successfully", len(binary_paths), len(code_contents_lst))
 
