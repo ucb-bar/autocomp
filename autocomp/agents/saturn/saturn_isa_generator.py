@@ -12,7 +12,7 @@ import json
 
 from autocomp.common import logger, LLMClient
 from autocomp.search.prob import Prob
-from autocomp.agents.saturn.saturn_config import SaturnConfig
+from autocomp.hw_config import SaturnHardwareConfig
 
 # Map problem types to relevant kernel categories
 workload_to_kernel_dict = {
@@ -55,7 +55,7 @@ class SaturnIsaGenerator:
         "optimization_guide": "Saturn optimization tips: LMUL tuning, chaining, sequencer balancing, memory patterns, FMA saturation",
     }
 
-    def __init__(self, config: SaturnConfig = None, llm_client: Optional[LLMClient] = None):
+    def __init__(self, config: SaturnHardwareConfig = None, llm_client: Optional[LLMClient] = None):
         """Initialize the ISA generator.
         
         Args:
@@ -63,7 +63,7 @@ class SaturnIsaGenerator:
             llm_client: Optional LLM client for automatic section selection.
                        If None, all sections are included by default.
         """
-        self.config = config or SaturnConfig()
+        self.config = config or SaturnHardwareConfig()
         self.llm_client = llm_client
         self.isa_dict = self._build_isa_dict()
 

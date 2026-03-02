@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 # Set XNNPACK directory
-set(XNNPACK_DIR /scratch/kchern2/zephyr-chipyard-sw/third-party/XNNPACK)
+set(XNNPACK_DIR ${ZEPHYR_BASE}/third-party/XNNPACK)
 
 # Set XNNPACK build options (disable tests and benchmarks for faster builds)
 set(XNNPACK_ENABLE_RISCV_VECTOR ON CACHE BOOL "Build XNNPACK with RISC-V Vector micro-kernels")

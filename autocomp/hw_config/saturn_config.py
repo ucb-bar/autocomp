@@ -33,6 +33,10 @@ class SaturnHardwareConfig:
     mul_latency: int = 3
     int_latency: int = 1
     
+    def get_hw_description(self) -> str:
+        """Get a description of the hardware configuration."""
+        return f"SaturnHardwareConfig(vlen={self.vlen}, dlen={self.dlen})"
+    
     def __post_init__(self):
         """Validate configuration."""
         if self.dlen > self.vlen:

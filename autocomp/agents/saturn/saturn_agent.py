@@ -13,7 +13,7 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
-from autocomp.agents.saturn.saturn_config import SaturnConfig
+from autocomp.hw_config import SaturnHardwareConfig
 from autocomp.agents.saturn.saturn_isa_generator import SaturnIsaGenerator
 
 
@@ -25,7 +25,7 @@ class SaturnLLMAgent(LLMAgent):
     at initialization (or on first use) and cached for all subsequent prompts.
     """
 
-    def __init__(self, model, config: SaturnConfig = None, use_llm_isa_selection: bool = False):
+    def __init__(self, model, config: SaturnHardwareConfig = None, use_llm_isa_selection: bool = False):
         """Initialize the Saturn LLM Agent.
         
         Args:
@@ -37,7 +37,7 @@ class SaturnLLMAgent(LLMAgent):
                                    Default is False (include all sections).
         """
         super().__init__(model)
-        self.config = config or SaturnConfig()
+        self.config = config or SaturnHardwareConfig()
         self.use_llm_isa_selection = use_llm_isa_selection
         
         # Pass config and LLM client to ISA generator
