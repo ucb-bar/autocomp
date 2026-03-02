@@ -7,11 +7,15 @@ from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.trn.prompts import fusion_example
 from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
+from autocomp.hw_config.trn_config import TrnHardwareConfig
+from autocomp.backend.eval_backend import EvalBackend
 
 
 class TrnLLMAgent(LLMAgent):
-    def __init__(self, model):
+    def __init__(self, model, hw_config: TrnHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
+        self.hw_config = hw_config
+        self.eval_backend = eval_backend
         self.nki_isa_generator = NkiIsaGenerator()
 
     def __repr__(self):
@@ -33,15 +37,16 @@ class TrnLLMAgent(LLMAgent):
             "overlap data movement and compute",
             "improve data layout and access patterns",
             "loop reordering and restructuring",
+            "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
+            "Add additional loop levels so larger blocks of data can be loaded",
             "avoid rematerializing",
-            "inline a function so it can be more easily optimized and fused",
             "skip computation when it is not needed (e.g. it is completely masked out)",
             "fuse loops (reordering if necessary)",
             "increase reuse by keeping data in SBUF across outer loop iterations",
             "hoist redundant operations out of loops",
             "delay softmax division until after all reductions are complete",
-            "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
-            "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
+            # "Perform nc_matmul on large contiguous blocks within its own affine_range loop to maximize compute throughput.",
+            # "Group nc_matmul calls into larger blocks, organizing inputs ahead of time, to maximize Tensor Engine utilization.",
             "do operations in lower precision such as nl.bfloat16",
             "double buffering",
             "fuse multiple instructions into one, for example by doing reduction inside nisa.activation()",
@@ -60,35 +65,37 @@ class TrnLLMAgent(LLMAgent):
             "use the streaming softmax with running max and scaling trick",
             "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
-            "Load larger blocks of data to increase SBUF data reuse and reduce memory traffic",
-            "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
             "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
             "Scan carry-over to parallelize the scan operation",
             "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Kernel Fusion via SBUF residency",
-            "Modify one particular parameter to maximize performance",
-            "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
+            "Add a small fixed-size inner loop as a compiler hint",
+            "Modify one particular parameter",
+            "Target the specific data shapes and shapes of the input and output tensors",
             "Tile Vector Engine instructions in loops of size 128 to coalesce them",
             "Use a different engine for an operation",
+            "inline a function so it can be more easily optimized and fused",
             # "Replace general-purpose code with faster specialized instructions",
             # "transpose inside the NKI kernel",
             # "move non-NKI code into the NKI kernel",
             "Overlap execution across compute engines through pipelining",
             "Swap stationary and moving tensors in nc_matmul",
             "Use conditional execution instead of masking, or vice versa",
-            "Simplify or eliminate any unnecessary code"
+            "Simplify or eliminate any unnecessary code",
             "Other methods not listed here.",
         ]
 
     def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
-        rules = ["The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-                #  "Use proper NKI syntax and decorators (@nki.jit).",
-                #  "Ensure proper memory buffer usage (sbuf, psum, hbm).",
+        rules = []
+        rules.extend(self.hw_config.get_hw_config_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
+        rules.extend([
+                 "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
+                 "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
                  "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
                  "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
-                #  "Try to use the nki.language and nki.isa functions defined above.",
-                ]
+                ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
             if random.random() < 0.4:
@@ -137,7 +144,7 @@ class TrnLLMAgent(LLMAgent):
                                           shuffle_opts: bool, 
                                           give_score_feedback: float,
                                           give_util_feedback: float,
-                                          give_spad_acc_feedback: float,
+                                          give_hw_feedback: float,
                                           include_ancestors: bool,
                                           plan_icl_examples: bool,
                                           cur_iter: int,

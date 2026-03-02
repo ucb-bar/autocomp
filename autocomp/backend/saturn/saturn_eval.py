@@ -9,7 +9,7 @@ from typing import List
 
 from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob
-from autocomp.backend.hardware_backend import HardwareBackend
+from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
 SATURN_CHIPYARD_PATH = "/scratch/charleshong/rvv/chipyard"
@@ -406,8 +406,7 @@ def parse_firesim_uartlog(log_path: str) -> dict[int, int]:
     return results
 
 
-
-class SaturnHardwareBackend(HardwareBackend):
+class SaturnEvalBackend(EvalBackend):
     """
     Hardware backend for evaluating RVV code on Saturn core using spike/FireSim.
 

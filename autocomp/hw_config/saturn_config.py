@@ -11,7 +11,7 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
-class SaturnConfig:
+class SaturnHardwareConfig:
     """Hardware configuration for a Saturn vector unit instance.
     
     Default values match the recommended GENV256D128ShuttleConfig:

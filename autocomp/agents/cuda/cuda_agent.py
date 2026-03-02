@@ -6,10 +6,14 @@ from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.agents.cuda.prompts import tensor_examples
+from autocomp.hw_config.cuda_config import CudaHardwareConfig
+from autocomp.backend.eval_backend import EvalBackend
 
 class CudaLLMAgent(LLMAgent):
-    def __init__(self, model):
+    def __init__(self, model, hw_config: CudaHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
+        self.hw_config = hw_config
+        self.eval_backend = eval_backend
 
     def _get_convert_to_cuda_menu_options(self) -> list[str]:
         return [
@@ -19,7 +23,7 @@ class CudaLLMAgent(LLMAgent):
             # "Convert a PyTorch operation to Triton code",
         ]
 
-    def get_opt_menu_options(self) -> list[str]:
+    def get_opt_menu_options(self, prob: Prob = None) -> list[str]:
         return [
             # "Convert PyTorch code to functional PyTorch code",
             "Convert an operation to optimized CUDA C++ code",
@@ -55,7 +59,7 @@ class CudaLLMAgent(LLMAgent):
             "Use cuBLASLt for Tensor Core GEMM operations",
             "Use cuBLASLt, cuBLAS, or cuDNN for GEMM and convolution operations instead of custom kernels",
             "Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)",
-            "Use PyTorch's tensor core APIs (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores",
+            "Use PyTorch's tensor core APIs (torch.eval_backends.cuda.matmul.allow_tf32, torch.eval_backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores",
             "Use lower precision (e.g. bfloat16, float16, float8_e4m3fn) for computations",
             "Quantize weights or activations where accuracy permits (e.g. bfloat16)",
             "Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)",
@@ -102,15 +106,13 @@ class CudaLLMAgent(LLMAgent):
         return []
     
     def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
-        rules = [
-            "You will be running the code on an NVIDIA L40S GPU with PyTorch 2.5.0 and CUDA 12.4",
+        rules = []
+        rules.extend(self.hw_config.get_hw_config_specific_rules())
+        rules.extend(self.eval_backend.get_backend_specific_rules())
+        rules.extend([
             "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-            "All generated code should be contained in a single Python file (inline CUDA code is allowed).",
-            "Only class ModelNew will be imported during evaluation. Feel free to define other variables, functions, or classes, but make sure they are used by ModelNew.",
-            "When using torch.utils.cpp_extension load() or load_inline(), make sure to place C++ code in cpp_sources and CUDA code in cuda_sources.",
-            "Do not use the `function` argument of load_inline(), make a PYBIND11 binding instead.",
             "Do not add fallback paths that revert to the original code.",
-        ]
+        ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
         if coding:
@@ -128,19 +130,19 @@ class CudaLLMAgent(LLMAgent):
                                           shuffle_opts: bool, 
                                           give_score_feedback: float,
                                           give_util_feedback: float,
-                                          give_spad_acc_feedback: float,
+                                          give_hw_feedback: float,
                                           include_ancestors: bool,
                                           plan_icl_examples: bool,
                                           cur_iter: int,
                                           num_iters: int,
                                           dropout_menu_options: float,
                                           translate: bool,
-                                         ) -> list[str]:
+                                         ) -> str:
         # Select which menu options will appear
         if translate:
             opt_lst = self._get_convert_to_cuda_menu_options()
         else:
-            opt_lst = self.get_opt_menu_options()
+            opt_lst = self.get_opt_menu_options(prob)
             if dropout_menu_options < 1 and not force_opt_menu:
                 opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
             if shuffle_opts:
@@ -195,7 +197,7 @@ Speedup can be increased by using the following optimizations:
         return prompt_text
 
 
-    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> list[CodeCandidate]:
+    def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> str:
         prompt_text = ""
         if "tensor core" in candidate.plan.lower():
             if random.random() < 0.5:
