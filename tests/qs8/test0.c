@@ -77,8 +77,6 @@ unsigned long read_cycles() {
     return cc;
 }
 
-// Compatibility macros for code injected by get_test_code()
-#define gemmini_flush(x) do {} while(0)  // no-op for Saturn
 
 // Reset state macro for FireSim batched runs
 // Resets variables that get modified during candidate execution

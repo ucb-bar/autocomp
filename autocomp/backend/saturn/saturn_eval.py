@@ -9,7 +9,7 @@ import os
 from typing import List
 
 from autocomp.common import logger, SOLS_DIR
-from autocomp.search.prob import Prob
+from autocomp.search.prob import Prob, Test
 from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
@@ -61,6 +61,50 @@ def clean_code(code_str: str) -> str:
     end = after_void_test_str.rfind('}')
     body = after_void_test_str[start:end]
     return body
+
+
+class SaturnTest(Test):
+    def get_test_code(self, sol_code_strs: list[str], check_correct: bool=True, error_on_incorrect: bool=True, repeat_iters=None) -> str:
+        combined_sol_code_str = ""
+        for code_str in sol_code_strs:
+            code_lines = [
+                "fence();",
+                "unsigned long generated_implementation_start_cycle = read_cycles();",
+                "{",
+                code_str,
+                "}",
+                "fence();",
+                "unsigned long generated_implementation_end_cycle = read_cycles();",
+            ]
+            if check_correct:
+                code_lines.append("if (!full_is_equal(OUTPUT_MATRIX_NAME, gold)) {")
+                if error_on_incorrect:
+                    code_lines.append('printf("Incorrect result\\n");')
+                    code_lines.append('exit(1);')
+                else:
+                    code_lines.append('printf("Generated implementation latency: 99999999999 cycles\\n");')
+                code_lines.extend([
+                    "} else {",
+                    'printf("Generated implementation latency: %d cycles\\n", generated_implementation_end_cycle - generated_implementation_start_cycle);',
+                    "}",
+                ])
+            else:
+                code_lines.append('printf("Generated implementation latency: %d cycles\\n", generated_implementation_end_cycle - generated_implementation_start_cycle);')
+            for code_line in code_lines:
+                combined_sol_code_str += " "*4 + code_line + "\n"
+        
+        modified_test_code = self.modify_test_code(combined_sol_code_str)
+        lines = modified_test_code.splitlines()
+
+        for line_i, line in enumerate(lines):
+            if repeat_iters is not None:
+                if "#define REPEAT_TEST_ITERS" in line:
+                    lines[line_i] = f"#define REPEAT_TEST_ITERS {repeat_iters}"
+            if not check_correct:
+                if "#define RUN_BASELINE_CODE" in line:
+                    lines[line_i] = "#define RUN_BASELINE_CODE 0"
+
+        return "\n".join(lines)
 
 
 MAX_BUILD_SLOTS = min(8,os.cpu_count())
@@ -353,11 +397,14 @@ class SaturnEvalBackend(EvalBackend):
         """Convenience method for FireSim evaluation."""
         return self.evaluate_code(prob, code_strs, "firesim")
 
-    def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
+    def evaluate_code(self, prob, code_strs: list[str], simulator: str) -> List[dict]:
         """
         Evaluate code candidates and return results.
 
         """
+        # Wrap tests with SaturnTest for customizable test behavior
+        saturn_tests = [SaturnTest(t.test_file) for t in prob.tests]
+
         if not self.saturn_path or not self.saturn_path.exists():
             raise ValueError(
                 "Saturn path not configured. Set SATURN_CHIPYARD_PATH environment variable "
@@ -373,7 +420,7 @@ class SaturnEvalBackend(EvalBackend):
         # Clean code strings (remove wrapper functions)
         clean_code_strs = [clean_code(code_str) for code_str in code_strs]
         # Run each test
-        for test_i, test in enumerate(prob.tests):
+        for test_i, test in enumerate(saturn_tests):
             logger.info("Running spike on %d code candidates for test %d", len(code_strs), test_i)
 
             # Get test code with each candidate injected
@@ -455,10 +502,11 @@ class SaturnEvalBackend(EvalBackend):
 
         """
         # Get test template for concatenation
-        if not prob.tests:
+        saturn_tests = [SaturnTest(t.test_file) for t in prob.tests]
+        if not saturn_tests:
             raise ValueError("No tests available for FireSim template")
 
-        first_test = prob.tests[0]
+        first_test = saturn_tests[0]
 
         # Build concatenated test code
         # We use the test's template but with all passing codes as separate functions
