@@ -384,7 +384,6 @@ class SaturnEvalBackend(EvalBackend):
 
             # Parse results
             for code_i, test_output in enumerate(test_output_per_code_str):
-                logger.info("Code %d, output %s", code_i, test_output)
                 if "Correct" in test_output:
                     logger.debug("Code %d, Test %d: Correct result", code_i, test_i)
                     stats[code_i]["test_results"][test_i] = True
@@ -395,19 +394,21 @@ class SaturnEvalBackend(EvalBackend):
                             latency_str = test_output.split("Generated implementation latency: ")[-1]
                             sol_latency = int(latency_str.split(" cycles")[0])
                             stats[code_i]["latency"] = sol_latency
+                            logger.info("Code %d, latency %d cycles", code_i, sol_latency)
                         except (ValueError, IndexError):
                             logger.warning("Failed to parse latency from spike output for code %d", code_i)
                 else:
-                    logger.debug("Code %d, Test %d: Incorrect result", code_i, test_i)
                     stats[code_i]["test_results"][test_i] = False
                     stats[code_i]["correct"] = False
                     stats[code_i]["stderr"] = test_output
 
                     # Log specific error type
-                    if test_output == "Compile error":
-                        logger.debug("Code %d: Compilation failed", code_i)
-                    elif test_output == "Timeout":
-                        logger.debug("Code %d: Spike timeout", code_i)
+                    if "Compile error" in test_output:
+                        logger.info("Code %d: Compilation failed", code_i)
+                    elif "Timeout" in test_output:
+                        logger.info("Code %d: Spike timeout", code_i)
+                    else:
+                        logger.info("Code %d, Test %d: Incorrect output", code_i, test_i)
 
         # FireSim evaluation - run passing candidates on FireSim for accurate latency
         if simulator == "firesim":
