@@ -13,12 +13,12 @@ from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
-SATURN_CHIPYARD_PATH = "/scratch/charleshong/saturn-tutorial/chipyard"
-SATURN_ZEPHYR_BASE = "/scratch/charleshong/saturn-tutorial/zephyr-chipyard-sw"  # Zephyr installation root
+SATURN_CHIPYARD_PATH = "/home/ubuntu/environment/chipyard"
+SATURN_ZEPHYR_BASE = "/home/ubuntu/environment/zephyr-chipyard-sw"  # Zephyr installation root
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
-SATURN_COMPILE_TIMEOUT = 120.0
+SATURN_COMPILE_TIMEOUT = 180.0
 SATURN_FIRESIM_TIMEOUT = 500.0
 
 FIRESIM_REPEAT_ITERS = 15
@@ -63,7 +63,7 @@ def clean_code(code_str: str) -> str:
     return body
 
 
-MAX_BUILD_SLOTS = min(8,os.cpu_count())
+MAX_BUILD_SLOTS = min(4,os.cpu_count()//2)
 
 
 def _build_and_run_spike(args: tuple) -> tuple:
@@ -384,6 +384,7 @@ class SaturnEvalBackend(EvalBackend):
 
             # Parse results
             for code_i, test_output in enumerate(test_output_per_code_str):
+                logger.info("Code %d, output %s", code_i, test_output)
                 if "Correct" in test_output:
                     logger.debug("Code %d, Test %d: Correct result", code_i, test_i)
                     stats[code_i]["test_results"][test_i] = True
