@@ -31,28 +31,31 @@ class SaturnIsaGenerator:
     the code and determine which documentation sections are most relevant.
     """
 
-    # Available ISA documentation sections
-    AVAILABLE_SECTIONS = [
-        "architecture",  # Saturn architecture overview
-        "vsetvl",        # Vector configuration (vsetvl)
+    # Sections always included (no need for LLM to select these)
+    ALWAYS_INCLUDED_SECTIONS = [
+        "architecture",
+        "vsetvl",
+        "optimization_guide",
+    ]
+
+    # Sections the LLM chooses from based on code analysis
+    SELECTABLE_SECTIONS = [
         "memory",        # Memory operations (loads/stores)
         "arithmetic",    # Arithmetic operations (add, mul, fma, etc.)
         "reduction",     # Reduction operations (sum, max, min)
         "permutation",   # Permutation operations (slide, gather, compress)
         "mask",          # Mask operations (comparisons, predication)
-        "optimization_guide",  # Saturn-specific optimization tips
     ]
 
-    # Section descriptions for LLM selection
+    AVAILABLE_SECTIONS = ALWAYS_INCLUDED_SECTIONS + SELECTABLE_SECTIONS
+
+    # Descriptions only for selectable sections (used in LLM prompt)
     SECTION_DESCRIPTIONS = {
-        "architecture": "Saturn Vector Unit architecture overview: VLEN, DLEN, LMUL, chime length, memory system, execution units, chaining, issue queues",
-        "vsetvl": "Vector configuration (vsetvl) intrinsics and stripmining patterns for setting vector length and type",
         "memory": "Vector memory operations: unit-stride, strided, indexed (gather/scatter), and segmented loads/stores",
         "arithmetic": "Vector arithmetic: integer ops, floating-point ops, FMA, widening operations, min/max",
         "reduction": "Vector reductions: sum, max, min reductions with optimized accumulation patterns",
         "permutation": "Vector permutations: slide operations, register gather, compress, broadcast/move",
         "mask": "Vector masking: comparisons, masked operations, mask manipulation, predicated execution",
-        "optimization_guide": "Saturn optimization tips: LMUL tuning, chaining, sequencer balancing, memory patterns, FMA saturation",
     }
 
     def __init__(self, config: SaturnHardwareConfig = None, llm_client: Optional[LLMClient] = None):
@@ -584,58 +587,38 @@ out = __riscv_vfmacc_vf_f64m2(out, filter[2], row_s2, vl);
         Returns:
             Concatenated ISA documentation string with relevant sections.
         """
-        # Determine which sections to include
         if use_llm_selection and code and self.llm_client:
-            sections_to_include = self.select_relevant_sections(code)
-            logger.info(f"LLM selected sections: {sections_to_include}")
+            selected_sections = self.select_relevant_sections(code)
+            logger.info(f"LLM selected sections: {selected_sections}")
         else:
-            # Default: include all sections
-            sections_to_include = self.AVAILABLE_SECTIONS
-        
-        sections = []
-        
-        # Always include architecture overview first
-        if "architecture" in sections_to_include:
-            sections.append(self.isa_dict["architecture"]["description"])
-        
-        # Always include vsetvl (fundamental to RVV)
-        if "vsetvl" in sections_to_include:
-            sections.append(self.isa_dict["vsetvl"])
-        
-        # Include other sections based on selection
-        if "memory" in sections_to_include:
-            sections.append(self.isa_dict["memory"])
-        
-        if "arithmetic" in sections_to_include:
-            sections.append(self.isa_dict["arithmetic"])
-        
-        if "reduction" in sections_to_include:
-            sections.append(self.isa_dict["reduction"])
-        
-        if "permutation" in sections_to_include:
-            sections.append(self.isa_dict["permutation"])
-        
-        if "mask" in sections_to_include:
-            sections.append(self.isa_dict["mask"])
-        
-        # Always include optimization guide last
-        if "optimization_guide" in sections_to_include:
-            sections.append(self.isa_dict["optimization_guide"])
+            selected_sections = self.SELECTABLE_SECTIONS
+
+        sections = [
+            self.isa_dict["architecture"]["description"],
+            self.isa_dict["vsetvl"],
+        ]
+        for name in self.SELECTABLE_SECTIONS:
+            if name in selected_sections:
+                sections.append(self.isa_dict[name])
+        sections.append(self.isa_dict["optimization_guide"])
         
         return "\n\n".join(sections)
 
     def select_relevant_sections(self, code: str) -> list[str]:
         """Use LLM to analyze code and select relevant ISA documentation sections.
         
+        Only selects from SELECTABLE_SECTIONS; ALWAYS_INCLUDED_SECTIONS are
+        added programmatically by generate_isa.
+        
         Args:
             code: Source code to analyze
             
         Returns:
-            List of section names that are relevant to the code.
+            List of selectable section names that are relevant to the code.
         """
         if not self.llm_client:
-            logger.warning("No LLM client configured, returning all sections")
-            return self.AVAILABLE_SECTIONS
+            logger.warning("No LLM client configured, returning all selectable sections")
+            return self.SELECTABLE_SECTIONS
         
         prompt = self._build_section_selection_prompt(code)
         
@@ -643,22 +626,15 @@ out = __riscv_vfmacc_vf_f64m2(out, filter[2], row_s2, vl);
             response = self.llm_client.chat(
                 prompt=prompt,
                 num_candidates=1,
-                temperature=0.0  # Deterministic for consistency
+                temperature=0.0
             )[0]
             
             selected = self._parse_section_selection_response(response)
-            
-            # Ensure we always have at least architecture and optimization_guide
-            if "architecture" not in selected:
-                selected.insert(0, "architecture")
-            if "optimization_guide" not in selected:
-                selected.append("optimization_guide")
-            
             return selected
             
         except Exception as e:
-            logger.warning(f"LLM section selection failed: {e}, returning all sections")
-            return self.AVAILABLE_SECTIONS
+            logger.warning(f"LLM section selection failed: {e}, returning all selectable sections")
+            return self.SELECTABLE_SECTIONS
 
     def select_relevant_sections_batch(self, codes: list[str]) -> list[list[str]]:
         """Batch version of select_relevant_sections for multiple code samples.
@@ -667,11 +643,11 @@ out = __riscv_vfmacc_vf_f64m2(out, filter[2], row_s2, vl);
             codes: List of source code strings to analyze
             
         Returns:
-            List of section name lists, one per code sample.
+            List of selectable section name lists, one per code sample.
         """
         if not self.llm_client:
-            logger.warning("No LLM client configured, returning all sections for all codes")
-            return [self.AVAILABLE_SECTIONS for _ in codes]
+            logger.warning("No LLM client configured, returning all selectable sections for all codes")
+            return [self.SELECTABLE_SECTIONS for _ in codes]
         
         prompts = [self._build_section_selection_prompt(code) for code in codes]
         
@@ -686,20 +662,13 @@ out = __riscv_vfmacc_vf_f64m2(out, filter[2], row_s2, vl);
             for response_list in responses:
                 response = response_list[0] if response_list else ""
                 selected = self._parse_section_selection_response(response)
-                
-                # Ensure minimum sections
-                if "architecture" not in selected:
-                    selected.insert(0, "architecture")
-                if "optimization_guide" not in selected:
-                    selected.append("optimization_guide")
-                
                 results.append(selected)
             
             return results
             
         except Exception as e:
-            logger.warning(f"LLM batch section selection failed: {e}, returning all sections")
-            return [self.AVAILABLE_SECTIONS for _ in codes]
+            logger.warning(f"LLM batch section selection failed: {e}, returning all selectable sections")
+            return [self.SELECTABLE_SECTIONS for _ in codes]
 
     def _build_section_selection_prompt(self, code: str) -> str:
         """Build prompt for LLM to select relevant ISA sections."""
@@ -715,20 +684,21 @@ CODE:
 {code}
 ```
 
-AVAILABLE SECTIONS:
+Note: Architecture overview, vsetvl, and the optimization guide are always provided separately.
+
+ADDITIONAL SECTIONS TO SELECT FROM:
 {section_list}
 
-Based on the operations used in the code and potential optimization opportunities, select the most relevant sections.
+Based on the operations used in the code and potential optimization opportunities, select the relevant sections from the list above.
 
 Rules:
 1. Select sections that cover operations actually used in the code
 2. Select sections that cover operations that could be used to optimize the code
-3. Always include "architecture" and "optimization_guide" 
-4. Be safe - include sections that aren't sure about but could be relevant
-5. Consider what transformations might improve performance
+3. Be inclusive - include sections you aren't sure about but could be relevant
+4. Consider what transformations might improve performance
 
 Respond with a JSON object containing a single key "sections" with a list of section names.
-Example: {{"sections": ["architecture", "memory", "arithmetic", "optimization_guide"]}}
+Example: {{"sections": ["memory", "arithmetic"]}}
 
 Your response (JSON only):"""
 
@@ -748,11 +718,11 @@ Your response (JSON only):"""
             sections = data.get("sections", [])
             
             # Validate section names
-            valid_sections = [s for s in sections if s in self.AVAILABLE_SECTIONS]
+            valid_sections = [s for s in sections if s in self.SELECTABLE_SECTIONS]
             
             if not valid_sections:
                 logger.warning(f"No valid sections in LLM response: {sections}")
-                return self.AVAILABLE_SECTIONS
+                return self.SELECTABLE_SECTIONS
             
             return valid_sections
             
@@ -766,11 +736,11 @@ Your response (JSON only):"""
         found = []
         text_lower = text.lower()
         
-        for section in self.AVAILABLE_SECTIONS:
+        for section in self.SELECTABLE_SECTIONS:
             if section.lower() in text_lower:
                 found.append(section)
         
-        return found if found else self.AVAILABLE_SECTIONS
+        return found if found else self.SELECTABLE_SECTIONS
 
     def get_workload_kernels(self, workload: str) -> list[str]:
         """Get relevant kernel categories for a workload."""
