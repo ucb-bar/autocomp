@@ -96,8 +96,7 @@ class TrnLLMAgent(LLMAgent):
                  "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
                  "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
-                 "The following imports have already been run: import neuronxcc.nki as nki; import neuronxcc.nki.isa as nisa; import neuronxcc.nki.language as nl; import neuronxcc.nki.typing as nt; import numpy as np;",
-                 "nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()), but they may have different arguments or functionality. Make sure to follow the documentation above."
+                 "The following imports have already been run: import nki as nki; import nki.isa as nisa; import nki.language as nl; import numpy as np;",
                 ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
