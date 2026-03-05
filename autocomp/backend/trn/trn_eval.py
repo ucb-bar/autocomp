@@ -312,7 +312,7 @@ _neff_paths = {repr(neff_paths)}
 _compile_errors = {repr(candidate_compile_errors)}
 _num_candidates = {num_candidates}
 _all_results = [None] * _num_candidates
-_NUM_CORRECTNESS_ROUNDS = 2
+_NUM_CORRECTNESS_ROUNDS = 3
 
 nrt_init()
 
@@ -358,7 +358,7 @@ for _idx in range(_num_candidates):
             for _r, _c in zip(_ro, _co):
                 if not np.allclose(
                     _r.astype(np.float32), _c.astype(np.float32),
-                    atol=1, rtol=1e-2,
+                    atol=1e-3, rtol=1e-3,
                 ):
                     _passed = False
                     break
