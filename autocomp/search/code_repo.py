@@ -117,7 +117,6 @@ class CodeRepository:
                 candidates.append(cand)
             except Exception as e:
                 logger.error("Error loading candidate from %s: %s", path, e)
-                import pdb; pdb.set_trace()
-                continue
+                raise e
         self.add_candidates(candidates, iteration)
         return len(candidates)
