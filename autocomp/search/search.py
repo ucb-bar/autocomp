@@ -13,6 +13,7 @@ from autocomp.backend.eval_backend import EvalBackend
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.agent_builder.built_agent import BuiltLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -57,6 +58,10 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+    elif agent_name == "built":
+        config_dir = hw_config._config_dir if hasattr(hw_config, '_config_dir') else f"autocomp/agents/{backend_name}"
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
