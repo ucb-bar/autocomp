@@ -1,0 +1,43 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- SBUF and PSUM are 2-dimensional with exactly 128 partitions; the first tensor dimension always maps to the partition dimension
+- HBM tensors are stored in flattened row-major layout; multi-dimensional tensors must be explicitly managed during DMA transfers
+- All data movement between memory levels must be explicitly programmed via DMA or tensor_copy operations; there are no hardware
+  caches
+- The partition dimension of on-chip tensors must be a multiple of 128 or at most 128 for full SBUF/PSUM utilization
+- PSUM is reserved for Tensor Engine matmul outputs and must be promptly evicted to SBUF to free space for subsequent operations
+- DMA optimal throughput requires ≥4 KiB per partition in the free dimension and using all 128 partitions (all 16 DMA engines
+  active)
+- 'Tiling is critical: on-chip SBUF capacity (24-28 MiB) limits working set size; poor tiling causes compiler-inserted HBM
+  spills'
+- The Tensor Engine has 10-40× the throughput of Vector/Scalar engines; maximize time in matmul and minimize element-wise/reduction
+  operations
+- Lower precision data types (cFP8, BF16) provide higher Tensor Engine throughput than FP32; use lowest precision maintaining
+  acceptable accuracy
+- DMA transfers are most efficient when the free dimension (innermost) is large and contiguous in HBM
+planning:
+- Limit the scope of the plan to the selected optimization.
+- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
+- Identify tiling strategy such that all tiles fit within SBUF capacity without compiler-inserted spills to HBM
+- 'Plan compute-DMA overlap using double-buffering: load next tile while computing on current tile to saturate DMA bandwidth'
+- Ensure tile sizes in the partition dimension are multiples of 128 or at most 128 to achieve full DMA engine utilization
+- Reshape/fold tensors to maximize bytes per partition (≥4 KiB) and use all 128 partitions when natural shapes are suboptimal
+- Plan to move matmul results from PSUM to SBUF immediately after nc_matmul to free PSUM for subsequent operations
+- For kernels larger than single tile, structure loops to hoist data loads to outer loops to avoid redundant HBM transfers
+- Verify input matrix dimensions are multiples of tile sizes (TILE_M, TILE_K, TILE_N) or plan padding/edge-case handling
+coding:
+- Wrap the generated code with ```python at the beginning and ``` at the end.
+- Use nki.isa.dma_copy for HBM↔SBUF transfers; do not attempt direct PSUM↔HBM transfers
+- Use nki.isa.tensor_copy to move data from PSUM to SBUF; PSUM output from nc_matmul cannot be directly written to HBM
+- Allocate result tensors in PSUM with nl.ndarray(..., buffer=nl.psum) immediately before nc_matmul; do not reuse PSUM allocations
+  across matmul operations
+- Use nl.affine_range() for compile-time loop unrolling over tile dimensions to expose parallelism across DMA and compute
+  engines
+- 'Verify tensor shape compatibility before operations: assert K == K_ for matmul contraction dimension; assert shapes match
+  for element-wise ops'
+- Use nl.tile_size constants (pmax, gemm_stationary_fmax, gemm_moving_fmax) to define tile dimensions; do not hardcode values
+- For dynamic loops, use nki.isa.register_alloc, register_load, register_store, and register_move to manage on-device register
+  state
+- Ensure SBUF tensor allocations do not exceed per-NeuronCore capacity (24 MiB for v2, 28 MiB for v3) across all active tensors
+  in a scope
