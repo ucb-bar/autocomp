@@ -321,9 +321,9 @@ class SearchStrategy:
     def init_wandb(self):
         # start a new wandb run to track this script
         wandb.init(
-            entity=,
+            entity="charleshong3-team",
             # set the wandb project where this run will be logged
-            project=None,
+            project="autocomp-tpu",
             # track hyperparameters and run metadata
             config=vars(self),
         )
@@ -691,21 +691,22 @@ def main():
     agent_name = "tpu"  # Options: "gemmini", "trn", "cuda"
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TpuHardwareConfig("tpu-vm-1s")
+    hw_config = TpuHardwareConfig("v6e-1")
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
+    # hw_config = TpuHardwareConfig("v6e-1")
 
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    # models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "aws::moonshotai.kimi-k2.5"]  # Models for planning
-    models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
+    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "gcp::gemini-3.1-pro-preview"]  # Models for planning
+    # models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 7
+    iterations = 6
     prob_type = "tpu" # see README.md or sols directory for available problems
     prob_id = 0
 
@@ -718,7 +719,7 @@ def main():
     early_stop_threshold = 1.0 # ratio threshold: current_best / best_N_ago >= threshold means no improvement
 
     # Beam search parameters
-    num_plan_candidates=6
+    num_plan_candidates=5
     num_code_candidates=2
     beam_size=3
 
