@@ -2,6 +2,9 @@
 Test the AgentBuilder by building an agent from a local source directory
 and inspecting the generated components.
 
+Output files (built configs, exported configs) are written to ./output/
+in the current working directory, NOT inside the package.
+
 Usage:
     # Dry run (test ingestion only, no LLM calls):
     python -m autocomp_tests.test_agent_builder --source-dir path/to/source --dry-run
@@ -13,19 +16,19 @@ Usage:
     python -m autocomp_tests.test_agent_builder --source-dir path/to/source --model anthropic::claude-sonnet-4-20250514
 
     # Inspect an already-built config dir:
-    python -m autocomp_tests.test_agent_builder --inspect autocomp/agent_builder/.built/trn
+    python -m autocomp_tests.test_agent_builder --inspect output/built/trn
 
     # Compare two built agents:
-    python -m autocomp_tests.test_agent_builder --inspect built/new_agent --compare-to built/ref_agent
+    python -m autocomp_tests.test_agent_builder --inspect output/built/new_agent --compare-to output/built/ref_agent
 
     # Build and compare against the hand-crafted trn agent:
     python -m autocomp_tests.test_agent_builder --source-dir path/to/source --compare-to-agent trn
 
     # Inspect a built agent and compare against the hand-crafted trn agent:
-    python -m autocomp_tests.test_agent_builder --inspect built/trn --compare-to-agent trn
+    python -m autocomp_tests.test_agent_builder --inspect output/built/trn --compare-to-agent trn
 
     # Re-run just one component (rules, optimization_menu, isa, architecture, examples):
-    python -m autocomp_tests.test_agent_builder --inspect built/trn --rerun rules
+    python -m autocomp_tests.test_agent_builder --inspect output/built/trn --rerun rules
 """
 
 import argparse
@@ -692,7 +695,7 @@ def _extract_keywords(strategies: list[str]) -> set[str]:
 # ------------------------------------------------------------------
 
 _DEFAULT_SOURCE = str(REPO_ROOT / "autocomp" / "agent_builder" / ".sources" / "aws-neuron-sdk")
-_DEFAULT_OUTPUT = str(REPO_ROOT / "autocomp" / "agent_builder" / ".built")
+_DEFAULT_OUTPUT = str(Path.cwd() / "output" / "built")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -703,7 +706,7 @@ def main():
     parser.add_argument("--agent-name", default="trn",
                         help="Name for the built agent")
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT,
-                        help="Base output directory for built agents")
+                        help="Base output directory for built agents (default: ./output/built)")
     parser.add_argument("--description", default="",
                         help="Context description for LLM prompts")
     parser.add_argument("--dry-run", action="store_true",
@@ -726,7 +729,7 @@ def main():
 
     # Resolve --compare-to-agent into a --compare-to dir
     if args.compare_to_agent:
-        export_dir = REPO_ROOT / "autocomp" / "agent_builder" / ".exported" / args.compare_to_agent
+        export_dir = Path.cwd() / "output" / "exported" / args.compare_to_agent
         export_agent_config(args.compare_to_agent, export_dir)
         args.compare_to = str(export_dir)
 
