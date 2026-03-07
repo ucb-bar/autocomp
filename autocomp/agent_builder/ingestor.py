@@ -199,6 +199,38 @@ class PDFLoader(SourceLoader):
         )
 
 
+_BLOCK_ELEMENTS = {
+    "address", "article", "aside", "blockquote", "br", "dd", "details",
+    "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure",
+    "form", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li",
+    "main", "ol", "p", "pre", "section", "summary", "table", "tbody",
+    "td", "tfoot", "th", "thead", "tr", "ul",
+}
+
+
+def _extract_text(soup) -> str:
+    """Extract text from BeautifulSoup, preserving inline formatting.
+
+    Block elements get newlines; inline elements get spaces.
+    """
+    from bs4 import NavigableString, Tag
+
+    parts: list[str] = []
+    for element in soup.descendants:
+        if isinstance(element, NavigableString):
+            text = element.strip()
+            if text:
+                parts.append(text)
+        elif isinstance(element, Tag):
+            if element.name in _BLOCK_ELEMENTS:
+                parts.append("\n")
+
+    raw = " ".join(parts)
+    # Collapse whitespace around newlines
+    lines = [line.strip() for line in raw.split("\n")]
+    return "\n".join(line for line in lines if line)
+
+
 class WebpageLoader(SourceLoader):
     """Fetches webpages, extracts text, optionally follows same-domain links."""
 
@@ -233,11 +265,11 @@ class WebpageLoader(SourceLoader):
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Remove script/style elements
+            # Remove script/style/nav elements
             for tag in soup(["script", "style", "nav", "footer", "header"]):
                 tag.decompose()
 
-            text = soup.get_text(separator="\n", strip=True)
+            text = _extract_text(soup)
             if text:
                 content[current_url] = text
 
