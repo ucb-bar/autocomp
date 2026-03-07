@@ -52,7 +52,7 @@ prob_to_name = {
 nki_isa_dict = {
     "architecture": {
         "description": """Kernel structure: Each NKI kernel has 3 stages — load data from HBM → SBUF, compute on NeuronCore, store results from SBUF → HBM.
-NKI Beta 2: Use namespace nki.* and nki.isa (not neuronxcc.nki.*). Mark top-level kernels with @nki.jit; remove @nki.jit from sub-kernels called from other kernels.
+NKI Beta 2: Use namespace nki.* and nki.isa (not neuronxcc.nki.*). Mark top-level kernels with @nki.jit; remove @nki.jit from sub-kernels called from other kernels. All nki.isa APIs require explicit dst as first argument; nl.load/nl.store replaced by nisa.dma_copy; nl.arange and mask deprecated. See NKI Migration Guide (Beta 1 to Beta 2).
 
 NeuronCore: 2 per Trainium. Each has SBUF + PSUM SRAMs and 4 engines (Tensor, Vector, Scalar, GpSimd).
 
@@ -161,7 +161,7 @@ nisa.dma_copy(dst=c_tensor[0:128, 0:512], src=c)
 
 # add constant b to each element in a
 nisa.dma_copy(dst=a, src=a_tensor[0:128, 0:512])
-c = nl.add(a, 2.2)
+c = nl.add(a, b)
 nisa.dma_copy(dst=c_tensor[0:128, 0:512], src=c)
 
 # broadcast on free dimension -- [128, 1] broadcasted to [128, 512]
@@ -217,12 +217,12 @@ nisa.dma_copy(dst=c_tensor[0:128, 0:512], src=c)"""},
         {"header": "nl.silu(x: tile, dtype=None)", "description": "Sigmoid Linear Unit (Swish)."}
     ],
     "ReductionOperations": [
-        {"header": "nl.sum(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Sum of elements along a specified free axis."},
-        {"header": "nl.prod(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
-        {"header": "nl.all(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input."},
-        {"header": "nl.max(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Maximum of elements along the specific free axis (or free axes) of the input."},
-        {"header": "nl.min(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Minimum of elements along the specific free axis (or free axes) of the input."},
-        {"header": "nl.mean(x: tile, axis: int|tuple, dtype=None, mask=None, keepdims=False)", "description": "Mean of elements along the specific free axis (or free axes) of the input."},
+        {"header": "nl.sum(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Sum of elements along a specified free axis. Beta 2: mask parameter removed; use in-bounds slicing."},
+        {"header": "nl.prod(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input. Beta 2: mask removed."},
+        {"header": "nl.all(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Product of elements along the specified free axis (or free axes) of the input. Beta 2: mask removed."},
+        {"header": "nl.max(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Maximum of elements along the specific free axis (or free axes) of the input. Beta 2: mask removed."},
+        {"header": "nl.min(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Minimum of elements along the specific free axis (or free axes) of the input. Beta 2: mask removed."},
+        {"header": "nl.mean(x: tile, axis: int|tuple, dtype=None, keepdims=False)", "description": "Mean of elements along the specific free axis (or free axes) of the input. Beta 2: mask removed."},
         # {"header": "nl.all_reduce(x: tile, op: binary_op, program_axes: int|tuple)", "description": "Performs a reduction (e.g., sum, max) across multiple SPMD programs."}
     ],
     "LogicalBitwise": [
@@ -309,8 +309,9 @@ for i_input in nl.sequential_range(input0.shape[1] // 512):
     },
     "nki.compiler.sbuf.mod_alloc": {
         "header": "nki.compiler.sbuf.mod_alloc(*, base_addr, base_partition=0, num_par_tiles=(), num_free_tiles=())",
-        "description": """Allocate SBUF memory space for each logical tile in a tensor through modulo allocation. This is one of the NKI direct allocation APIs.
-When direct allocation is used, all tensors, including the tensor returned from a instruction, in that kernel must also use direct allocation.
+        "description": """Deprecated in NKI Beta 2. Use the improved allocation API (e.g. nl.ndarray with address=) and avoid block dimensions; see NKI Migration Guide.
+
+Allocate SBUF memory space for each logical tile in a tensor through modulo allocation. This is one of the NKI direct allocation APIs (Beta 1). When direct allocation is used, all tensors, including those written by ISA instructions (Beta 2: use explicit dst), in that kernel must also use direct allocation.
 When direct allocation is used, HBM tensors cannot be declared unless they are used as kernel outputs.
 When direct allocation is used, compute APIs that introduce implicit tensors such as nc_transpose with engine=nisa.tensor_engine will fail.
 
@@ -320,9 +321,9 @@ Parameters:
     num_par_tiles – the number of physical tiles on the partition dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
     num_free_tiles – the number of physical tiles on the free dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
 """,
-        "examples": """Here’s an example usage of this API:
+        "examples": """Here’s Beta 1 style (deprecated in Beta 2; block dims removed). Example:
 
-nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
+nki_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
                         buffer=nki.compiler.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
 
 for i_block in nl.affine_range(4):
@@ -361,7 +362,9 @@ class SBufAllocator:
     },
     "nki.compiler.psum.mod_alloc": {
         "header": "nki.compiler.psum.mod_alloc(*, base_bank, base_addr=0, base_partition=0, num_bank_tiles=(), num_par_tiles=(), num_free_tiles=())",
-        "description": """Allocate PSUM memory space for each logical block in a tensor through modulo allocation. This is one of the NKI direct allocation APIs.
+        "description": """Deprecated in NKI Beta 2. Use improved allocation API; see NKI Migration Guide.
+
+Allocate PSUM memory space for each logical block in a tensor through modulo allocation. This is one of the NKI direct allocation APIs (Beta 1).
 
 Parameters:
     base_addr – the base address in bytes along the free(F) dimension of the PSUM bank. Must be 0 in the current version.
@@ -371,16 +374,16 @@ Parameters:
     num_par_tiles – the number of physical tiles along the partition dimension allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
     num_free_tiles – the number of physical tiles on the free dimension per PSUM bank allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
 """,
-        "examples": """Here’s an example usage of this API:
+        "examples": """Here’s Beta 1 style (deprecated in Beta 2; block dims removed). Example:
 
 psum_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.float32,
-                         buffer=ncc.psum.mod_alloc(base_bank=0,
+                         buffer=nki.compiler.psum.mod_alloc(base_bank=0,
                                                     base_addr=0,
                                                     num_bank_tiles=(2,)))
 
 for i_block in nl.affine_range(4):
-  psum[i_block, :, :] = nisa.nc_matmul(...)
-  ...                 = nl.exp(psum[i_block, :, :])
+  nisa.nc_matmul(dst=psum_tensor[i_block, :, :], stationary=..., moving=...)
+  ...                 = nl.exp(psum_tensor[i_block, :, :])
 
 This produces the following allocation:
 
@@ -407,7 +410,7 @@ With above scheme, we are able to implement double buffering in nki_tensor, such
     "nki.language.par_dim": {
         "header": "nl.par_dim(dim: int)",
         "description": "Mark a dimension explicitly as a partition dimension. Beta 2: block dimensions (tensors with par_dim not leftmost) are removed; use a list of tensors or fold the block dimension into the free dimension (partition dim must be leftmost).",
-        "examples": """# Example 1:
+        "examples": """# Example 1 (sb_mod is deprecated in Beta 2; use nl.ndarray(..., buffer=nl.sbuf) or improved allocation API):
 identity_load = nl.ndarray((64, nl.par_dim(128)), dtype=nl.bfloat16, buffer=sb_mod(base_addr=sca))
 
 # Example 2:
@@ -429,11 +432,8 @@ c = nl.ndarray((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
 for i in range(4):
   # result of `a[i]` is a tile with shape (8, 8) and the first dimension is the partition dimension
   c[i] = nl.add(a[i], 32) # works
-  # Or explicitly generate a tile with `nl.arange`
-  ix = nl.arange(8)[:, None]
-  iy = nl.arange(8)[None, :]
-  # result of `a[i, ix, iy]` is a tile with shape (8, 8) and the first dimension is the partition dimension
-  c[i, ix, iy] = nl.add(a[i, ix, iy], 32) # also works""",
+  # Beta 2: nl.arange removed. Use integer slicing for contiguous access, e.g. c[i, 0:8, 0:8] = nl.add(a[i, 0:8, 0:8], 32)
+  # Or use nisa.iota(dst=..., pattern=..., offset=...) for index generation; see NKI Migration Guide.""",
     },
     "nki.language.tile_size": {
         "header": """class nl.tile_size, attributes: 
@@ -524,7 +524,7 @@ total_available_sbuf_size: The total SBUF available size""",
 # nl.store(data_tensor[idx_tile, i_f], value=data_tile[0:64, 0:512])""",
 #     },
     "nki.isa.activation": {
-        "header": "nisa.activation(dst: tile[SBUF|PSUM], op: activation_function, data: tile[SBUF|PSUM], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, reduce_op: reduce_function=None, reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=nisa.reduce_cmd.idle, name=None)",
+        "header": "nisa.activation(dst: tile[SBUF|PSUM], op: activation_function, data: tile[SBUF|PSUM], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, reduce_op: reduce_function=None, reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=nisa.reduce_cmd.idle, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Apply an activation function on every element of the input tile using Scalar Engine, with an optional scale/bias operation before the activation and an optional reduction operation after the activation in the same instruction.
 
 The activation function is specified in the op input field (see Supported Activation Functions for NKI ISA for a list of supported activation functions and their valid input ranges).
@@ -645,7 +645,7 @@ nisa.dma_copy(dst=b_act_tensor, src=activated_b)""",
 .reduce: keeps accumulating over the current value of the accumulator registers"""
     },
     "nki.isa.activation_reduce": {
-        "header": "nisa.activation_reduce(dst: tile[SBUF|PSUM], op: activation_function, data: tile[SBUF|PSUM], reduce_op: reduce_function, reduce_res: tile[vector], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, dtype: nki_dtype=data.dtype, mask: predicate=None)",
+        "header": "nisa.activation_reduce(dst: tile[SBUF|PSUM], op: activation_function, data: tile[SBUF|PSUM], reduce_op: reduce_function, reduce_res: tile[vector], bias: tile[vector]=None, scale: scalar|tile[vector]=1.0, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Perform the same computation as nisa.activation and also a reduction along the free dimension of the nisa.activation result using Scalar Engine. The reduction result is stored in reduce_res in-place.
 
 This API is equivalent to calling nisa.activation with reduce_cmd=nisa.reduce_cmd.reset_reduce and passing in reduce_res. We recommend using nisa.activation for new code. Refer to nisa.activation for semantics of op/data/bias/scale.
@@ -663,7 +663,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.affine_select": {
-        "header": "nisa.affine_select(dst: tile[SBUF], pattern: list, offset: int32, channel_multiplier: int32, on_true_tile: tile[SBUF], on_false_value: scalar, cmp_op: comparison_op, name=None)",
+        "header": "nisa.affine_select(dst: tile[SBUF], pattern: list, offset: int32, channel_multiplier: int32, on_true_tile: tile[SBUF], on_false_value: scalar, cmp_op: comparison_op, dtype: nki_dtype=on_true_tile.dtype, name=None)",
         "description": """Select elements between an input tile on_true_tile and a scalar value on_false_value according to a boolean predicate tile using GpSimd Engine.
 
         The predicate tile is calculated on-the-fly by evaluating an affine expression element-by-element. The affine expression is defined by pattern, offset, and channel_multiplier, similar to nisa.iota. The pattern field is a list of lists in the form [[step_w, num_w], [step_z, num_z], [step_y, num_y], [step_x, num_x]]. When fewer than 4D pattern is provided, NKI compiler automatically pads remaining dimensions with size of 1.
@@ -700,7 +700,7 @@ nisa.dma_copy(dst=b_tensor[ix, iy], src=b)
 """,
     },
     "nki.isa.bn_aggr": {
-        "header": "nisa.bn_aggr(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], name=None)",
+        "header": "nisa.bn_aggr(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], dtype: nki_dtype=data.dtype, name=None)",
         "description": """Aggregate one or multiple bn_stats outputs to generate a mean and variance per partition using Vector Engine.
 
 The input data tile effectively has an array of (count, mean, variance*count) tuples per partition produced by bn_stats instructions. Therefore, the number of elements per partition of data must be a multiple of three.
@@ -714,7 +714,7 @@ Parameters:
   data – an input tile with results of one or more bn_stats""",
     },
     "nki.isa.bn_stats": {
-        "header": "nisa.bn_stats(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], name=None)",
+        "header": "nisa.bn_stats(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], dtype: nki_dtype=data.dtype, name=None)",
         "description": """Compute mean- and variance-related statistics for each partition of an input tile data in parallel using Vector Engine.
 
 The output tile of the instruction has 6 elements per partition: the count of the even elements, the mean of the even elements, variance*count of the even elements, the count of the odd elements, the mean of the odd elements, variance*count of the odd elements.
@@ -769,7 +769,7 @@ nisa.dma_copy(dst=mean_b_tensor, src=mean_b)
 nisa.dma_copy(dst=var_b_tensor, src=var_b)""",
     },
     "nki.isa.dma_copy": {
-        "header": "nisa.dma_copy(dst: tile[HBM|SBUF], src: tile[HBM|SBUF], dst_rmw_op=None, oob_mode=oob_mode.error, dge_mode=dge_mode.unknown, unique_indices: bool=True, name=None)",
+        "header": "nisa.dma_copy(dst: tile[HBM|SBUF], src: tile[HBM|SBUF], dst_rmw_op=None, oob_mode=oob_mode.error, dge_mode=dge_mode.unknown, unique_indices: bool=True, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Copy data from src to dst using DMA engines with optional read-modify-write operations.
 
 This instruction performs data movement between memory locations (SBUF or HBM) using DMA engines. The basic operation copies data from the source tensor to the destination tensor: dst = src. Optionally, a read-modify-write operation can be performed where the source data is combined with existing destination data using a specified operation: dst = dst_rmw_op(dst, src).
@@ -875,7 +875,7 @@ nisa.dma_copy(dst=out_tensor[idx_tile, iy], src=inp_tile, oob_mode=nisa.oob_mode
 """,
     },
     "nki.isa.dma_transpose": {
-        "header": "nisa.dma_transpose(dst: tile[HBM|SBUF], src: tile[HBM|SBUF], axes: tuple=None, dge_mode=dge_mode.unknown, oob_mode=oob_mode.error, name=None)",
+        "header": "nisa.dma_transpose(dst: tile[HBM|SBUF], src: tile[HBM|SBUF], axes: tuple=None, dge_mode=dge_mode.unknown, oob_mode=oob_mode.error, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Perform a transpose on input src using DMA Engine.
 
     The permutation of transpose follow the rules described below:
@@ -899,7 +899,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.dropout": {
-        "header": "nisa.dropout(dst: tile, data: tile, prob: scalar|tile[vector], dtype: nki_dtype=data.dtype, mask: predicate=None)",
+        "header": "nisa.dropout(dst: tile, data: tile, prob: scalar|tile[vector], dtype: nki_dtype=data.dtype, name=None)",
         "description": """Randomly replace some elements of the input tile data with zeros based on input probabilities using Vector Engine. The probability of replacing elements with zeros (drop probability) is specified by prob: if 1.0, all elements are replaced with zeros; if 0.0, all are kept.
 
 prob can be a scalar constant or a tile of shape (data.shape[0], 1), where each partition has one drop probability applicable to that partition. Data type of data can be any valid NKI type; prob has restrictions: if data is integer type, prob must be float32; if data is float type, prob can be any valid float type. dst.dtype must match data.dtype.
@@ -916,7 +916,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.iota": {
-        "header": "nisa.iota(dst: tile[SBUF], pattern: list, offset: int32, channel_multiplier: int32=0, name=None)",
+        "header": "nisa.iota(dst: tile[SBUF], pattern: list, offset: int32, channel_multiplier: int32=0, dtype: nki_dtype=dst.dtype, name=None)",
         "description": """Generate a constant literal pattern into SBUF using GpSimd Engine.
 
 The pattern is defined by an int32 offset, a tensor access pattern of up to 4D pattern and an int32 channel_multiplier. The pattern field is a list of lists in the form [[step_w, num_w], [step_z, num_z], [step_y, num_y], [step_x, num_x]]. When fewer than 4D pattern is provided, NKI compiler automatically pads remaining dimensions with size of 1.
@@ -939,7 +939,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.local_gather": {
-        "header": "nisa.local_gather(dst: tile[SBUF], src_buffer: tile[SBUF], index: tile[SBUF], num_elem_per_idx: int=1, num_valid_indices: int=None, mask: predicate=None)",
+        "header": "nisa.local_gather(dst: tile[SBUF], src_buffer: tile[SBUF], index: tile[SBUF], num_elem_per_idx: int=1, num_valid_indices: int=None, dtype: nki_dtype=src_buffer.dtype, name=None)",
         "description": """Gather SBUF data in src_buffer using index on GpSimd Engine.
 
 Each of the eight GpSimd cores connects to 16 contiguous SBUF partitions and performs gather from those 16 partitions independently. Indices used for gather on each core should come from the same 16 connected SBUF partitions. For gathering within a single partition, consider nisa.nc_n_gather.
@@ -957,7 +957,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.max8": {
-        "header": "nisa.max8(dst: tile, src: tile, dtype: nki_dtype=src.dtype, mask: predicate=None)",
+        "header": "nisa.max8(dst: tile, src: tile, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Find the 8 largest values in each partition of the source tile using Vector Engine.
 
 Reads input elements, converts to fp32 internally, and outputs the 8 largest values in descending order per partition. Outputs are converted to dst.dtype automatically. Source can be up to 5-dimensional; output is always 2D. Elements per partition must be between 8 and 16,384 inclusive. Output has exactly 8 elements per partition. Source and output must have the same partition dimension size: source [par_dim, ...], output [par_dim, 8].
@@ -968,7 +968,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.memset": {
-        "header": "nisa.memset(dst: tile[SBUF], value: scalar, engine=engine.unknown, name=None)",
+        "header": "nisa.memset(dst: tile[SBUF], value: scalar, engine=engine.unknown, dtype: nki_dtype=dst.dtype, name=None)",
         "description": """Initialize dst by filling it with a compile-time constant value, using Vector or GpSimd Engine. The memset instruction supports all valid NKI dtypes (see Supported Data Types).
 
 Parameters:
@@ -978,10 +978,11 @@ Parameters:
         "examples": "",
     },
     "nki.isa.nc_find_index8": {
-        "header": "nisa.nc_find_index8(dst: tile, data: tile, vals: tile, dtype: nki_dtype=uint32, mask: predicate=None)",
+        "header": "nisa.nc_find_index8(dst: tile, data: tile, vals: tile, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Find indices of the 8 given values in each partition of the data tensor using Vector Engine.
 
 Loads the 8 values from vals, then loads the data tensor and outputs the indices (starting at 0) of the first occurrence of each value in data, per partition. data can be up to 5-dimensional; vals must be up to 3-dimensional. data must have between 8 and 16,384 elements per partition. vals must have exactly 8 elements per partition. Output has exactly 8 elements per partition and is uint16 or uint32 (default uint32). Behavior is undefined if a value in vals is not in data. If provided, mask is applied only to the data tensor.
+Behavior is undefined if vals tensor contains values that are not in the data tensor.
 
 Parameters:
   dst – 2D tile [par_dim, 8] containing indices (uint16 or uint32) of the 8 values per partition
@@ -990,7 +991,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.nc_match_replace8": {
-        "header": "nisa.nc_match_replace8(dst: tile, data: tile, vals: tile, imm: scalar, dst_idx: tile=None, dtype: nki_dtype=data.dtype, mask: predicate=None)",
+        "header": "nisa.nc_match_replace8(dst: tile, data: tile, vals: tile, imm: scalar, dst_idx: tile=None, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Replace first occurrence of each value in vals with imm in data using Vector Engine; write result to dst. If dst_idx is provided, write indices of matched values to dst_idx.
 
 Reads input data, replaces the first occurrence of each of the 8 values (from vals) with the immediate constant, and optionally outputs indices of matches to dst_idx. Free dimensions of data and vals are flattened for the operation but preserved in output and dst_idx. Partition dimension is the parallelization boundary. data can be up to 5D; vals up to 3D. vals must have exactly 8 elements per partition; data at most 16,384 per partition. Output shape matches input data. data and vals can be SBUF or PSUM. Behavior undefined if a value in vals is not in data.
@@ -1004,19 +1005,17 @@ Parameters:
         "examples": "",
     },
     "nki.language.matmul": {
-        "header": "nl.matmul(x, y, *, transpose_x=False, mask=None)",
+        "header": "nl.matmul(x, y, *, transpose_x=False)",
         "description": """x @ y matrix multiplication of x and y. (Similar to numpy.matmul).
 Parameters:
         x – a tile on SBUF (partition dimension <= 128, free dimension <= 128), x’s free dimension must match y’s partition dimension.
         y – a tile on SBUF (partition dimension <= 128, free dimension <= 512)
         transpose_x – Defaults to False. If True, x is treated as already transposed. If False, an additional transpose will be inserted to make x’s partition dimension the contract dimension of the matmul to align with the Tensor Engine.
-        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-Returns:
-    x @ y or x.T @ y if transpose_x=True
+Result: x @ y or x.T @ y if transpose_x=True. Beta 2: mask removed.
 """,
     },
     "nki.isa.nc_matmul": {
-        "header": "nisa.nc_matmul(dst: tile[PSUM], stationary: tile[SBUF], moving: tile[SBUF], is_stationary_onezero: bool=False, is_moving_onezero: bool=False, is_transpose: bool=False, tile_position: tuple=(), tile_size: tuple=(), perf_mode=matmul_perf_mode.none, name=None)",
+        "header": "nisa.nc_matmul(dst: tile[PSUM], stationary: tile[SBUF], moving: tile[SBUF], is_stationary_onezero: bool=False, is_moving_onezero: bool=False, is_transpose: bool=False, tile_position: tuple=(), tile_size: tuple=(), perf_mode=matmul_perf_mode.none, dtype: nki_dtype=dst.dtype, name=None)",
         "description": """Compute dst = stationary.T @ moving using the Tensor Engine.
 
 Make the contraction dimension as close as possible to 128 without exceeding it. The stationary tensor should be transposed so that the contraction dimension is in the first (K, M) position. Both stationary and moving inputs must be SBUF tiles; dst must be a PSUM tile.
@@ -1117,7 +1116,7 @@ for i in nl.affine_range(4):
     nisa.dma_copy(dst=i_tensor[i * 4 + j, i_mgrid.p, i_mgrid.x], src=i_psum)""",
     },
     "nki.isa.nc_transpose": {
-        "header": "nisa.nc_transpose(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], engine=engine.unknown, name=None)",
+        "header": "nisa.nc_transpose(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], dtype: nki_dtype=data.dtype, engine=engine.unknown, name=None)",
         "description": """Perform a 2D transpose between the partition axis and the free axis of input data, i.e., a PF-transpose, using Tensor or Vector Engine. If the data tile has more than one free axes, this API implicitly collapses all free axes into one axis and then performs a 2D PF-transpose.
 
 In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but they support different input shapes. Tensor Engine nc_transpose can handle an input tile of shape (128, 128) or smaller, while Vector Engine can handle shape (32, 32) or smaller. Therefore, when the input tile shape is (32, 32) or smaller, we have an option to run it on either engine, which is controlled by the engine field. If no engine is specified, Neuron Compiler will automatically select an engine based on the input shape. Note, similar to other Tensor Engine instructions, the Tensor Engine nc_transpose must read the input tile from SBUF and write the transposed result to PSUM. On the other hand, Vector Engine nc_transpose can read/write from/to either SBUF or PSUM.
@@ -1149,7 +1148,7 @@ nisa.nc_transpose(dst=bT, data=b[0:32, 0:2], engine=nisa.vector_engine)
 """,
     },
     "nki.isa.range_select": {
-        "header": "nisa.range_select(dst: tile, on_true_tile: tile, comp_op0: comparison_op, comp_op1: comparison_op, bound0: tile[vector], bound1: tile[vector], on_false_value: scalar=fp32.min, range_start: int=0, reduce_op: reduce_function=np.amax, reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=idle, dtype: nki_dtype=on_true_tile.dtype, mask: predicate=None)",
+        "header": "nisa.range_select(dst: tile, on_true_tile: tile, comp_op0: comparison_op, comp_op1: comparison_op, bound0: tile[vector], bound1: tile[vector], reduce_cmd: nisa.reduce_cmd=idle, reduce_res: tile[vector]=None, reduce_op: reduce_function=np.amax, range_start: int=0, on_false_value: scalar=fp32.min, dtype: nki_dtype=on_true_tile.dtype, name=None)",
         "description": """Select elements from on_true_tile based on comparison with bounds using Vector Engine. Available only on NeuronCore-v3 and newer.
 
 For each element in on_true_tile, compares (free dimension index + range_start) against bound0 and bound1 using comp_op0 and comp_op1. If both comparisons are True, copy the element to output; otherwise use on_false_value. Also performs a reduction (reduce_op) on the results, storing in reduce_res. on_false_value is always treated as FP32_MIN for numerical stability; reduce_cmd is always reset_reduce.
@@ -1166,7 +1165,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.reciprocal": {
-        "header": "nisa.reciprocal(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], name=None)",
+        "header": "nisa.reciprocal(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], dtype: nki_dtype=data.dtype, name=None)",
         "description": """Compute element-wise reciprocal (1.0/x) of the input data tile using Vector Engine.
 
 Memory types: Both the input data and output dst tiles can be in SBUF or PSUM.
@@ -1183,7 +1182,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.scalar_tensor_tensor": {
-        "header": "nisa.scalar_tensor_tensor(dst: tile, data: tile, op0: binary_op, operand0: scalar|tile[vector], op1: binary_op, operand1: tile, reverse0: bool=False, reverse1: bool=False, name=None)",
+        "header": "nisa.scalar_tensor_tensor(dst: tile, data: tile, op0: binary_op, operand0: scalar|tile[vector], op1: binary_op, operand1: tile, reverse0: bool=False, reverse1: bool=False, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Apply two math operators in sequence using Vector Engine: (data op0 operand0) op1 operand1.
 
 Equivalent to: temp = tensor_scalar(data, op0, operand0); dst = tensor_tensor(temp, operand1, op1). operand0 can be a compile-time scalar (broadcast) or a tile (data.shape[0], 1). operand1 must have the same shape as data. Scalar broadcast in the first op has no extra cost; latency is approximately that of a single tensor_tensor. Both op0 and op1 must be arithmetic operators (see Supported Math Operators); bitvec not supported. Use reverse0/reverse1 for non-commutative operand order.
@@ -1203,7 +1202,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.select_reduce": {
-        "header": "nisa.select_reduce(dst: tile, predicate: tile, on_true: tile, on_false: scalar|tile[vector], reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=idle, reduce_op: reduce_function=np.amax, reverse_pred: bool=False, dtype: nki_dtype=on_true.dtype, mask: predicate=None) -> None",
+        "header": "nisa.select_reduce(dst: tile, predicate: tile, on_true: tile, on_false: scalar|tile[vector], reduce_res: tile[vector]=None, reduce_cmd: nisa.reduce_cmd=idle, reduce_op: reduce_function=np.amax, reverse_pred: bool=False, dtype: nki_dtype=on_true.dtype, name=None)",
         "description": """Selectively copy elements from on_true or on_false to dst based on predicate using Vector Engine, with optional max reduction.
 
 Where predicate is True, copy from on_true to dst; where False, copy from on_false. With reduction enabled, max of each partition of the result is computed and stored in reduce_res. reduce_op only supports max. Memory: both on_true and predicate in SBUF allowed; either on_true or predicate may be in PSUM but not both; dst can be SBUF or PSUM. on_true, dst, predicate must have identical shapes. predicate dtype: int8, uint8, int16, uint16. reduce_res shape (on_true.shape[0], 1), float type. reduce_cmd controls accumulator: reset_reduce, reduce, or idle. Accumulator registers are shared with e.g. range_select; use reset_reduce after idle for consistent behavior.
@@ -1219,7 +1218,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.sequence_bounds": {
-        "header": "nisa.sequence_bounds(dst: tile, segment_ids: tile, name=None)",
+        "header": "nisa.sequence_bounds(dst: tile, segment_ids: tile, dtype: nki_dtype=segment_ids.dtype, name=None)",
         "description": """Compute the sequence bounds for a given set of segment IDs using GpSimd Engine.
 
 Given a tile of segment IDs, identifies where each segment begins and ends. For each element returns [start_index, end_index] for the segment that element belongs to. All segment IDs must be non-negative. Padding elements (segment ID zero) get start index n and end index -1, where n is the length of segment_ids. Output tile has two values per input element (start and end); partition dimension must be 1. Example: input (1, 512) -> output (1, 2, 512). segment_ids and dst must be nl.float32 or nl.int32.
@@ -1230,7 +1229,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.tensor_copy": {
-        "header": "nisa.tensor_copy(dst: tile[SBUF|PSUM], src: tile[SBUF|PSUM], engine=engine.unknown, name=None)",
+        "header": "nisa.tensor_copy(dst: tile[SBUF|PSUM], src: tile[SBUF|PSUM], engine=engine.unknown, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Create a copy of src tile within NeuronCore on-chip SRAMs using Vector, Scalar or GpSimd Engine.
 
 The output tile has the same partition axis size and the same number of elements per partition as the input tile src.
@@ -1258,17 +1257,17 @@ nisa.dma_copy(dst=out_tensor, src=x_copy)
 """,
     },
     "nki.isa.tensor_copy_dynamic_dst": {
-        "header": "nisa.tensor_copy_dynamic_dst(dst: tile, src: tile, engine: nisa.engine=unknown, dtype: nki_dtype=src.dtype, mask: predicate=None) -> None",
+        "header": "nisa.tensor_copy_dynamic_dst(dst: tile, src: tile, engine: nisa.engine=unknown, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Copy from src to dst when the destination has a dynamic layout. The destination tile dst can have a runtime-determined shape or addressing. See NKI API for dynamic tensor handling.""",
         "examples": "",
     },
     "nki.isa.tensor_copy_dynamic_src": {
-        "header": "nisa.tensor_copy_dynamic_src(dst: tile, src: tile, engine: nisa.engine=unknown, dtype: nki_dtype=src.dtype, mask: predicate=None)",
+        "header": "nisa.tensor_copy_dynamic_src(dst: tile, src: tile, engine: nisa.engine=unknown, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Copy from src to dst when the source has a dynamic layout. The source tile src can have a runtime-determined shape or addressing. Result is written to dst. See NKI API for dynamic tensor handling.""",
         "examples": "",
     },
     "nki.isa.tensor_copy_predicated": {
-        "header": "nisa.tensor_copy_predicated(dst: tile[SBUF|PSUM], src: tile[SBUF|PSUM]|scalar, predicate: tile[SBUF|PSUM], reverse_pred: bool=False, name=None)",
+        "header": "nisa.tensor_copy_predicated(dst: tile[SBUF|PSUM], src: tile[SBUF|PSUM]|scalar, predicate: tile[SBUF|PSUM], reverse_pred: bool=False, dtype: nki_dtype=src.dtype, name=None)",
         "description": """Conditionally copy elements from the src tile to the destination tile on SBUF/PSUM based on a predicate using Vector Engine.
 
 This instruction provides low-level control over conditional data movement. Either src or predicate may be in PSUM, but not both. Both may be in SBUF.
@@ -1301,7 +1300,7 @@ nisa.tensor_copy_predicated(src=src_tile, dst=dst_tile, predicate=pre_tile)
 """,
     },
     "nki.isa.tensor_partition_reduce": {
-        "header": "nisa.tensor_partition_reduce(dst: tile, op: reduce_function, data: tile, dtype: nki_dtype=data.dtype, mask: predicate=None)",
+        "header": "nisa.tensor_partition_reduce(dst: tile, op: reduce_function, data: tile, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Apply a reduction operation across partitions of the input data tile using GpSimd Engine. Reduces along the partition dimension (unlike tensor_reduce which reduces along free dimensions).
 
 Parameters:
@@ -1311,7 +1310,7 @@ Parameters:
         "examples": "",
     },
     "nki.isa.tensor_reduce": {
-        "header": "nisa.tensor_reduce(dst: tile[SBUF|PSUM], op: reduce_function, data: tile[SBUF|PSUM], axis: int|tuple, negate: bool=False, keepdims: bool=False, name=None)",
+        "header": "nisa.tensor_reduce(dst: tile[SBUF|PSUM], op: reduce_function, data: tile[SBUF|PSUM], axis: int|tuple, negate: bool=False, keepdims: bool=False, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Apply a reduction operation to the free axes of an input data tile using Vector Engine.
 The reduction operator is specified in the op input field (see Supported Math Operators for NKI ISA for a list of supported reduction operators). There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or) and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the reduction operation in float32 math. The float32 reduction results are cast to the target data type specified in the dtype field before written into the output tile. If the dtype field is not specified, it is default to be the same as input tile data type.
 When the reduction op is an arithmetic operator, the instruction can also multiply the output reduction results by -1.0 before writing into the output tile, at no additional performance cost. This behavior is controlled by the negate input field.
@@ -1342,7 +1341,7 @@ b = nl.ndarray((128, 1), dtype=a.dtype, buffer=nl.sbuf)
 nisa.tensor_reduce(dst=b, op=np.add, data=a[0:128, 0:512], axis=[1])""",
     },
     "nki.isa.tensor_scalar": {
-        "header": "nisa.tensor_scalar(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], op0: binary_op, operand0: scalar|tile[vector], reverse0: bool=False, op1: binary_op=None, operand1: scalar|tile[vector]=None, reverse1: bool=False, engine=engine.unknown, name=None)",
+        "header": "nisa.tensor_scalar(dst: tile[SBUF|PSUM], data: tile[SBUF|PSUM], op0: binary_op, operand0: scalar|tile[vector], reverse0: bool=False, op1: binary_op=None, operand1: scalar|tile[vector]=None, reverse1: bool=False, dtype: nki_dtype=data.dtype, engine=engine.unknown, name=None)",
         "description": """Apply up to two math operators to the input data tile by broadcasting scalar/vector operands in the free dimension using Vector or Scalar or GpSimd Engine: (data <op0> operand0) <op1> operand1.
 The input data tile can be an SBUF or PSUM tile. Both operand0 and operand1 can be SBUF or PSUM tiles of shape (data.shape[0], 1), i.e., vectors, or compile-time constant scalars.
 op1 and operand1 are optional, but must be None (default values) when unused. Note, performing one operator has the same performance cost as performing two operators in the instruction.
@@ -1390,7 +1389,7 @@ g = nl.ndarray((64, 1024), dtype=e.dtype, buffer=nl.sbuf)
 nisa.tensor_scalar(dst=g, data=e[0:64, 0:1024], op0=np.multiply, operand0=f[0:64, 0:1], op1=np.add, operand1=2.5)""",
     },
     "nki.isa.tensor_scalar_reduce": {
-        "header": "nisa.tensor_scalar_reduce(dst: tile, data: tile, op0: binary_op, operand0: scalar|tile[vector], reduce_op: reduce_function, reduce_res: tile[vector], reverse0: bool=False, dtype: nki_dtype=data.dtype, mask: predicate=None)",
+        "header": "nisa.tensor_scalar_reduce(dst: tile, data: tile, op0: binary_op, operand0: scalar|tile[vector], reduce_op: reduce_function, reduce_res: tile[vector], reverse0: bool=False, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Perform the same computation as nisa.tensor_scalar with one math operator and also a reduction along the free dimension of the nisa.tensor_scalar result using Vector Engine.
 Refer to nisa.tensor_scalar for semantics of data/op0/operand0. Unlike regular nisa.tensor_scalar where two operators are supported, only one operator is supported in this API. Also, op0 can only be arithmetic operation in Supported Math Operators for NKI ISA. Bitvec operators are not supported in this API.
 In addition to nisa.tensor_scalar computation, this API also performs a reduction along the free dimension(s) of the nisa.tensor_scalar result, at a small additional performance cost. The reduction result is returned in reduce_res in-place, which must be a SBUF/PSUM tile with the same partition axis size as the input tile data and one element per partition. The reduce_op can be any of nl.add, nl.subtract, nl.multiply, nl.max or nl.min.
@@ -1416,7 +1415,7 @@ Parameters:
 Result is written to dst; reduction result is written in-place to reduce_res; the instruction does not return a value.""",
     },
     "nki.isa.tensor_tensor": {
-        "header": "nisa.tensor_tensor(dst: tile[SBUF|PSUM], data1: tile[SBUF|PSUM], data2: tile[SBUF|PSUM], op: binary_op, engine=engine.unknown, name=None)",
+        "header": "nisa.tensor_tensor(dst: tile[SBUF|PSUM], data1: tile[SBUF|PSUM], data2: tile[SBUF|PSUM], op: binary_op, dtype: nki_dtype=None, engine=engine.unknown, name=None)",
         "description": """Perform an element-wise operation of input two tiles using Vector Engine or GpSimd Engine. The two tiles must have the same partition axis size and the same number of elements per partition.
 The element-wise operator is specified using the op field and can be any binary operator supported by NKI that runs on the Vector Engine, or it can be power or integer add, multiply, or subtract which run on the GpSimd Engine. For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the element-wise operation in float32 math (unless it is one of the supported integer ops mentioned above). The float32 results are cast to the target data type specified in the dtype field before written into the output tile. If the dtype field is not specified, it is default to be the same as the data type of data1 or data2, whichever has the higher precision.
 Since GpSimd Engine cannot access PSUM, the input or output tiles cannot be in PSUM if op is one of the GpSimd operations mentioned above. (see NeuronCore-v2 Compute Engines for details). Otherwise, the output tile can be in either SBUF or PSUM. However, the two input tiles, data1 and data2 cannot both reside in PSUM. The three legal cases are:
@@ -1457,7 +1456,7 @@ c = nl.ndarray((128, 512), dtype=a_tensor.dtype, buffer=nl.sbuf)
 nisa.tensor_tensor(dst=c, data1=a, data2=b, op=nl.add)""",
     },
     "nki.isa.tensor_tensor_scan": {
-        "header": "nisa.tensor_tensor_scan(dst: tile[SBUF|PSUM], data0: tile[SBUF|PSUM], data1: tile[SBUF|PSUM], initial: scalar|tile[vector], op0: binary_op, op1: binary_op, reverse0: bool=False, reverse1: bool=False, name=None)",
+        "header": "nisa.tensor_tensor_scan(dst: tile[SBUF|PSUM], data0: tile[SBUF|PSUM], data1: tile[SBUF|PSUM], initial: scalar|tile[vector], op0: binary_op, op1: binary_op, reverse0: bool=False, reverse1: bool=False, dtype: nki_dtype=None, name=None)",
         "description": """Perform a scan operation of two input tiles using Vector Engine.
 Mathematically, the tensor_tensor_scan instruction on Vector Engine performs the following computation per partition:
 
