@@ -9,11 +9,17 @@ Usage:
     # Dry run (test ingestion only, no LLM calls):
     python -m autocomp_tests.test_agent_builder --source-dir path/to/source --dry-run
 
-    # Full build + inspection:
+    # Full build from a directory:
     python -m autocomp_tests.test_agent_builder --source-dir path/to/source --agent-name my_agent
 
+    # Full build from webpage URLs:
+    python -m autocomp_tests.test_agent_builder --source-url https://docs.example.com/api --agent-name my_agent
+
+    # Mix directory and URL sources:
+    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --source-url https://docs.example.com --agent-name my_agent
+
     # Full build with a specific model:
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --model anthropic::claude-sonnet-4-20250514
+    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --model aws::us.anthropic.claude-opus-4-6-v1
 
     # Inspect an already-built config dir:
     python -m autocomp_tests.test_agent_builder --inspect output/built/trn
@@ -43,12 +49,20 @@ from autocomp.common import REPO_ROOT
 # Build
 # ------------------------------------------------------------------
 
-def build_agent(source_dir: str, agent_name: str, output_dir: str,
-                llm_model: str, description: str = "") -> Path:
-    """Run the AgentBuilder pipeline on a local source directory."""
+def build_agent(agent_name: str, output_dir: str,
+                llm_model: str, light_llm_model: str | None = None,
+                description: str = "",
+                source_dir: str | None = None,
+                source_urls: list[str] | None = None,
+                max_depth: int = 2, max_pages: int = 50) -> Path:
+    """Run the AgentBuilder pipeline on directory and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
-    builder = AgentBuilder(llm_model=llm_model, description=description)
-    builder.add_source("directory", path=source_dir)
+    builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
+                           description=description)
+    if source_dir:
+        builder.add_source("directory", path=source_dir)
+    for url in (source_urls or []):
+        builder.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     config_dir = builder.build(agent_name=agent_name, output_dir=output_dir)
     return config_dir
 
@@ -57,33 +71,54 @@ def build_agent(source_dir: str, agent_name: str, output_dir: str,
 # Rerun a single component
 # ------------------------------------------------------------------
 
-def rerun_component(component: str, config_dir: Path, source_dir: str,
-                    model: str, description: str = ""):
+def rerun_component(component: str, config_dir: Path,
+                    model: str, light_model: str | None = None,
+                    description: str = "",
+                    source_dir: str | None = None,
+                    source_urls: list[str] | None = None,
+                    max_depth: int = 2, max_pages: int = 50):
     """
     Re-ingest the source, re-route, and re-synthesize a single component,
     then overwrite just that file in the existing config dir.
     """
     from autocomp.agent_builder.ingestor import KnowledgeIngestor
-    from autocomp.agent_builder.synthesizer import ComponentSynthesizer, _route_content
+    from autocomp.agent_builder.synthesizer import ComponentSynthesizer
     from autocomp.common import LLMClient
 
     print(f"Re-running '{component}' synthesis")
     print(f"  Config dir: {config_dir}")
-    print(f"  Source:     {source_dir}")
+    if source_dir:
+        print(f"  Source dir: {source_dir}")
+    for url in (source_urls or []):
+        print(f"  Source URL: {url}")
     print(f"  Model:      {model}")
+    if light_model:
+        print(f"  Light model: {light_model}")
 
     if "::" in model:
         provider, model_name = model.split("::", 1)
     else:
         provider, model_name = None, model
     llm = LLMClient(model_name, provider)
-    synth = ComponentSynthesizer(llm, description=description)
+
+    light_llm = None
+    if light_model:
+        if "::" in light_model:
+            lp, lm = light_model.split("::", 1)
+        else:
+            lp, lm = None, light_model
+        light_llm = LLMClient(lm, lp)
+
+    synth = ComponentSynthesizer(llm, light_llm, description=description)
 
     # Re-ingest and route
     ingestor = KnowledgeIngestor()
-    ingestor.add_source("directory", path=source_dir)
+    if source_dir:
+        ingestor.add_source("directory", path=source_dir)
+    for url in (source_urls or []):
+        ingestor.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     indices = ingestor.ingest()
-    buckets = _route_content(indices)
+    buckets = synth._llm_route_content(indices)
 
     bucket_name = {
         "rules": "rules",
@@ -93,9 +128,9 @@ def rerun_component(component: str, config_dir: Path, source_dir: str,
         "examples": "examples",
     }[component]
 
-    # Filter just the relevant bucket
-    items = synth._llm_filter_bucket(bucket_name, buckets[bucket_name])
-    print(f"  Filtered {bucket_name}: {len(items)} files")
+    # Routing already filters via LLM, just grab the relevant bucket
+    items = buckets[bucket_name]
+    print(f"  Routed {bucket_name}: {len(items)} files")
 
     # Read existing built files for context (rules needs architecture + ISA)
     architecture = (config_dir / "architecture.md").read_text() if (config_dir / "architecture.md").exists() else ""
@@ -138,39 +173,46 @@ def rerun_component(component: str, config_dir: Path, source_dir: str,
 # Dry-run: validate ingestion without LLM calls
 # ------------------------------------------------------------------
 
-def dry_run(source_dir: str):
-    """Ingest a source directory and report statistics."""
+def dry_run(source_dir: str | None = None, source_urls: list[str] | None = None,
+            max_depth: int = 2, max_pages: int = 50):
+    """Ingest sources and report statistics."""
     from autocomp.agent_builder.ingestor import KnowledgeIngestor
     print("=" * 72)
     print("DRY RUN: Testing ingestion (no LLM calls)")
     print("=" * 72)
 
     ingestor = KnowledgeIngestor()
-    ingestor.add_source("directory", path=source_dir)
+    if source_dir:
+        ingestor.add_source("directory", path=source_dir)
+    for url in (source_urls or []):
+        ingestor.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     indices = ingestor.ingest()
-    idx = indices[0]
 
-    print(f"\nSource:            {idx.source_id}")
-    print(f"Metadata length:   {len(idx.structural_metadata):,} chars")
-    print(f"Content sections:  {len(idx.content):,}")
-    total_chars = sum(len(v) for v in idx.content.values())
-    print(f"Total content:     {total_chars:,} chars ({total_chars / 1_000_000:.1f} MB)")
+    for idx in indices:
+        print(f"\nSource:            {idx.source_id}")
+        print(f"Metadata length:   {len(idx.structural_metadata):,} chars")
+        print(f"Content sections:  {len(idx.content):,}")
+        total_chars = sum(len(v) for v in idx.content.values())
+        print(f"Total content:     {total_chars:,} chars ({total_chars / 1_000_000:.1f} MB)")
 
-    # Show top extensions by file count
-    ext_counts: dict[str, int] = {}
-    for key in idx.content:
-        ext = Path(key).suffix or "(no ext)"
-        ext_counts[ext] = ext_counts.get(ext, 0) + 1
-    top_exts = sorted(ext_counts.items(), key=lambda x: -x[1])[:10]
-    print("\nTop file extensions:")
-    for ext, count in top_exts:
-        print(f"  {ext:12s} {count:4d} files")
+        # Show top extensions / URL patterns by count
+        ext_counts: dict[str, int] = {}
+        for key in idx.content:
+            if key.startswith("http"):
+                ext = "(webpage)"
+            else:
+                ext = Path(key).suffix or "(no ext)"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        top_exts = sorted(ext_counts.items(), key=lambda x: -x[1])[:10]
+        print("\nTop content types:")
+        for ext, count in top_exts:
+            print(f"  {ext:12s} {count:4d} files")
 
-    # Show largest content sections
-    by_size = sorted(idx.content.items(), key=lambda x: -len(x[1]))[:10]
-    print("\nLargest content sections:")
-    for key, text in by_size:
-        print(f"  {len(text):>8,} chars  {key}")
+        # Show largest content sections
+        by_size = sorted(idx.content.items(), key=lambda x: -len(x[1]))[:10]
+        print("\nLargest content sections:")
+        for key, text in by_size:
+            print(f"  {len(text):>8,} chars  {key}")
 
     print("\nDry run complete. Ingestion is working correctly.")
     print("Run without --dry-run to perform the full build (requires LLM API key).")
@@ -694,15 +736,20 @@ def _extract_keywords(strategies: list[str]) -> set[str]:
 # CLI
 # ------------------------------------------------------------------
 
-_DEFAULT_SOURCE = str(REPO_ROOT / "autocomp" / "agent_builder" / ".sources" / "aws-neuron-sdk")
-_DEFAULT_OUTPUT = str(Path.cwd() / "output" / "built")
+_DEFAULT_OUTPUT = str(REPO_ROOT / "autocomp" / "agent_builder" / ".built")
 
 def main():
     parser = argparse.ArgumentParser(
         description="Build an agent and inspect the generated components"
     )
-    parser.add_argument("--source-dir", default=_DEFAULT_SOURCE,
+    parser.add_argument("--source-dir", default=None,
                         help="Path to source directory to ingest")
+    parser.add_argument("--source-url", action="append", default=None, dest="source_urls",
+                        help="URL to ingest (can be repeated)")
+    parser.add_argument("--max-depth", type=int, default=2,
+                        help="Max link-following depth for webpage sources (default: 2)")
+    parser.add_argument("--max-pages", type=int, default=50,
+                        help="Max pages to fetch per webpage source (default: 50)")
     parser.add_argument("--agent-name", default="trn",
                         help="Name for the built agent")
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT,
@@ -713,6 +760,8 @@ def main():
                         help="Test ingestion only (no LLM calls needed)")
     parser.add_argument("--model", default="aws::us.anthropic.claude-opus-4-6-v1",
                         help="LLM model for synthesis")
+    parser.add_argument("--light-model", default="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                        help="Optional cheaper/faster model for high-token extraction tasks")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
     parser.add_argument("--compare-to", metavar="REF_DIR",
@@ -734,7 +783,10 @@ def main():
         args.compare_to = str(export_dir)
 
     if args.dry_run:
-        dry_run(args.source_dir)
+        if not args.source_dir and not args.source_urls:
+            parser.error("--dry-run requires at least one of --source-dir or --source-url")
+        dry_run(source_dir=args.source_dir, source_urls=args.source_urls,
+                max_depth=args.max_depth, max_pages=args.max_pages)
         return
 
     if args.rerun:
@@ -746,9 +798,13 @@ def main():
         rerun_component(
             component=args.rerun,
             config_dir=config_dir,
-            source_dir=args.source_dir,
             model=args.model,
+            light_model=args.light_model,
             description=args.description,
+            source_dir=args.source_dir,
+            source_urls=args.source_urls,
+            max_depth=args.max_depth,
+            max_pages=args.max_pages,
         )
         return
 
@@ -764,18 +820,30 @@ def main():
             compare_agents(config_dir, ref_dir, model=args.model)
         return
 
+    if not args.source_dir and not args.source_urls:
+        parser.error("At least one of --source-dir or --source-url is required for building")
+
     output_dir = str(Path(args.output_dir) / args.agent_name)
     print(f"Building {args.agent_name} agent...")
-    print(f"  Source: {args.source_dir}")
+    if args.source_dir:
+        print(f"  Source dir: {args.source_dir}")
+    for url in (args.source_urls or []):
+        print(f"  Source URL: {url}")
     print(f"  Output: {output_dir}")
     print(f"  Model:  {args.model}")
+    if args.light_model:
+        print(f"  Light:  {args.light_model}")
 
     config_dir = build_agent(
-        source_dir=args.source_dir,
         agent_name=args.agent_name,
         output_dir=output_dir,
         llm_model=args.model,
+        light_llm_model=args.light_model,
         description=args.description,
+        source_dir=args.source_dir,
+        source_urls=args.source_urls,
+        max_depth=args.max_depth,
+        max_pages=args.max_pages,
     )
     inspect_built_agent(config_dir)
     if args.compare_to:

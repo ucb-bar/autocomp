@@ -1,12 +1,11 @@
 """
 Component synthesis for the Agent Builder.
 
-General-purpose content routing + LLM filtering + per-file extraction to
-distill ingested knowledge into agent components: architecture summary,
-ISA docs, optimization menu, rules, and code examples.
+LLM-based content routing + per-file extraction to distill ingested knowledge
+into agent components: architecture summary, ISA docs, optimization menu,
+rules, and code examples.
 
-Stage 1   (route):   Broad path + content heuristics cast a wide net.
-Stage 1.5 (filter):  LLM prunes false positives from each bucket.
+Stage 1   (route):   LLM classifies each content item into component buckets.
 Stage 2   (extract): Per-file LLM extraction into structured ISAEntry objects.
 Stage 3   (merge):   LLM-based functional categorization + reassembly.
 """
@@ -39,168 +38,18 @@ class ISAEntry:
     markdown: str
 
 
-# ---------------------------------------------------------------------------
-# General-purpose routing tables (no domain-specific keywords)
-# ---------------------------------------------------------------------------
+_ROUTE_PREVIEW_CHARS = 2000
 
-_ISA_PATH_PATTERNS = [
-    "api/",
-    "reference/",
-    "ref/",
-    "isa/",
-]
+_BUCKET_NAMES = ["isa", "architecture", "optimization", "rules", "examples"]
 
-_ISA_EXCLUDE_PATTERNS = [
-    "example",
-    "tutorial",
-    "sample",
-    "library/",
-    "demo",
-    "test",
-]
-
-_ARCH_PATTERNS = [
-    "arch",
-    "hardware",
-    "overview",
-    "design",
-    "about/",
-    "memory",
-]
-
-_OPT_PATTERNS = [
-    "perf",
-    "optim",
-    "tuning",
-    "best-practice",
-    "performance",
-    "how-to",
-    "library/",
-]
-
-_RULES_PATTERNS = [
-    "guide",
-    "constraint",
-    "pitfall",
-    "migration",
-]
-
-_EXAMPLES_PATTERNS = [
-    "example",
-    "sample",
-    "tutorial",
-    "demo",
-]
-
-_SKIP_PATTERNS = [
-    "release-notes",
-    "archive/",
-    ".github/",
-    "_content-types/",
-    "_ext/",
-    "_templates/",
-    "_utilities/",
-    "_static/",
-    "containers/",
-    "setup/",
-    "devflows/",
-    "benchmarks/",
-]
-
-# Min top-level defs for a .py file to be considered an API stub
-_STUB_MIN_DEFS = 5
-
-# RST directives that indicate API reference documentation
-_AUTODOC_DIRECTIVES = [
-    ".. autofunction::",
-    ".. autoclass::",
-    ".. automodule::",
-    ".. currentmodule::",
-    ".. module::",
-    ".. function::",
-    ".. class::",
-    ".. method::",
-    ".. attribute::",
-]
-
-
-def _is_python_stub(text: str) -> bool:
-    """Check if a Python file looks like an API stub (many defs with docstrings, no bodies)."""
-    defs = re.findall(r"^(?:def |class )\w+", text, re.MULTILINE)
-    if len(defs) < _STUB_MIN_DEFS:
-        return False
-    docstrings = len(re.findall(r'^\s+(?:r)?"""', text, re.MULTILINE))
-    ellipsis_bodies = len(re.findall(r"^\s+\.\.\.\s*$", text, re.MULTILINE))
-    return docstrings >= len(defs) * 0.5 and ellipsis_bodies >= len(defs) * 0.3
-
-
-def _is_autodoc_rst(text: str) -> bool:
-    """Check if an RST file contains autodoc/API-reference directives."""
-    return any(directive in text for directive in _AUTODOC_DIRECTIVES)
-
-
-def _route_content(indices: list[SourceIndex]) -> dict[str, list[tuple[str, str]]]:
-    """
-    Route ingested content into component buckets using general heuristics.
-
-    Uses a combination of path patterns and content-based signals to cast a
-    wide net. An LLM filtering step later prunes false positives.
-
-    Returns {component: [(content_key, content_text), ...]}.
-    A file can appear in multiple buckets.
-    """
-    buckets: dict[str, list[tuple[str, str]]] = {
-        "isa": [],
-        "architecture": [],
-        "optimization": [],
-        "rules": [],
-        "examples": [],
-    }
-
-    for idx in indices:
-        for key, text in idx.content.items():
-            if not text or not text.strip():
-                continue
-            key_lower = key.lower()
-
-            if any(skip in key_lower for skip in _SKIP_PATTERNS):
-                continue
-
-            # --- ISA / API reference (path + content signals) ---
-            is_excluded = any(ex in key_lower for ex in _ISA_EXCLUDE_PATTERNS)
-            if not is_excluded:
-                path_match = any(p in key_lower for p in _ISA_PATH_PATTERNS)
-                content_match = False
-                if key.endswith(".py"):
-                    content_match = _is_python_stub(text)
-                elif key.endswith(".rst"):
-                    content_match = _is_autodoc_rst(text)
-                if path_match or content_match:
-                    buckets["isa"].append((key, text))
-
-            # --- Architecture ---
-            for pattern in _ARCH_PATTERNS:
-                if pattern in key_lower:
-                    buckets["architecture"].append((key, text))
-                    break
-
-            # --- Optimization ---
-            for pattern in _OPT_PATTERNS:
-                if pattern in key_lower:
-                    buckets["optimization"].append((key, text))
-                    break
-
-            # --- Rules (prose guides, constraints, pitfalls) ---
-            for pattern in _RULES_PATTERNS:
-                if pattern in key_lower:
-                    buckets["rules"].append((key, text))
-                    break
-
-            # --- Examples (code examples, tutorials, demos) ---
-            if any(p in key_lower for p in _EXAMPLES_PATTERNS):
-                buckets["examples"].append((key, text))
-
-    return buckets
+_BUCKET_DESCRIPTIONS = {
+    "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics)",
+    "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
+    "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
+    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
+    "examples": "code examples and tutorials (runnable examples, sample kernels, tutorial code with actual implementations)",
+    "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +60,8 @@ class ComponentSynthesizer:
     """
     Synthesizer that distills ingested knowledge into agent components.
 
-    Uses heuristic path-based routing (not LLM) for content selection,
-    then per-file LLM extraction for each component.
+    Uses LLM-based content routing followed by per-file LLM extraction
+    for each component.
     """
 
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
@@ -222,10 +71,16 @@ class ComponentSynthesizer:
         self._context_prefix = f"Context: {description}\n\n" if description else ""
 
     def _chat(self, prompt: str, **kwargs) -> list[str]:
-        return self.llm.chat(prompt=self._context_prefix + prompt, **kwargs)
+        results = self.llm.chat_async(
+            [self._context_prefix + prompt], **kwargs,
+        )
+        return results[0] if results else []
 
     def _chat_light(self, prompt: str, **kwargs) -> list[str]:
-        return self.light_llm.chat(prompt=self._context_prefix + prompt, **kwargs)
+        results = self.light_llm.chat_async(
+            [self._context_prefix + prompt], **kwargs,
+        )
+        return results[0] if results else []
 
     def _chat_light_async(self, prompts: list[str], **kwargs) -> list[list[str]]:
         return self.light_llm.chat_async(
@@ -233,114 +88,80 @@ class ComponentSynthesizer:
         )
 
     # ------------------------------------------------------------------
-    # LLM bucket filter (Stage 1.5 -- precision pass)
+    # LLM-based content routing (replaces heuristic routing + filter)
     # ------------------------------------------------------------------
 
-    _FILTER_DESCRIPTIONS = {
-        "isa": (
-            "API / instruction-set reference documentation "
-            "(function signatures, parameter descriptions, instruction semantics)"
-        ),
-        "architecture": (
-            "hardware architecture documentation "
-            "(memory hierarchy, compute units, system design, chip overviews)"
-        ),
-        "optimization": (
-            "performance optimization guidance "
-            "(tuning strategies, optimization techniques, profiling advice)"
-        ),
-        "rules": (
-            "kernel/code optimization constraints and programming model rules "
-            "(correctness constraints, tile size rules, memory layout requirements, "
-            "API usage pitfalls). Exclude deployment, serving, training frameworks, "
-            "and environment configuration"
-        ),
-        "examples": (
-            "code examples and tutorials that demonstrate kernel/API usage "
-            "(runnable examples, sample kernels, tutorial code with actual implementations). "
-            "Exclude setup scripts, configuration, build files, and test harnesses"
-        ),
-    }
+    def _llm_route_content(
+        self, indices: list[SourceIndex]
+    ) -> dict[str, list[tuple[str, str]]]:
+        """Classify each content item into component buckets via LLM.
 
-    _FILTER_PREVIEW_CHARS = 2000
-
-    def _llm_filter_bucket(
-        self, bucket_name: str, items: list[tuple[str, str]]
-    ) -> list[tuple[str, str]]:
-        """Use the LLM to prune false positives from a routed bucket.
-
-        Makes one lightweight LLM call per file (parallelised via chat_async),
-        each including a content preview so the model can make an informed
-        yes/no decision.
+        One lightweight LLM call per item (parallelised via chat_async),
+        examining both the key (filename/URL) and a content preview.
+        Each item can be assigned to multiple buckets.
         """
-        if len(items) <= 3:
-            return items
+        buckets: dict[str, list[tuple[str, str]]] = {b: [] for b in _BUCKET_NAMES}
 
-        description = self._FILTER_DESCRIPTIONS.get(bucket_name, bucket_name)
+        all_items: list[tuple[str, str]] = []
+        for idx in indices:
+            for key, text in idx.content.items():
+                if text and text.strip():
+                    all_items.append((key, text))
+
+        if not all_items:
+            return buckets
+
+        bucket_list = "\n".join(
+            f"- {name}: {_BUCKET_DESCRIPTIONS[name]}" for name in _BUCKET_NAMES
+        )
+        skip_desc = _BUCKET_DESCRIPTIONS["skip"]
 
         prompts: list[str] = []
-        for key, text in items:
-            preview = text[:self._FILTER_PREVIEW_CHARS]
+        for key, text in all_items:
+            preview = text[:_ROUTE_PREVIEW_CHARS]
             prompts.append(
-                f"Does this file contain {description}?\n"
-                f"Filename: {key}\n\n"
+                f"Classify this content into one or more categories.\n\n"
+                f"Categories:\n{bucket_list}\n- skip: {skip_desc}\n\n"
+                f"Source: {key}\n\n"
                 f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
-                "Answer YES or NO. One word only."
+                f"Return ONLY a comma-separated list of category names "
+                f"(from: {', '.join(_BUCKET_NAMES)}, skip). "
+                f"Example: isa, examples"
             )
 
+        logger.info("LLM routing: classifying %d items", len(prompts))
         all_responses = self._chat_light_async(
             prompts, num_candidates=1, temperature=0,
         )
 
-        kept: list[tuple[str, str]] = []
-        rejected: list[str] = []
-        for item, responses in zip(items, all_responses):
-            answer = (responses[0].strip() if responses else "YES").upper()
-            if answer.startswith("YES"):
-                kept.append(item)
-            else:
-                rejected.append(item[0])
+        skipped = 0
+        for (key, text), responses in zip(all_items, all_responses):
+            raw = (responses[0].strip() if responses else "").lower()
+            assigned = False
+            for bucket_name in _BUCKET_NAMES:
+                if bucket_name in raw:
+                    buckets[bucket_name].append((key, text))
+                    assigned = True
+            if not assigned:
+                skipped += 1
 
-        if not kept:
-            logger.warning(
-                "  LLM filter %s: all %d files rejected, keeping all",
-                bucket_name, len(items),
-            )
-            return items
+        for bname, items in buckets.items():
+            total_chars = sum(len(t) for _, t in items)
+            logger.info("  %s: %d files, %d chars", bname, len(items), total_chars)
+        if skipped:
+            logger.info("  skipped: %d files", skipped)
 
-        logger.info("  LLM filter %s: kept %d/%d", bucket_name, len(kept), len(items))
-        logger.info("  LLM filter %s kept: %s",
-                     bucket_name, [k for k, _ in kept])
-        if rejected:
-            logger.info("  LLM filter %s rejected: %s", bucket_name, rejected)
-        return kept
+        return buckets
 
     def synthesize(self, indices: list[SourceIndex]) -> SynthesizedComponents:
-        """Run the full synthesis pipeline: route -> filter -> extract -> merge."""
+        """Run the full synthesis pipeline: route -> extract -> merge."""
         t0 = time.time()
 
-        # Stage 1: Route content into buckets (wide net)
-        logger.info("ComponentSynthesizer: Stage 1 -- routing content by path + content signals")
-        buckets = _route_content(indices)
-        for bname, items in buckets.items():
-            total_chars = sum(len(t) for _, t in items)
-            logger.info("  %s: %d files, %d chars", bname, len(items), total_chars)
-            logger.debug("  %s files: %s", bname, [k for k, _ in items])
+        # Stage 1: LLM-based content routing
+        logger.info("ComponentSynthesizer: Stage 1 -- LLM content routing")
+        buckets = self._llm_route_content(indices)
         t_route = time.time()
         logger.info("  Routing took %.1fs", t_route - t0)
-
-        # Stage 1.5: LLM filter to prune false positives
-        logger.info("ComponentSynthesizer: Stage 1.5 -- LLM filtering")
-        for bname in buckets:
-            buckets[bname] = self._llm_filter_bucket(bname, buckets[bname])
-        t_filter = time.time()
-        logger.info("  Filtering took %.1fs", t_filter - t_route)
-
-        # Post-filter summary
-        logger.info("ComponentSynthesizer: Post-filter summary:")
-        for bname, items in buckets.items():
-            total_chars = sum(len(t) for _, t in items)
-            logger.info("  %s: %d files, %d chars", bname, len(items), total_chars)
 
         # Stage 2 + 3: Extract and merge each component
         logger.info("ComponentSynthesizer: Stage 2 -- per-file extraction")
@@ -380,30 +201,86 @@ class ComponentSynthesizer:
     # Architecture
     # ------------------------------------------------------------------
 
+    _ARCH_SINGLE_DOC_CHARS = 30_000
+    _ARCH_MERGE_CHARS = 60_000
+
     def _synthesize_architecture(self, items: list[tuple[str, str]]) -> str:
-        """Summarize hardware architecture from routed content."""
-        content = _items_to_text(items, max_chars=100_000)
-        if not content.strip():
+        """Summarize hardware architecture from routed content.
+
+        For small inputs, sends everything in a single LLM call.
+        For larger inputs, summarizes each document individually in parallel,
+        then merges the summaries.
+        """
+        if not items:
             return "No architecture documentation found. Please add manually."
 
-        prompt = f"""Below is documentation about the hardware target.
+        total_chars = sum(len(t) for _, t in items)
+        if total_chars <= self._ARCH_SINGLE_DOC_CHARS:
+            return self._arch_single_pass(items)
 
-Write a concise but thorough hardware architecture summary covering:
-- What the hardware is and its programming model
-- Memory hierarchy (on-chip memories, caches, off-chip memory, sizes, bandwidths)
-- Compute units (types, capabilities, throughput)
-- Key constraints and characteristics that affect code optimization
+        return self._arch_map_reduce(items)
 
-This summary will be included at the top of every prompt to the agent. It should give the agent the context it needs to make good optimization decisions.
+    _ARCH_PROMPT = (
+        "Write a concise but thorough hardware architecture summary covering:\n"
+        "- What the hardware is and its programming model\n"
+        "- Memory hierarchy (on-chip memories, caches, off-chip memory, sizes, bandwidths)\n"
+        "- Compute units (types, capabilities, throughput)\n"
+        "- Key constraints and characteristics that affect code optimization\n\n"
+        "This summary will be included at the top of every prompt to the agent. "
+        "It should give the agent the context it needs to make good optimization decisions.\n\n"
+        "Write in clear technical prose. Do not include instructions to the reader."
+    )
 
-Write in clear technical prose. Do not include instructions to the reader.
+    def _arch_single_pass(self, items: list[tuple[str, str]]) -> str:
+        content = _items_to_text(items, max_chars=self._ARCH_SINGLE_DOC_CHARS)
+        prompt = (
+            f"Below is documentation about the hardware target.\n\n"
+            f"{self._ARCH_PROMPT}\n\n"
+            f"=== DOCUMENTATION ===\n{content}\n=== END DOCUMENTATION ===\n\n"
+            f"Hardware Architecture Summary:"
+        )
+        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        return responses[0].strip() if responses else "Architecture summary generation failed."
 
-=== DOCUMENTATION ===
-{content}
-=== END DOCUMENTATION ===
+    def _arch_map_reduce(self, items: list[tuple[str, str]]) -> str:
+        # Map: summarize each document individually in parallel
+        prompts: list[str] = []
+        for key, text in items:
+            truncated = _truncate(text, max_chars=self._ARCH_SINGLE_DOC_CHARS)
+            prompts.append(
+                f"Extract architecture-relevant information from this document.\n"
+                f"Focus on: hardware capabilities, memory hierarchy, compute units, "
+                f"constraints, and performance characteristics.\n"
+                f"Be thorough -- include specific numbers (sizes, bandwidths, limits).\n\n"
+                f"Source: {key}\n\n"
+                f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
+                f"Architecture-relevant notes:"
+            )
 
-Hardware Architecture Summary:"""
+        all_responses = self._chat(
+            prompt=prompts, num_candidates=1, temperature=0,
+        ) if len(prompts) == 1 else [
+            r[0] if r else "" for r in
+            self.llm.chat_async(
+                [self._context_prefix + p for p in prompts],
+                num_candidates=1, temperature=0,
+            )
+        ]
 
+        summaries = "\n\n".join(
+            f"--- {items[i][0]} ---\n{all_responses[i]}"
+            for i in range(len(items)) if i < len(all_responses) and all_responses[i]
+        )
+        summaries = _truncate(summaries, max_chars=self._ARCH_MERGE_CHARS)
+
+        # Reduce: merge summaries into final architecture summary
+        prompt = (
+            f"Below are architecture notes extracted from multiple documents "
+            f"about the same hardware target.\n\n"
+            f"{self._ARCH_PROMPT}\n\n"
+            f"=== EXTRACTED NOTES ===\n{summaries}\n=== END ===\n\n"
+            f"Hardware Architecture Summary:"
+        )
         responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
