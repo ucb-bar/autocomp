@@ -1,10 +1,14 @@
+import numpy as np
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import math
+
 @nki.jit
-def test(a_tensor, g_tensor):
+def ref(a_tensor, g_tensor):
   # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
   # Where RMS(a_tensor) = sqrt((1/N) * sum(a_tensor * a_tensor))
   # and N = a_tensor.shape[1]
   # Reduction (mean) is performed in the free (2nd) dimension
-  # Beta 2: use nisa.dma_copy for load/store; explicit dst for all nisa ops; no nl.arange/mask.
   out_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
                           buffer=nl.shared_hbm)
 
@@ -60,3 +64,9 @@ def test(a_tensor, g_tensor):
 
   return out_tensor
   # NKI_EXAMPLE_42_END
+
+if __name__ == "__main__":
+    a = np.load("a.npy")
+    g = np.load("g.npy")
+    out = ref(a, g)
+    np.save("out_beta1.npy", out)
