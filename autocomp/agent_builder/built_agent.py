@@ -291,7 +291,7 @@ Relevant sections (one per line):"""
         if self.menu_strategy == "one-shot":
             prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
             prompt_text += "Identify optimization opportunities specific to this kernel and hardware that are NOT already listed above. "
-            prompt_text += "Return a list of new optimization strategies, one per line, that could improve this kernel's performance. "
+            prompt_text += "Return ONLY a plain list of new optimization strategies that could improve this kernel's performance, one per line. Do NOT include explanations, numbering, bullet points, headers, or any other text. "
         elif self.menu_strategy == "progressive":
             #TODO
             pass
