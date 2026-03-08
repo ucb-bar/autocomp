@@ -23,12 +23,13 @@ class BuiltLLMAgent(LLMAgent):
     """
 
     def __init__(self, model: str, config_dir: str | Path,
-                 hw_config: HardwareConfig, eval_backend: EvalBackend):
+                 hw_config: HardwareConfig, eval_backend: EvalBackend,
+                 menu_strategy: str = "static"):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
-        self.menu_strategy = "static" # choose from: [static, one-shot, progressive]
+        self.menu_strategy = menu_strategy # choose from: [static, one-shot, progressive]
 
         # Load all config files
         self._architecture = self._load_text("architecture.md")
