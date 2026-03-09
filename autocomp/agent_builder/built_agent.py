@@ -173,10 +173,10 @@ Relevant sections (one per line):"""
     # Required overrides
     # ------------------------------------------------------------------
 
-    def get_opt_menu_options(self, prob: Prob, code: str = None) -> list[str]:
+    def get_opt_menu_options(self, prob: Prob, candidate: CodeCandidate = None) -> list[str]:
         base = list(self._optimization_menu)
-        if code is not None:
-            base = base + self._new_menu_cache.get(code, [])
+        if candidate is not None:
+            base = base + self._new_menu_cache.get(candidate.code, [])
         return base
 
     def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
@@ -210,7 +210,7 @@ Relevant sections (one per line):"""
         dropout_menu_options, translate,
     ) -> str:
         # Select menu options
-        opt_lst = self.get_opt_menu_options(prob, code=candidate.code)
+        opt_lst = self.get_opt_menu_options(prob, candidate)
         if dropout_menu_options < 1 and not force_opt_menu:
             opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
         if shuffle_opts:

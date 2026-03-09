@@ -43,11 +43,11 @@ _ROUTE_PREVIEW_CHARS = 2000
 _BUCKET_NAMES = ["isa", "architecture", "optimization", "rules", "examples"]
 
 _BUCKET_DESCRIPTIONS = {
-    "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics)",
+    "isa": "API / instruction-set reference ONLY (function signatures, parameter descriptions, class definitions, instruction semantics). NOT code examples, NOT tutorials, NOT operator support lists, NOT framework integration docs.",
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
     "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
-    "examples": "code examples and tutorials (runnable examples, sample kernels, tutorial code with actual implementations)",
+    "examples": "code examples, tutorials, sample kernels, example implementations, operator support lists, framework integration docs",
     "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
 }
 
@@ -117,16 +117,30 @@ class ComponentSynthesizer:
         skip_desc = _BUCKET_DESCRIPTIONS["skip"]
 
         prompts: list[str] = []
+        context_note = ""
+        if self._context_prefix:
+            context_note = (
+                f"\n{self._context_prefix}"
+                f"SCOPE: Only classify content as 'isa' if it is directly relevant to the task described above. "
+                f"API reference for tangential tools, frameworks, or libraries that the agent won't call directly should be 'skip' or 'examples'.\n\n"
+            )
         for key, text in all_items:
             preview = text[:_ROUTE_PREVIEW_CHARS]
             prompts.append(
                 f"Classify this content into one or more categories.\n\n"
+                f"{context_note}"
                 f"Categories:\n{bucket_list}\n- skip: {skip_desc}\n\n"
+                f"IMPORTANT DISTINCTIONS:\n"
+                f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions) "
+                f"that the agent will directly use when writing kernel code. "
+                f"API docs for deployment, serving, distributed training, model compilation, or framework integration are NOT 'isa'.\n"
+                f"- Files with runnable code (function bodies with implementations) are 'examples', not 'isa'.\n"
+                f"- Operator support tables (lists of supported ops for a framework) are 'examples', not 'isa'.\n\n"
                 f"Source: {key}\n\n"
                 f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
                 f"Return ONLY a comma-separated list of category names "
                 f"(from: {', '.join(_BUCKET_NAMES)}, skip). "
-                f"Example: isa, examples"
+                f"Example: isa, rules"
             )
 
         logger.info("LLM routing: classifying %d items", len(prompts))
@@ -318,6 +332,7 @@ class ComponentSynthesizer:
         for (key, text), responses in zip(candidates, all_responses):
             raw = (responses[0].strip() if responses else "")
             entries = self._parse_boundary_response(raw, text, key)
+            entries = [e for e in entries if self._is_valid_isa_entry(e)]
             logger.info("  ISA extract: %s -> %d entries", key, len(entries))
             all_entries.extend(entries)
 
@@ -405,11 +420,10 @@ Return ONLY a JSON object:"""
 
     def _build_isa_boundary_prompt(self, key: str, text: str) -> str:
         """Build a prompt that asks the LLM to identify entry boundaries, not rewrite content."""
-        # Number lines so the LLM can reference them
         lines = text.split("\n")
         numbered = "\n".join(f"{i+1}: {line}" for i, line in enumerate(lines))
         numbered = _truncate(numbered, max_chars=120_000)
-        return f"""Below is a numbered source file "{key}". Identify ALL API/instruction reference entries (functions, classes, methods, enums, instructions).
+        return f"""Below is a numbered source file "{key}". Identify ALL API/instruction reference entries (functions, classes, methods, enums, instructions) that have proper documentation.
 
 For each entry, return a JSON object with:
 - "name": the entry name (function, class, instruction, etc.)
@@ -421,6 +435,10 @@ RULES:
 - Include the FULL definition and documentation for each entry (signature, docstring, all parameters, examples)
 - Do NOT overlap line ranges between entries
 - SKIP imports, module-level comments, tutorials, and narrative text
+- SKIP example/tutorial kernel implementations (functions that are sample code demonstrating API usage, not the API itself)
+- SKIP operator support tables and compatibility lists (e.g. lists of supported TensorFlow/PyTorch ops)
+- SKIP runnable code examples, test functions, and benchmark code
+- ONLY include entries that are API/library reference: function signatures with documented parameters, class definitions, enum definitions, instruction specifications
 - If no API reference content is found, return an empty array []
 
 Return ONLY a JSON array:
@@ -470,6 +488,19 @@ JSON array:"""
             pass
 
         return _parse_markdown_entries(raw, source_key)
+
+    @staticmethod
+    def _is_valid_isa_entry(entry: ISAEntry) -> bool:
+        """Filter out entries that are clearly not ISA reference material."""
+        md = entry.markdown
+        lines = [l for l in md.split("\n") if l.strip() and not l.startswith("### ")]
+        if len(lines) <= 1:
+            return False
+        # If the entire body is just table rows, it's a support list entry
+        non_table_lines = [l for l in lines if not l.strip().startswith("|") and l.strip() != "---"]
+        if not non_table_lines:
+            return False
+        return True
 
     def _extract_code_examples(self, items: list[tuple[str, str]]) -> str:
         """Extract code examples from the examples bucket in parallel (language-agnostic)."""
@@ -647,12 +678,12 @@ Hardware-specific optimization strategies:"""
 
 {extra_context}
 
-Extract rules and constraints that the agent MUST follow when generating optimized kernel code. Focus on:
+Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:
 - Programming model constraints (e.g., "the partition dimension is always 128", "free dimensions must be multiples of 512 for the Tensor Engine")
 - Memory layout rules (e.g., "tiles in scratchpad must not exceed X KB", "data must be contiguous along dimension Y")
 - Correctness constraints (e.g., "loop variables cannot be used for indexing in this context")
 - API usage pitfalls (e.g., "reduction output must be stored before reuse")
-- Try not to generate too many rules. Only include rules that are truly critical to generating correct code and relevant to the context provided above.
+Generate as few rules as possible. Only include rules that are truly critical to generating correct code and relevant to the context provided above.
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases
