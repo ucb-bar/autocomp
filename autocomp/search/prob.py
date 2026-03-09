@@ -19,7 +19,7 @@ class Prob():
 
         # Auto-load problem context from companion file if it exists
         for ext in (".md", ".txt"):
-            context_path = test_dir / prob_type / f"prob{prob_id}_*{ext}"
+            context_path = test_dir / prob_type / f"context{prob_id}{ext}"
             if context_path.exists():
                 self.context += context_path.read_text().strip()
                 break
