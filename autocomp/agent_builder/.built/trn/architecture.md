@@ -1,69 +1,133 @@
-## AWS NeuronCore Hardware Architecture Summary
+# AWS Trainium/Inferentia2 Hardware Architecture Summary for NKI Kernel Optimization
 
-### Overview
+## Overview
 
-AWS Trainium and Inferentia are custom-built ML accelerators programmed via the Neuron Kernel Interface (NKI). NKI kernels execute on individual NeuronCores — fully independent heterogeneous compute units. The primary targets for NKI kernel optimization are **NeuronCore-v2** (Trainium/Inferentia2, Trn1/Inf2 instances) and **NeuronCore-v3** (Trainium2, Trn2 instances). Each NeuronCore contains four compute engines and a software-managed memory hierarchy with no hardware caches — all data movement is explicit in the program.
+AWS Trainium and Inferentia2 chips are built around **NeuronCores** — fully independent heterogeneous compute units. NKI (Neuron Kernel Interface) kernels execute on a single NeuronCore. Each NeuronCore contains multiple specialized engines and software-managed on-chip memory. There are three generations relevant to NKI:
 
-### Memory Hierarchy
+| Generation | NeuronCore Version | Chips |
+|---|---|---|
+| Trainium1 / Inferentia2 | NeuronCore-v2 | 2 cores/chip |
+| Trainium2 | NeuronCore-v3 | 8 cores/chip |
+| Trainium3 | NeuronCore-v4 | 8 cores/chip |
 
-The memory hierarchy is four levels deep, all software-managed (no hardware caches):
+## Compute Engines (per NeuronCore)
 
-| Memory | Type | Capacity (per NeuronCore) | Bandwidth | Latency | Notes |
-|--------|------|--------------------------|-----------|---------|-------|
-| **PSUM** (Partial Sum Buffer) | On-chip, 2D (128 partitions) | Small (dedicated accumulation buffer) | Highest | Lowest | Reserved for Tensor Engine matmul outputs; supports read-add-write accumulation. Evict results to SBUF promptly. |
-| **SBUF** (State Buffer) | On-chip, 2D (128 partitions) | NeuronCore-v2: ~24 MiB; NeuronCore-v3: 28 MiB | ~20× HBM bandwidth | Low | Main on-chip working memory. Accessible by all compute engines. All computation operands must reside here (or PSUM). |
-| **HBM** (Device Memory) | Off-chip, linear | NeuronCore-v2: 16 GiB/core (32 GiB/chip); NeuronCore-v3: 12–24 GiB/core (96 GiB/chip) | NeuronCore-v2: 820 GiB/s/chip; NeuronCore-v3: 2.9 TB/s/chip | Medium | Kernel inputs/outputs reside here. Tensors stored in flattened row-major layout. |
-| **Host Memory** | CPU DRAM | Instance-dependent (up to 2 TiB on Trn2) | Lowest | Highest | Not directly accessible from NKI kernels; framework handles host↔device transfers. |
+Each NeuronCore contains four main engines that can execute concurrently:
 
-**Key memory characteristics:**
-- SBUF and PSUM are **2-dimensional**, organized into **128 partitions**. The first tensor dimension maps to partitions ("partition dimension"), the remaining dimensions are the "free dimension" within each partition.
-- HBM is **linear** memory — multi-dimensional tensors are flattened.
-- When on-chip data exceeds SBUF/PSUM capacity, the compiler inserts spills to HBM, which is costly. Careful tiling is essential.
-- On Trn2 with LNC=1, two physical NeuronCores **share** a single 24 GiB HBM bank, creating potential noisy-neighbor memory pressure.
-- HBM also holds scratchpad (compiler-managed spill space), model constants, DMA descriptors, and executable code.
+### Tensor Engine (TensorE)
+- **Power-optimized systolic array** for GEMM, convolution, and transpose operations.
+- **Mixed-precision**: accepts lower-precision inputs and accumulates in higher precision.
+- Outputs are always **FP32 or INT32** (v2/v3) or **FP32/BF16** (v4); explicit casting is needed for downstream lower-precision consumption.
 
-### Compute Engines
+| Version | FP8 TFLOPS | BF16/FP16/TF32 TFLOPS | FP32 TFLOPS | Notes |
+|---|---|---|---|---|
+| v2 (Trn1) | ~95 | ~95 | ~23.75 | Per core (chip: 190/47.5) |
+| v3 (Trn2) | 158 | 79 | — | Structured sparsity up to 2× (316 TFLOPS) |
+| v4 (Trn3) | 315 | 79 | 20 | MXFP4/MXFP8 at 315 TFLOPS; structured sparsity support |
 
-Each NeuronCore has four specialized engines that execute concurrently on independent sequencers:
+- **Supported input types**: cFP8 (e5m2, e4m3, e3m4), FP16, BF16, TF32, FP32, INT8; v4 adds MXFP4/MXFP8.
+- **Structured sparsity** (v3/v4): patterns 4:16, 4:12, 4:8, 2:8, 2:4, 1:4, 1:2 on one input tensor.
+- **Key optimization rule**: Feed 16-bit or 8-bit data to the Tensor Engine for maximum throughput. FP32 matmul is 4× slower than BF16/FP16.
 
-| Engine | Optimized For | Throughput (per NeuronCore) | Data Types | Key Operations |
-|--------|--------------|---------------------------|------------|----------------|
-| **Tensor Engine** | Matrix/tensor ops (systolic array) | v2: 95 FP16/BF16 TFLOPS; v3: 79 BF16/FP16 TFLOPS, 158 cFP8 TFLOPS | cFP8, FP16, BF16, TF32, FP32 inputs → FP32 outputs | GEMM, convolution, transpose. Writes to PSUM with accumulation. v3 adds structured sparsity (up to 2× throughput). |
-| **Vector Engine** | Reduction/vector ops | v2: 2.3 FP32 TFLOPS; v3: 1 FP32 TFLOPS | cFP8, FP16, BF16, TF32, FP32, INT8/16/32 | LayerNorm, pooling, axpy (Z=aX+Y), reductions. Each output depends on multiple inputs. |
-| **Scalar Engine** | Element-wise ops | v2: 2.9 FP32 TFLOPS; v3: 1.2 FP32 TFLOPS | cFP8, FP16, BF16, TF32, FP32, INT8/16/32 | Activation functions (GELU, sigmoid, exp), element-wise math. Each output depends on one input. |
-| **GpSimd Engine** | General-purpose programmable | 8× 512-bit vector processors | Arbitrary (C code) | Custom operators, complex control flow, DMA triggers. Accesses SBUF directly. |
+### Vector Engine (VectorE)
+- Operations where each output depends on **multiple inputs**: LayerNorm, pooling, reductions, axpy (Z=aX+Y).
+- v2: **2.3 TFLOPS FP32**; v3: **1 TFLOPS FP32**; v4: **1.2 TFLOPS FP32**.
+- Supported types: cFP8, FP16, BF16, TF32, FP32, INT8, INT16, INT32.
+- v4 adds fast exponential (4× faster than ScalarE) and MXFP8 quantization from BF16/FP16.
 
-**Engine concurrency:** All four engines have independent instruction sequencers and can execute in parallel, synchronized via semaphores. Overlapping compute with DMA is a key optimization strategy.
+### Scalar Engine (ScalarE)
+- **Element-wise** operations (each output depends on one input): GELU, sigmoid, exp, ReLU, reciprocal.
+- v2: **2.9 TFLOPS FP32**; v3: **1.2 TFLOPS FP32**; v4: **1.2 TFLOPS FP32**.
+- Same data type support as VectorE.
 
-### DMA Engines
+### GPSIMD Engine (GpSimdE)
+- **Eight fully-programmable 512-bit wide vector processors** per NeuronCore.
+- Can execute **general-purpose C/C++ code** with direct access to on-chip SRAM.
+- This is the mechanism by which NKI kernels execute custom logic on-chip.
 
-Each NeuronCore has **16 DMA engines** for data movement:
-- Bidirectional HBM↔SBUF, intra-HBM, and intra-SBUF transfers.
-- Each DMA engine handles 8 of the 128 SBUF partitions (128/16 = 8).
-- Per-engine bandwidth: ~27.2 GB/s (v2/v3), ~38.4 GB/s (v4).
-- Support scatter-gather, inline data type casting, and transpose during transfer.
-- **Optimal throughput** requires ≥4 KiB per partition in the free dimension and using all 128 partitions (all 16 engines active).
-- Small, frequent transfers are latency-bound; batch into larger transfers when possible.
-- DMA operates asynchronously from compute — overlap data loading with computation for best performance.
+### Additional Engines
+- **Sync Engine**: Synchronization and DMA triggering.
+- **Collective Communication Engine (CCE)**: Dedicated hardware for collective operations (AllReduce, AllGather); executes on hardware **separate from compute engines**, enabling compute-communication overlap.
 
-### Key Constraints and Optimization Considerations
+## Memory Hierarchy
 
-1. **Partition dimension alignment:** SBUF/PSUM have exactly 128 partitions. The first dimension of on-chip tensors maps to partitions, so tile sizes in this dimension should be multiples of 128 (or at most 128) for full utilization.
+### On-Chip Memory (Software-Managed, Not Hardware-Cached)
 
-2. **Tiling is critical:** On-chip SBUF is limited (24–28 MiB). Kernels must tile computations to fit working sets in SBUF, iterating over tiles with explicit DMA loads/stores. Poor tiling causes compiler-inserted spills to HBM.
+| Memory | Description | Key Properties |
+|---|---|---|
+| **SBUF (State Buffer)** | Main on-chip working memory | All engines read from SBUF; software must explicitly manage data movement |
+| **PSUM (Partial Sum Buffer)** | Secondary on-chip memory | Has **near-memory accumulation** support — TensorE can write-accumulate directly into PSUM without separate read-add-write cycles |
 
-3. **Compute-DMA overlap:** Since DMA engines and compute engines operate independently, double-buffering (loading the next tile while computing on the current one) is a primary optimization technique.
+SBUF is the primary staging area for data. The programmer (or compiler) must explicitly orchestrate DMA transfers between HBM and SBUF.
 
-4. **Tensor Engine dominance:** The Tensor Engine has 10–40× the throughput of Vector/Scalar engines. Maximize time spent in matmul; minimize time in element-wise and reduction operations. Keep PSUM free by promptly moving matmul results to SBUF.
+**On-chip SRAM sizes per NeuronCore:**
 
-5. **DMA transfer sizing:** Maximize bytes per partition (≥4 KiB) and use all 128 partitions to saturate DMA bandwidth. Reshape/fold tensors to achieve this when natural shapes are suboptimal.
+| Version | SRAM per Core | Total per Chip |
+|---|---|---|
+| v2 (Trn1) | Not publicly specified (estimated ~24 MiB) | ~48 MiB |
+| v3 (Trn2) | **28 MiB** | 224 MiB |
+| v4 (Trn3) | **32 MiB** | 256 MiB |
 
-6. **Free dimension contiguity:** HBM tensors are linear/row-major. DMA transfers are most efficient when the free dimension (innermost) is large and contiguous in HBM.
+**SBUF layout support** (v3+): Row-major, Col-major-2B, Col-major-4B. Column-major layouts enable more efficient access patterns for certain operations without explicit transpose.
 
-7. **Data types matter:** Lower precision (cFP8, BF16) doubles or more the Tensor Engine throughput versus FP32. Use the lowest precision that maintains acceptable accuracy. DMA can cast between types inline.
+### Off-Chip Memory (HBM)
 
-8. **Structured sparsity (v3+):** The Tensor Engine supports M:N sparsity patterns (e.g., 2:4), delivering up to 2× effective TFLOPS when applicable.
+| Chip | HBM Capacity | HBM Bandwidth | DMA Bandwidth |
+|---|---|---|---|
+| Trainium1 (Trn1) | 32 GiB/chip (16 GiB/core) | 820 GiB/s | ~1 TB/s (with inline compression) |
+| Trainium2 (Trn2) | 96 GiB/chip (24 GiB per 2-core bank) | 2.9 TB/s | 3.5 TB/s (with inline compression) |
+| Trainium3 (Trn3) | 144 GiB/chip | 4.9 TB/s | 4.9 TB/s (with inline computation) |
 
-9. **Software-managed memory:** There are no hardware caches. Every byte movement between memory levels must be explicitly programmed or will be inserted by the compiler. This gives full control but requires careful orchestration.
+DMA supports **inline memory compression/decompression**, which can effectively increase usable bandwidth beyond raw HBM throughput. v4 adds **near-memory accumulation in SRAM** via DMA (read-add-write in a single transfer).
 
-10. **Scratchpad/spill management:** Large intermediate tensors that don't fit in SBUF spill to HBM scratchpad. Scratchpad page size (default 512 MiB, configurable up to 3.5 GiB) affects memory efficiency — mismatched page sizes cause redundant private allocations.
+## Key Performance Ratios and Roofline Characteristics
+
+The arithmetic intensity (ops/byte) required to be compute-bound rather than memory-bandwidth-bound:
+
+| Chip | BF16 Compute | HBM BW | AI Crossover (BF16) |
+|---|---|---|---|
+| Trn1 | 190 TFLOPS/chip | 820 GB/s | ~232 ops/byte |
+| Trn2 | 667 TFLOPS/chip | 2.9 TB/s | ~230 ops/byte |
+| Trn3 | 671 TFLOPS/chip | 4.9 TB/s | ~137 ops/byte |
+
+These are very high arithmetic intensity requirements, meaning **many operations will be memory-bandwidth-bound**. Kernels must maximize data reuse through tiling, fusion, and keeping data in SBUF/PSUM to avoid HBM round-trips.
+
+## Supported Data Types
+
+| Type | Bits | Exponent | Mantissa | Notes |
+|---|---|---|---|---|
+| FP32 | 32 | 8 | 23 | Full precision; 4× slower on TensorE |
+| TF32 | 19 | 8 | 10 | FP32 range, reduced precision |
+| BF16 | 16 | 8 | 7 | FP32 range, low precision; default auto-cast target |
+| FP16 | 16 | 5 | 10 | Higher precision than BF16 but limited range (±65504) |
+| FP8 (e5m2) | 8 | 5 | 2 | Configurable FP8 variant |
+| FP8 (e4m3) | 8 | 4 | 3 | Configurable FP8 variant |
+| FP8 (e3m4) | 8 | 3 | 4 | Configurable FP8 variant |
+| MXFP8/MXFP4 | 8/4 | — | — | v4 only; OCP-compliant microscaling formats |
+| INT8/INT16/INT32 | 8/16/32 | — | — | Integer types for Vector/Scalar engines |
+
+**Default compiler behavior**: FP32 matmul operations are auto-cast to **BF16** for performance. The compiler preserves I/O tensor types.
+
+**Rounding modes**: Round-to-Nearest-Even (RNE, default) and **Stochastic Rounding** (SR). SR is important for training convergence with reduced-precision accumulations — it prevents small values from being systematically rounded away during accumulation into large-magnitude numbers.
+
+## Key Constraints for NKI Kernel Optimization
+
+1. **Software-managed SRAM**: SBUF and PSUM are not hardware-cached. Kernels must explicitly manage all data movement (DMA from HBM → SBUF, compute, DMA from SBUF → HBM). Efficient tiling and prefetching are critical.
+
+2. **TensorE accumulates in FP32**: Matrix multiply always produces FP32/INT32 output regardless of input precision. Explicit casting is needed before storing results in lower precision.
+
+3. **Transpose cost**: Fast transpose uses the TensorE in FP16/BF16 (fast path). Byte-level transpose (lossless, full precision) is significantly slower.
+
+4. **Precision-performance tradeoff**: Using BF16/FP16/FP8 for TensorE inputs provides up to 4× throughput over FP32. FP16 risks overflow beyond ±65504; BF16 is safer for unknown value ranges.
+
+5. **PSUM near-memory accumulation**: The Partial Sum Buffer supports direct accumulation from TensorE output, avoiding separate read-modify-write cycles. This is critical for efficient matmul accumulation patterns.
+
+6. **Compute-communication overlap**: Collective communication runs on dedicated CCE hardware, not shared with compute engines. NKI kernel execution is not blocked by concurrent collective operations.
+
+7. **Single-NeuronCore execution**: Each NKI kernel executes on one NeuronCore. Cross-core parallelism is handled at the framework level, not within the kernel.
+
+8. **Logical NeuronCore configuration** (Trn2/Trn3): Multiple physical NeuronCores can be combined into a single logical NeuronCore (e.g., LNC=2 on Trn2 combines 2 physical cores sharing a 24 GiB HBM bank). The compiler LNC setting must match the runtime configuration.
+
+9. **Fixed compilation**: Models/kernels are compiled for specific shapes and configurations. Dynamic shapes are supported at the ISA level (v2+) but sequence bucketing is common in practice.
+
+10. **Batching amortizes parameter reads**: The NeuronCore reads parameters once from HBM and computes across all batch samples before reading the next layer's parameters. Larger batches improve hardware utilization up to the compute-bound ceiling.

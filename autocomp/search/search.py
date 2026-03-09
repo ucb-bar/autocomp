@@ -695,9 +695,9 @@ def main():
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 8
+    iterations = 5
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 1
+    prob_id = 4
 
     # Reimplement failed candidates
     # Only works for trn

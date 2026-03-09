@@ -1,43 +1,47 @@
-general:
-- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
-- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
-- SBUF and PSUM are 2-dimensional with exactly 128 partitions; the first tensor dimension always maps to the partition dimension
-- HBM tensors are stored in flattened row-major layout; multi-dimensional tensors must be explicitly managed during DMA transfers
-- All data movement between memory levels must be explicitly programmed via DMA or tensor_copy operations; there are no hardware
-  caches
-- The partition dimension of on-chip tensors must be a multiple of 128 or at most 128 for full SBUF/PSUM utilization
-- PSUM is reserved for Tensor Engine matmul outputs and must be promptly evicted to SBUF to free space for subsequent operations
-- DMA optimal throughput requires ≥4 KiB per partition in the free dimension and using all 128 partitions (all 16 DMA engines
-  active)
-- 'Tiling is critical: on-chip SBUF capacity (24-28 MiB) limits working set size; poor tiling causes compiler-inserted HBM
-  spills'
-- The Tensor Engine has 10-40× the throughput of Vector/Scalar engines; maximize time in matmul and minimize element-wise/reduction
-  operations
-- Lower precision data types (cFP8, BF16) provide higher Tensor Engine throughput than FP32; use lowest precision maintaining
-  acceptable accuracy
-- DMA transfers are most efficient when the free dimension (innermost) is large and contiguous in HBM
-planning:
-- Limit the scope of the plan to the selected optimization.
-- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
-- Identify tiling strategy such that all tiles fit within SBUF capacity without compiler-inserted spills to HBM
-- 'Plan compute-DMA overlap using double-buffering: load next tile while computing on current tile to saturate DMA bandwidth'
-- Ensure tile sizes in the partition dimension are multiples of 128 or at most 128 to achieve full DMA engine utilization
-- Reshape/fold tensors to maximize bytes per partition (≥4 KiB) and use all 128 partitions when natural shapes are suboptimal
-- Plan to move matmul results from PSUM to SBUF immediately after nc_matmul to free PSUM for subsequent operations
-- For kernels larger than single tile, structure loops to hoist data loads to outer loops to avoid redundant HBM transfers
-- Verify input matrix dimensions are multiples of tile sizes (TILE_M, TILE_K, TILE_N) or plan padding/edge-case handling
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
-- Use nki.isa.dma_copy for HBM↔SBUF transfers; do not attempt direct PSUM↔HBM transfers
-- Use nki.isa.tensor_copy to move data from PSUM to SBUF; PSUM output from nc_matmul cannot be directly written to HBM
-- Allocate result tensors in PSUM with nl.ndarray(..., buffer=nl.psum) immediately before nc_matmul; do not reuse PSUM allocations
-  across matmul operations
-- Use nl.affine_range() for compile-time loop unrolling over tile dimensions to expose parallelism across DMA and compute
-  engines
-- 'Verify tensor shape compatibility before operations: assert K == K_ for matmul contraction dimension; assert shapes match
-  for element-wise ops'
-- Use nl.tile_size constants (pmax, gemm_stationary_fmax, gemm_moving_fmax) to define tile dimensions; do not hardcode values
-- For dynamic loops, use nki.isa.register_alloc, register_load, register_store, and register_move to manage on-device register
-  state
-- Ensure SBUF tensor allocations do not exceed per-NeuronCore capacity (24 MiB for v2, 28 MiB for v3) across all active tensors
-  in a scope
+- Reduction output must be stored or consumed before reuse in subsequent operations.
+- Explicit DMA transfers (dma_copy, dma_transpose) must be used to move data between
+  HBM and SBUF; no implicit caching occurs.
+- When using transpose operations, prefer fast transpose via TensorE in FP16/BF16
+  over byte-level transpose for performance; byte-level transpose is significantly
+  slower.
+- SBUF layout support (v3+) includes Row-major, Col-major-2B, and Col-major-4B; choose
+  appropriate layout to enable efficient access patterns without explicit transpose.
+- Do not use the block dimension in NKI tensor creation routines (deprecated as of
+  Neuron 2.24; will error in 2.25+).
+general:
+- The rewritten program should be semantically equivalent to the original program,
+  within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions
+  can be renamed or deleted).
+- Each NKI kernel executes on a single NeuronCore; cross-core parallelism is handled
+  at the framework level, not within the kernel.
+- SBUF and PSUM are software-managed on-chip memory, not hardware-cached. The programmer
+  must explicitly orchestrate all DMA transfers between HBM and SBUF.
+- TensorE always accumulates matrix multiply results in FP32 or INT32 (v2/v3) or FP32/BF16
+  (v4), regardless of input precision. Explicit casting is required before storing
+  results in lower precision.
+- 'On-chip SRAM per NeuronCore: v2 (~24 MiB estimated), v3 (28 MiB), v4 (32 MiB).
+  Tiles in scratchpad must not exceed these limits.'
+- Arithmetic intensity (ops/byte) must exceed ~230 ops/byte (Trn1/Trn2) or ~137 ops/byte
+  (Trn3) to be compute-bound rather than memory-bandwidth-bound.
+- "Using BF16/FP16/FP8 for TensorE inputs provides up to 4\xD7 throughput over FP32;\
+  \ FP16 risks overflow beyond \xB165504, so BF16 is safer for unknown value ranges."
+- Models/kernels are compiled for specific shapes and configurations. Dynamic shapes
+  are supported at the ISA level but sequence bucketing is common in practice.
+- Larger batches improve hardware utilization by amortizing parameter reads from HBM
+  across more samples, up to the compute-bound ceiling.
+planning:
+- Limit the scope of the plan to the selected optimization.
+- Do not count out any of the optimizations unless they are clearly irrelevant to
+  the code.
+- Maximize data reuse through tiling and fusion to keep data in SBUF/PSUM and avoid
+  HBM round-trips, given the high arithmetic intensity requirements.
+- Consider using PSUM near-memory accumulation for efficient matmul accumulation patterns
+  to avoid separate read-modify-write cycles.
+- 'Plan for compute-communication overlap: collective communication runs on dedicated
+  CCE hardware separate from compute engines, so kernel execution is not blocked by
+  concurrent collective operations.'
+- For Trn2/Trn3, verify that the compiler LNC (Logical NeuronCore) setting matches
+  the runtime configuration when combining multiple physical NeuronCores.
