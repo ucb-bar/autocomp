@@ -159,7 +159,8 @@ Relevant sections (one per line):"""
             selected = list(self._isa_sections.keys())
 
         self._isa_selection_cache[cache_key] = selected
-        logger.info("ISA selection for %s: %d/%d sections", cache_key, len(selected), len(self._isa_sections))
+        logger.info("%s BuiltLLMAgent: ISA selection for %s: %d/%d sections", self.llm_client.model, cache_key, len(selected), len(self._isa_sections))
+        logger.debug("%s BuiltLLMAgent: Selected ISA sections: %s", self.llm_client.model, cache_key, selected)
         return self._assemble_isa_sections(selected)
 
     def _assemble_isa_sections(self, section_names: list[str]) -> str:
@@ -290,8 +291,9 @@ Relevant sections (one per line):"""
 
         if self.menu_strategy == "one-shot":
             prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
-            prompt_text += "Identify optimization opportunities specific to this kernel and hardware that are NOT already listed above. "
-            prompt_text += "Return ONLY a plain list of new optimization strategies that could improve this kernel's performance, one per line. Do NOT include explanations, numbering, bullet points, headers, or any other text. "
+            prompt_text += "Identify optimization opportunities specific to this software workload that are NOT already listed above. "
+            prompt_text += "Identify about 10 new optimization strategies that could improve this kernel's performance. The optimization strategies should be high-level and able to be expressed in a few words."
+            prompt_text += "Return ONLY the list of optimization strategies as a Python list of strings. Do NOT include explanations, numbering, bullet points, headers, or any other text.\n"
         elif self.menu_strategy == "progressive":
             #TODO
             pass
