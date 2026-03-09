@@ -1,7 +1,12 @@
-import neuronxcc.nki as nki
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-import neuronxcc.nki.typing as nt
+# DEPRECATED
+# import neuronxcc.nki as nki
+# import neuronxcc.nki.isa as nisa
+# import neuronxcc.nki.language as nl
+# import neuronxcc.nki.typing as nt
+
+import nki
+import nki.isa as nisa
+import nki.language as nl
 import numpy as np
 import math
 
