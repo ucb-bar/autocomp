@@ -25,7 +25,7 @@ from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: "Prob", models: list, code_models: list = None):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static"):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -59,9 +59,9 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     elif agent_name == "built":
-        config_dir = hw_config._config_dir if hasattr(hw_config, '_config_dir') else f"autocomp/agents/{backend_name}"
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend) for m in code_models]) if code_models else None
+        config_dir = hw_config._config_dir if hasattr(hw_config, '_config_dir') else f"autocomp/agent_builder/.built/{backend_name}"
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
@@ -679,7 +679,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda"
+    agent_name = "built"  # Options: "gemmini", "trn", "cuda"
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TrnHardwareConfig("trn1.2xlarge")
@@ -715,6 +715,10 @@ def main():
     # Translation parameters
     translate_iters = 0
     translate_perf_threshold = 1.2
+
+    # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
+    # Options: "static", "one-shot", "progressive"
+    menu_strategy = "static"
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -798,7 +802,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)

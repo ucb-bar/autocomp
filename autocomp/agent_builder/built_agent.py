@@ -23,11 +23,13 @@ class BuiltLLMAgent(LLMAgent):
     """
 
     def __init__(self, model: str, config_dir: str | Path,
-                 hw_config: HardwareConfig, eval_backend: EvalBackend):
+                 hw_config: HardwareConfig, eval_backend: EvalBackend,
+                 menu_strategy: str = "static"):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
+        self.menu_strategy = menu_strategy # choose from: [static, one-shot, progressive]
 
         # Load all config files
         self._architecture = self._load_text("architecture.md")
@@ -38,6 +40,9 @@ class BuiltLLMAgent(LLMAgent):
 
         # Cache for ISA section selection per problem
         self._isa_selection_cache: dict[str, list[str]] = {}
+
+        # Cache for new menu options per candidate
+        self._new_menu_cache: dict[str, list[str]] = {}
 
         logger.info(
             "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations",
@@ -168,8 +173,14 @@ Relevant sections (one per line):"""
     # Required overrides
     # ------------------------------------------------------------------
 
-    def get_opt_menu_options(self, prob: Prob) -> list[str]:
-        return list(self._optimization_menu)
+    def get_opt_menu_options(self, prob: Prob, code: str = None) -> list[str]:
+        base = list(self._optimization_menu)
+        if code is not None:
+            base = base + self._new_menu_cache.get(code, [])
+        return base
+
+    def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
+        self._new_menu_cache = new_menu
 
     def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
         rules: list[str] = []
@@ -199,7 +210,7 @@ Relevant sections (one per line):"""
         dropout_menu_options, translate,
     ) -> str:
         # Select menu options
-        opt_lst = self.get_opt_menu_options(prob)
+        opt_lst = self.get_opt_menu_options(prob, code=candidate.code)
         if dropout_menu_options < 1 and not force_opt_menu:
             opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
         if shuffle_opts:
@@ -266,6 +277,25 @@ Relevant sections (one per line):"""
 
         if prompt_end:
             prompt_text += "\n" + prompt_end
+        return prompt_text
+
+    def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob):
+        prompt_text = self._architecture + "\n"
+        prompt_text += self._get_isa_for_problem(prob, candidate.code) + "\n"
+        prompt_text += "Here is the kernel to optimize:\n"
+        prompt_text += candidate.code + "\n"
+        prompt_text += "The following optimization strategies are already in the menu:\n"
+        for i, opt in enumerate(self.get_opt_menu_options(prob)):
+            prompt_text += f"{i + 1}. {opt}\n"
+
+        if self.menu_strategy == "one-shot":
+            prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
+            prompt_text += "Identify optimization opportunities specific to this kernel and hardware that are NOT already listed above. "
+            prompt_text += "Return a list of new optimization strategies, one per line, that could improve this kernel's performance. "
+        elif self.menu_strategy == "progressive":
+            #TODO
+            pass
+
         return prompt_text
 
     def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None,
