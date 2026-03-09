@@ -1,15 +1,14 @@
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
 - Reduction output must be stored or consumed before reuse in subsequent operations.
-- Explicit DMA transfers (dma_copy, dma_transpose) must be used to move data between
-  HBM and SBUF; no implicit caching occurs.
-- When using transpose operations, prefer fast transpose via TensorE in FP16/BF16
-  over byte-level transpose for performance; byte-level transpose is significantly
-  slower.
+- Transpose operations should use the fast path (TensorE in FP16/BF16) when possible;
+  byte-level transpose is significantly slower.
 - SBUF layout support (v3+) includes Row-major, Col-major-2B, and Col-major-4B; choose
-  appropriate layout to enable efficient access patterns without explicit transpose.
-- Do not use the block dimension in NKI tensor creation routines (deprecated as of
-  Neuron 2.24; will error in 2.25+).
+  layouts to enable efficient access patterns without explicit transpose.
+- DMA transfers support inline memory compression/decompression; v4 adds near-memory
+  accumulation in SRAM via DMA (read-add-write in a single transfer).
+- Stochastic Rounding (SR) should be enabled for training with reduced-precision accumulations
+  to prevent systematic rounding away of small values.
 general:
 - The rewritten program should be semantically equivalent to the original program,
   within a small numerical tolerance.
@@ -17,31 +16,30 @@ general:
   can be renamed or deleted).
 - Each NKI kernel executes on a single NeuronCore; cross-core parallelism is handled
   at the framework level, not within the kernel.
-- SBUF and PSUM are software-managed on-chip memory, not hardware-cached. The programmer
-  must explicitly orchestrate all DMA transfers between HBM and SBUF.
-- TensorE always accumulates matrix multiply results in FP32 or INT32 (v2/v3) or FP32/BF16
-  (v4), regardless of input precision. Explicit casting is required before storing
-  results in lower precision.
-- 'On-chip SRAM per NeuronCore: v2 (~24 MiB estimated), v3 (28 MiB), v4 (32 MiB).
-  Tiles in scratchpad must not exceed these limits.'
-- Arithmetic intensity (ops/byte) must exceed ~230 ops/byte (Trn1/Trn2) or ~137 ops/byte
-  (Trn3) to be compute-bound rather than memory-bandwidth-bound.
-- "Using BF16/FP16/FP8 for TensorE inputs provides up to 4\xD7 throughput over FP32;\
-  \ FP16 risks overflow beyond \xB165504, so BF16 is safer for unknown value ranges."
-- Models/kernels are compiled for specific shapes and configurations. Dynamic shapes
+- SBUF and PSUM are software-managed on-chip memory with no hardware caching; all
+  data movement between HBM and SBUF must be explicitly orchestrated via DMA.
+- TensorE always accumulates matrix multiply results in FP32/INT32 (v2/v3) or FP32/BF16
+  (v4), regardless of input precision; explicit casting is required before storing
+  in lower precision.
+- "The Tensor Engine achieves 4\xD7 higher throughput with 16-bit or 8-bit inputs\
+  \ compared to FP32; use BF16/FP16/FP8 for maximum performance."
+- Arithmetic intensity (ops/byte) must exceed ~137-232 ops/byte (depending on chip
+  generation) to be compute-bound rather than memory-bandwidth-bound.
+- Models/kernels are compiled for specific shapes and configurations; dynamic shapes
   are supported at the ISA level but sequence bucketing is common in practice.
 - Larger batches improve hardware utilization by amortizing parameter reads from HBM
-  across more samples, up to the compute-bound ceiling.
+  across more samples.
 planning:
 - Limit the scope of the plan to the selected optimization.
 - Do not count out any of the optimizations unless they are clearly irrelevant to
   the code.
-- Maximize data reuse through tiling and fusion to keep data in SBUF/PSUM and avoid
-  HBM round-trips, given the high arithmetic intensity requirements.
-- Consider using PSUM near-memory accumulation for efficient matmul accumulation patterns
-  to avoid separate read-modify-write cycles.
-- 'Plan for compute-communication overlap: collective communication runs on dedicated
-  CCE hardware separate from compute engines, so kernel execution is not blocked by
-  concurrent collective operations.'
-- For Trn2/Trn3, verify that the compiler LNC (Logical NeuronCore) setting matches
-  the runtime configuration when combining multiple physical NeuronCores.
+- Tile sizes in SBUF must not exceed the on-chip SRAM capacity per NeuronCore (28
+  MiB for v3, 32 MiB for v4).
+- Data reuse through tiling and fusion is critical to avoid HBM round-trips and maximize
+  compute-bound execution.
+- PSUM near-memory accumulation should be leveraged to avoid separate read-modify-write
+  cycles for matrix multiply accumulation patterns.
+- Collective communication runs on dedicated CCE hardware separate from compute engines,
+  enabling compute-communication overlap without blocking kernel execution.
+- Logical NeuronCore configuration (Trn2/Trn3) allows combining multiple physical
+  NeuronCores; the compiler LNC setting must match the runtime configuration.
