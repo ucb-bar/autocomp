@@ -9,17 +9,19 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Fuse QKV weight matrices into a single larger matmul
-- strategy: Use BSH attention layout to overlap compute with collectives
-- strategy: Shard KV cache over sequence dimension via flash decoding
-- strategy: Align bucket sizes to powers of two for reduced padding waste
-- strategy: Duplicate Q weights to skip flash decoding allgather overhead
-- strategy: Use int8 weight storage to reduce memory bandwidth pressure
-- strategy: Encode context in parallel rather than token-by-token
-- strategy: Select GQA sharding strategy matching batch and head dimensions
-- strategy: Minimize collective operations by choosing optimal tensor-parallel degree
-- strategy: Rewrite computation as pure-function HLO for compiler optimization
-- strategy: Consolidate small matmuls into larger sharded operations across NeuronCores
-- strategy: Choose context encoding buckets close to expected prompt lengths
-- strategy: Move embedding and sampling operations on-device to avoid transfers
+- strategy: Maximize partition dimension usage to saturate 128 parallel compute lanes
+- strategy: Map large free axis as stationary tensor for fast LoadStationary
+- strategy: Use PSUM accumulation pattern for tiled contraction dimension matmuls
+- strategy: Minimize most-minor free dimension stride to stay under 16 bytes
+- strategy: Assign independent operations to different engines for asynchronous parallel
+    execution
+- strategy: Use TensorE for low-latency transpose/broadcast instead of HBM round-trips
+- strategy: Combine scale/bias with activation into single ScalarE pipelined instruction
+- strategy: Use activation_reduce to fuse nonlinear function with reduction on ScalarE
+- strategy: Pack small-partition operations via partition vectorization to fill 128
+    lanes
+- strategy: Maximize both free and partition dimensions in load/store for DMA efficiency
+- strategy: Choose reduction engine based on natural data layout to avoid transposes
+- strategy: Prefer BF16/FP16/cFP8 over FP32 inputs for 4x TensorE throughput
+- strategy: Exploit background LoadStationary to overlap stationary loading with computation
 - strategy: Other methods not listed here.

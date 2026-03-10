@@ -1,105 +1,30 @@
-## Enumerations and Hardware Configuration
-
-### dge_mode
-
-class dge_mode(IntEnum): 
-  r""" Neuron Descriptor Generation Engine Mode """
-
-  none = 0
-  r"""Not using DGE"""
-
-  swdge = 1
-  r"""Software DGE"""
-
-  hwdge = 2
-  r"""Hardware DGE"""
-
-  unknown = 3
-  r"""Unknown DGE mode, i.e., let compiler decide the DGE mode"""
-
----
-
-### engine
-
-class engine(IntEnum): 
-  r""" Neuron Device engines """
-
-  tensor = 1
-  r"""Tensor Engine"""
-
-  vector = 5
-  r"""Vector Engine"""
-
-  scalar = 2
-  r"""Scalar Engine"""
-
-  gpsimd = 3
-  r"""GpSIMD Engine"""
-
-  sync = 6
-  r"""Sync Engine"""
-
-  unknown = 0
-  r"""Unknown Engine"""
-
----
-
-### nc_version
-
-class nc_version(IntEnum): 
-  r""" NeuronCore version """
-
-  gen2 = 2
-  r"""Trn1/Inf2 target"""
-
-  gen3 = 3
-  r"""Trn2 target"""
-
----
-
-### oob_mode
-
-class oob_mode(IntEnum): 
-  r""" Neuron OOB Access Mode """
-
-  error = 0
-
-  skip = 1
-
-
----
-
-### reduce_cmd
-
-class reduce_cmd(IntEnum): 
-  r"""Engine Register Reduce commands """
-
-  idle = 0
-  r"""Not using the accumulator registers"""
-
-  reset = 1
-  r"""Resets the accumulator registers to its initial state"""
-
-  reset_reduce = 3
-  r""" Resets the accumulator registers then immediately accumulate the results of the current instruction into the accumulators"""
-
-  reduce = 2
-  r"""keeps accumulating over the current value of the accumulator registers"""
-
----
-
-### get_nc_version
-
-def get_nc_version():
-  r""" Returns the ``nc_version`` of the current target context. """
-  ...
-
-## Data Types
+## Data Types and Constants
 
 ### bfloat16
 
 bfloat16 = np.dtype('bfloat16')
 r"""16-bit floating-point number (1S,8E,7M)"""
+
+---
+
+### bfp16
+
+class bfp16: 
+  r"""BFLOAT16 Constants"""
+
+  @property
+  def min(self):
+    r"""BFLOAT16 Bit pattern (0xff80) representing the minimum (or maximum negative) BFLOAT16 value"""
+    ...
+
+---
+
+### bfp16.min
+
+  @property
+  def min(self):
+    r"""BFLOAT16 Bit pattern (0xff80) representing the minimum (or maximum negative) BFLOAT16 value"""
+    ...
 
 ---
 
@@ -135,6 +60,39 @@ r"""8-bit floating-point number (1S,4E,3M)"""
 
 float8_e5m2 = np.dtype('float8_e5m2')
 r"""8-bit floating-point number (1S,5E,2M)"""
+
+---
+
+### fp32
+
+class fp32: 
+  r""" FP32 Constants"""
+
+  @property
+  def min(self):
+    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
+    ...
+
+---
+
+### fp32
+
+class fp32: 
+  r""" FP32 Constants"""
+
+  @property
+  def min(self):
+    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
+    ...
+
+---
+
+### fp32.min
+
+  @property
+  def min(self):
+    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
+    ...
 
 ---
 
@@ -185,61 +143,56 @@ r"""Unsigned integer type, compatible with C ``unsigned int``. Same as `numpy.ui
 tfloat32 = np.dtype('|V4')
 r"""32-bit floating-point number (1S,8E,10M)"""
 
-## Constants and Special Values
+## Memory Spaces and Buffers
 
-### fp32
+### hbm
 
-class fp32: 
-  r""" FP32 Constants"""
-
-  @property
-  def min(self):
-    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
-    ...
+hbm = ...
+r"""HBM - Alias of `private_hbm`"""
 
 ---
 
-### fp32
+### private_hbm
 
-class fp32: 
-  r""" FP32 Constants"""
-
-  @property
-  def min(self):
-    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
-    ...
+private_hbm = ...
+r"""HBM - Only visible to each individual kernel instance in the SPMD grid"""
 
 ---
 
-### fp32.min
+### shared_hbm
 
-  @property
-  def min(self):
-    r"""FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value"""
-    ...
+shared_hbm = ...
+r"""Shared HBM - Visible to all kernel instances in the SPMD grid"""
 
 ---
 
-### bfp16
+### psum
 
-class bfp16: 
-  r"""BFLOAT16 Constants"""
-
-  @property
-  def min(self):
-    r"""BFLOAT16 Bit pattern (0xff80) representing the minimum (or maximum negative) BFLOAT16 value"""
-    ...
+psum = ...
+r"""PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.psum.auto_alloc()``"""
 
 ---
 
-### bfp16.min
+### psum
 
-  @property
-  def min(self):
-    r"""BFLOAT16 Bit pattern (0xff80) representing the minimum (or maximum negative) BFLOAT16 value"""
-    ...
+psum = ...
+r"""PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.psum.auto_alloc()``"""
 
-## Tile Size Constants
+---
+
+### sbuf
+
+sbuf = ...
+r"""State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.sbuf.auto_alloc()``"""
+
+---
+
+### sbuf
+
+sbuf = ...
+r"""State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.sbuf.auto_alloc()``"""
+
+## Tile Size Constants and Hardware Info
 
 ### tile_size
 
@@ -358,56 +311,348 @@ class tile_size:
     r"""The total SBUF available size"""
     ...
 
-## Memory Spaces and Buffers
+---
 
-### hbm
+### nc_version
 
-hbm = ...
-r"""HBM - Alias of `private_hbm`"""
+class nc_version(IntEnum): 
+  r""" NeuronCore version """
+
+  gen2 = 2
+  r"""Trn1/Inf2 target"""
+
+  gen3 = 3
+  r"""Trn2 target"""
 
 ---
 
-### private_hbm
+### get_nc_version
 
-private_hbm = ...
-r"""HBM - Only visible to each individual kernel instance in the SPMD grid"""
+def get_nc_version():
+  r""" Returns the ``nc_version`` of the current target context. """
+  ...
 
----
+## Hardware Enums and Modes
 
-### shared_hbm
+### dge_mode
 
-shared_hbm = ...
-r"""Shared HBM - Visible to all kernel instances in the SPMD grid"""
+class dge_mode(IntEnum): 
+  r""" Neuron Descriptor Generation Engine Mode """
 
----
+  none = 0
+  r"""Not using DGE"""
 
-### psum
+  swdge = 1
+  r"""Software DGE"""
 
-psum = ...
-r"""PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.psum.auto_alloc()``"""
+  hwdge = 2
+  r"""Hardware DGE"""
 
----
-
-### psum
-
-psum = ...
-r"""PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.psum.auto_alloc()``"""
-
----
-
-### sbuf
-
-sbuf = ...
-r"""State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.sbuf.auto_alloc()``"""
+  unknown = 3
+  r"""Unknown DGE mode, i.e., let compiler decide the DGE mode"""
 
 ---
 
-### sbuf
+### engine
 
-sbuf = ...
-r"""State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of ``nki.compiler.sbuf.auto_alloc()``"""
+class engine(IntEnum): 
+  r""" Neuron Device engines """
 
-## Tensor Creation and Manipulation
+  tensor = 1
+  r"""Tensor Engine"""
+
+  vector = 5
+  r"""Vector Engine"""
+
+  scalar = 2
+  r"""Scalar Engine"""
+
+  gpsimd = 3
+  r"""GpSIMD Engine"""
+
+  sync = 6
+  r"""Sync Engine"""
+
+  unknown = 0
+  r"""Unknown Engine"""
+
+---
+
+### oob_mode
+
+class oob_mode(IntEnum): 
+  r""" Neuron OOB Access Mode """
+
+  error = 0
+
+  skip = 1
+
+
+---
+
+### reduce_cmd
+
+class reduce_cmd(IntEnum): 
+  r"""Engine Register Reduce commands """
+
+  idle = 0
+  r"""Not using the accumulator registers"""
+
+  reset = 1
+  r"""Resets the accumulator registers to its initial state"""
+
+  reset_reduce = 3
+  r""" Resets the accumulator registers then immediately accumulate the results of the current instruction into the accumulators"""
+
+  reduce = 2
+  r"""keeps accumulating over the current value of the accumulator registers"""
+
+## Tensor Creation and Initialization
+
+### ndarray
+
+def ndarray(shape, dtype, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor of given shape and dtype on the specified buffer.
+
+  ((Similar to `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_))
+
+  :param shape: the shape of the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a new tensor allocated on the buffer.
+  """
+  ...
+
+---
+
+### full
+
+def full(shape, fill_value, dtype, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor of given shape and dtype on the specified buffer, filled with initial value.
+
+  ((Similar to `numpy.full <https://numpy.org/doc/stable/reference/generated/numpy.full.html>`_))
+
+  :param shape: the shape of the tensor.
+  :param fill_value: the initial value of the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a new tensor allocated on the buffer.
+  """
+  ...
+
+---
+
+### ones
+
+def ones(shape, dtype, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor of given shape and dtype on the specified buffer, filled with ones.
+
+  ((Similar to `numpy.ones <https://numpy.org/doc/stable/reference/generated/numpy.ones.html>`_))
+
+  :param shape: the shape of the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a new tensor allocated on the buffer.
+  """
+  ...
+
+---
+
+### zeros
+
+def zeros(shape, dtype, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor of given shape and dtype on the specified buffer, filled with zeros.
+
+  ((Similar to `numpy.zeros <https://numpy.org/doc/stable/reference/generated/numpy.zeros.html>`_))
+
+  :param shape: the shape of the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a new tensor allocated on the buffer.
+  """
+  ...
+
+---
+
+### zeros_like
+
+def zeros_like(a, dtype=None, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor of zeros with the same shape and type as a given tensor.
+
+  ((Similar to `numpy.zeros_like <https://numpy.org/doc/stable/reference/generated/numpy.zeros_like.html>`_))
+
+  :param a: the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a tensor of zeros with the same shape and type as a given tensor.
+  """
+  ...
+
+---
+
+### empty_like
+
+def empty_like(a, dtype=None, *, buffer=None, name="", **kwargs):
+  r"""
+  Create a new tensor with the same shape and type as a given tensor.
+
+  ((Similar to `numpy.empty_like <https://numpy.org/doc/stable/reference/generated/numpy.empty_like.html>`_))
+
+  :param a: the tensor.
+  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
+  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
+  :param name: the name of the tensor.
+  :return: a tensor with the same shape and type as a given tensor.
+  """
+  ...
+
+---
+
+### shared_constant
+
+def shared_constant(constant, dtype=None, **kwargs):
+  r"""
+  Create a new tensor filled with the data specified by data array.
+
+  :param constant: the constant data to be filled into a tensor
+  :return: a tensor which contains the constant data
+  """
+  ...
+
+---
+
+### shared_identity_matrix
+
+def shared_identity_matrix(n, dtype=np.uint8, **kwargs):
+  r"""
+  Create a new identity tensor with specified data type. 
+
+  This function has the same behavior to :doc:`nki.language.shared_constant <nki.language.shared_constant>` but 
+  is preferred if the constant matrix is an identity matrix. The 
+  compiler will reuse all the identity matrices of the same 
+  dtype in the graph to save space.
+  
+  :param n: the number of rows(and columns) of the returned identity matrix
+  :param dtype: the data type of the tensor, default to be ``np.uint8`` (see :ref:`nki-dtype` for more information).
+  :return: a tensor which contains the identity tensor
+  """
+  ...
+
+---
+
+### rand
+
+def rand(shape, dtype=np.float32, **kwargs):
+  r"""
+  Generate a tile of given shape and dtype, filled with random values that are
+  sampled from a uniform distribution between 0 and 1.
+
+  :param shape: the shape of the tile.
+  :param dtype: the data type of the tile (see :ref:`nki-dtype` for more information).
+  :return: a tile with random values.
+  """
+  ...
+
+---
+
+### random_seed
+
+def random_seed(seed, *, mask=None, **kwargs):
+  r"""
+  Sets a seed, specified by user, to the random number generator on HW.
+  Using the same seed will generate the same sequence of random numbers when using
+  together with the random() API
+
+  :param seed: a 32-bit scalar value to use as the seed.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: none
+  """
+  ...
+
+---
+
+### iota
+
+def iota(expr, dtype, *, mask=None, **kwargs):
+  r"""
+  Build a constant literal in SBUF using GpSimd Engine,
+  rather than transferring the constant literal values from the host to device.
+
+  The iota instruction takes an affine expression of ``nki.language.arange()``
+  indices as the input pattern to generate constant index values
+  (see examples below for more explanation). The index values are computed in
+  32-bit integer math. The GpSimd Engine is capable of casting the integer results
+  into any desirable data type (specified by ``dtype``) before writing
+  them back to SBUF, at no additional performance cost.
+
+  **Estimated instruction cost:**
+
+  ``150 + N`` GpSimd Engine cycles, where ``N`` is the number of elements per partition in the output tile.
+
+  :param expr: an input affine expression of ``nki.language.arange()``
+  :param dtype: output data type of the generated constant literal (see :ref:`nki-dtype` for more information)
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: an output tile in SBUF
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_iota.py
+   :language: python
+
+  """
+  ...
+
+---
+
+### memset
+
+def memset(shape, value, dtype, *, mask=None, engine=engine.unknown, **kwargs):
+  r"""
+  Initialize a tile filled with a compile-time constant value using Vector or GpSimd Engine.
+  The shape of the tile is specified in the ``shape`` field and the
+  initialized value in the ``value`` field.
+  The memset instruction supports all valid NKI dtypes
+  (see :ref:`nki-dtype`).
+
+  :param shape: the shape of the output tile; layout: (partition axis, free axis). Note that memset
+                ignores nl.par_dim() and always treats the first dimension as the partition dimension.
+  :param value: the constant value to initialize with
+  :param dtype: data type of the output tile (see :ref:`nki-dtype` for more information)
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param engine: specify which engine to use for memset: ``nki.isa.vector_engine`` or ``nki.isa.gpsimd_engine`` ;
+                 ``nki.isa.unknown_engine`` by default, lets compiler select the best engine for the given
+                 input tile shape
+  :return: a tile with shape `shape` whose elements are initialized to `value`.
+
+  **Estimated instruction cost:**
+
+  Given ``N`` is the number of elements per partition in the output tile, and ``MIN_II`` is the minimum
+  instruction initiation interval for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
+
+  - If the initialized value is zero and output data type is bfloat16/float16, ``max(MIN_II, N/2)`` Vector Engine cycles;
+  - Otherwise, ``max(MIN_II, N)`` Vector Engine cycles
+
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_memset.py
+   :language: python
+   :marker: NKI_EXAMPLE_7
+
+  """
+  ...
+
+## Tensor Properties and Manipulation
 
 ### tensor
 
@@ -626,159 +871,6 @@ class tensor:
 
 ---
 
-### ndarray
-
-def ndarray(shape, dtype, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor of given shape and dtype on the specified buffer.
-
-  ((Similar to `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_))
-
-  :param shape: the shape of the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a new tensor allocated on the buffer.
-  """
-  ...
-
----
-
-### full
-
-def full(shape, fill_value, dtype, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor of given shape and dtype on the specified buffer, filled with initial value.
-
-  ((Similar to `numpy.full <https://numpy.org/doc/stable/reference/generated/numpy.full.html>`_))
-
-  :param shape: the shape of the tensor.
-  :param fill_value: the initial value of the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a new tensor allocated on the buffer.
-  """
-  ...
-
----
-
-### ones
-
-def ones(shape, dtype, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor of given shape and dtype on the specified buffer, filled with ones.
-
-  ((Similar to `numpy.ones <https://numpy.org/doc/stable/reference/generated/numpy.ones.html>`_))
-
-  :param shape: the shape of the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a new tensor allocated on the buffer.
-  """
-  ...
-
----
-
-### zeros
-
-def zeros(shape, dtype, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor of given shape and dtype on the specified buffer, filled with zeros.
-
-  ((Similar to `numpy.zeros <https://numpy.org/doc/stable/reference/generated/numpy.zeros.html>`_))
-
-  :param shape: the shape of the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a new tensor allocated on the buffer.
-  """
-  ...
-
----
-
-### zeros_like
-
-def zeros_like(a, dtype=None, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor of zeros with the same shape and type as a given tensor.
-
-  ((Similar to `numpy.zeros_like <https://numpy.org/doc/stable/reference/generated/numpy.zeros_like.html>`_))
-
-  :param a: the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a tensor of zeros with the same shape and type as a given tensor.
-  """
-  ...
-
----
-
-### empty_like
-
-def empty_like(a, dtype=None, *, buffer=None, name="", **kwargs):
-  r"""
-  Create a new tensor with the same shape and type as a given tensor.
-
-  ((Similar to `numpy.empty_like <https://numpy.org/doc/stable/reference/generated/numpy.empty_like.html>`_))
-
-  :param a: the tensor.
-  :param dtype: the data type of the tensor (see :ref:`nki-dtype` for more information).
-  :param buffer: the specific buffer (ie, :doc:`sbuf<nki.language.sbuf>`, :doc:`psum<nki.language.psum>`, :doc:`hbm<nki.language.hbm>`), defaults to :doc:`sbuf<nki.language.sbuf>`.
-  :param name: the name of the tensor.
-  :return: a tensor with the same shape and type as a given tensor.
-  """
-  ...
-
----
-
-### shared_constant
-
-def shared_constant(constant, dtype=None, **kwargs):
-  r"""
-  Create a new tensor filled with the data specified by data array.
-
-  :param constant: the constant data to be filled into a tensor
-  :return: a tensor which contains the constant data
-  """
-  ...
-
----
-
-### shared_identity_matrix
-
-def shared_identity_matrix(n, dtype=np.uint8, **kwargs):
-  r"""
-  Create a new identity tensor with specified data type. 
-
-  This function has the same behavior to :doc:`nki.language.shared_constant <nki.language.shared_constant>` but 
-  is preferred if the constant matrix is an identity matrix. The 
-  compiler will reuse all the identity matrices of the same 
-  dtype in the graph to save space.
-  
-  :param n: the number of rows(and columns) of the returned identity matrix
-  :param dtype: the data type of the tensor, default to be ``np.uint8`` (see :ref:`nki-dtype` for more information).
-  :return: a tensor which contains the identity tensor
-  """
-  ...
-
----
-
-### static_cast
-
-def static_cast(input_data, dtype):
-  r"""cast a scalar or array to a new dtype.
-
-  - input_data: scalar or array
-  - dtype: string type or numpy dtype
-  """
-  ...
-
----
-
 ### broadcast_to
 
 def broadcast_to(src, *, shape, **kwargs):
@@ -821,17 +913,13 @@ def expand_dims(data, axis):
 
 ---
 
-### copy
+### static_cast
 
-def copy(src, *, mask=None, dtype=None, **kwargs):
-  r"""
-  Create a copy of the src tile.
+def static_cast(input_data, dtype):
+  r"""cast a scalar or array to a new dtype.
 
-  :param src: the source of copy, must be a tile in SBUF or PSUM.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :return: a new tile with the same layout as `src`,
-           this new tile will be in SBUF, but can be also assigned to a PSUM tensor.
+  - input_data: scalar or array
+  - dtype: string type or numpy dtype
   """
   ...
 
@@ -850,88 +938,23 @@ def transpose(x, *, dtype=None, mask=None, **kwargs):
   """
   ...
 
-## Indexing and Grid Utilities
-
-### mgrid
-
-mgrid = ...
-r"""
-  Same as NumPy mgrid:
-  "An instance which returns a dense (or fleshed out) mesh-grid when indexed,
-  so that each returned argument has the same shape. The dimensions and number
-  of the output arrays are equal to the number of indexing dimensions."
-
-  Complex numbers are not supported in the step length.
-
-  ((Similar to `numpy.mgrid <https://numpy.org/doc/stable/reference/generated/numpy.mgrid.html>`_))
-
-  .. nki_example:: ../../test/test_nki_nl_mgrid.py
-   :language: python
-   :marker: NKI_EXAMPLE_8
-
-  .. nki_example:: ../../test/test_nki_nl_mgrid.py
-   :language: python
-   :marker: NKI_EXAMPLE_9
-
-  """
-
 ---
 
-### arange
+### copy
 
-def arange(*args):
+def copy(src, *, mask=None, dtype=None, **kwargs):
   r"""
-  Return contiguous values within a given interval, used for indexing a tensor to define a tile.
+  Create a copy of the src tile.
 
-  ((Similar to `numpy.arange <https://numpy.org/doc/stable/reference/generated/numpy.arange.html>`_))
-
-  arange can be called as:
-    - ``arange(stop)``: Values are generated within the half-open interval ``[0, stop)`` (the interval including zero, excluding stop).
-    - ``arange(start, stop)``: Values are generated within the half-open interval ``[start, stop)`` (the interval including start, excluding stop).
+  :param src: the source of copy, must be a tile in SBUF or PSUM.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :return: a new tile with the same layout as `src`,
+           this new tile will be in SBUF, but can be also assigned to a PSUM tensor.
   """
   ...
 
----
-
-### ds
-
-def ds(start, size):
-  r"""
-  Construct a dynamic slice for simple tensor indexing.
-
-  .. nki_example:: ../../test/test_nki_nl_dslice.py
-   :language: python
-   :marker: NKI_EXAMPLE_1
-
-  """
-  ...
-
----
-
-### par_dim
-
-par_dim = ...
-r""" Mark a dimension explicitly as a partition dimension.
-  """
-
----
-
-### gemm_grid
-
-def gemm_grid():
-  r""" Tile definition for result of Matrix Multiplication on Tensor Engine,
-  it is identical to the Tile definition of moving operand of Matrix Multiplication on Tensor Engine as well."""
-  ...
-
----
-
-### gemm_stationary_grid
-
-def gemm_stationary_grid():
-  r""" Tile definition for stationary operand of Matrix Multiplication on Tensor Engine."""
-  ...
-
-## Memory Load and Store Operations
+## Memory Operations (Load/Store/Copy/DMA)
 
 ### load
 
@@ -1061,7 +1084,7 @@ def atomic_rmw(dst, value, op, *, mask=None, **kwargs):
   """
   ...
 
-## Low-Level DMA and Copy Operations
+---
 
 ### dma_copy
 
@@ -1350,76 +1373,1899 @@ def tensor_copy_predicated(*, src, dst, predicate, reverse_pred=False, mask=None
   """
   ...
 
+## Indexing and Slicing
+
+### arange
+
+def arange(*args):
+  r"""
+  Return contiguous values within a given interval, used for indexing a tensor to define a tile.
+
+  ((Similar to `numpy.arange <https://numpy.org/doc/stable/reference/generated/numpy.arange.html>`_))
+
+  arange can be called as:
+    - ``arange(stop)``: Values are generated within the half-open interval ``[0, stop)`` (the interval including zero, excluding stop).
+    - ``arange(start, stop)``: Values are generated within the half-open interval ``[start, stop)`` (the interval including start, excluding stop).
+  """
+  ...
+
 ---
 
-### memset
+### ds
 
-def memset(shape, value, dtype, *, mask=None, engine=engine.unknown, **kwargs):
+def ds(start, size):
   r"""
-  Initialize a tile filled with a compile-time constant value using Vector or GpSimd Engine.
-  The shape of the tile is specified in the ``shape`` field and the
-  initialized value in the ``value`` field.
-  The memset instruction supports all valid NKI dtypes
-  (see :ref:`nki-dtype`).
+  Construct a dynamic slice for simple tensor indexing.
 
-  :param shape: the shape of the output tile; layout: (partition axis, free axis). Note that memset
-                ignores nl.par_dim() and always treats the first dimension as the partition dimension.
-  :param value: the constant value to initialize with
-  :param dtype: data type of the output tile (see :ref:`nki-dtype` for more information)
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param engine: specify which engine to use for memset: ``nki.isa.vector_engine`` or ``nki.isa.gpsimd_engine`` ;
-                 ``nki.isa.unknown_engine`` by default, lets compiler select the best engine for the given
-                 input tile shape
-  :return: a tile with shape `shape` whose elements are initialized to `value`.
-
-  **Estimated instruction cost:**
-
-  Given ``N`` is the number of elements per partition in the output tile, and ``MIN_II`` is the minimum
-  instruction initiation interval for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
-
-  - If the initialized value is zero and output data type is bfloat16/float16, ``max(MIN_II, N/2)`` Vector Engine cycles;
-  - Otherwise, ``max(MIN_II, N)`` Vector Engine cycles
-
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_memset.py
+  .. nki_example:: ../../test/test_nki_nl_dslice.py
    :language: python
-   :marker: NKI_EXAMPLE_7
+   :marker: NKI_EXAMPLE_1
 
   """
   ...
 
 ---
 
-### iota
+### mgrid
 
-def iota(expr, dtype, *, mask=None, **kwargs):
+mgrid = ...
+r"""
+  Same as NumPy mgrid:
+  "An instance which returns a dense (or fleshed out) mesh-grid when indexed,
+  so that each returned argument has the same shape. The dimensions and number
+  of the output arrays are equal to the number of indexing dimensions."
+
+  Complex numbers are not supported in the step length.
+
+  ((Similar to `numpy.mgrid <https://numpy.org/doc/stable/reference/generated/numpy.mgrid.html>`_))
+
+  .. nki_example:: ../../test/test_nki_nl_mgrid.py
+   :language: python
+   :marker: NKI_EXAMPLE_8
+
+  .. nki_example:: ../../test/test_nki_nl_mgrid.py
+   :language: python
+   :marker: NKI_EXAMPLE_9
+
+  """
+
+---
+
+### par_dim
+
+par_dim = ...
+r""" Mark a dimension explicitly as a partition dimension.
+  """
+
+---
+
+### gather_flattened
+
+def gather_flattened(data, indices, *, mask=None, dtype=None, **kwargs):
   r"""
-  Build a constant literal in SBUF using GpSimd Engine,
-  rather than transferring the constant literal values from the host to device.
+    Gather elements from ``data`` according to the ``indices``.
 
-  The iota instruction takes an affine expression of ``nki.language.arange()``
-  indices as the input pattern to generate constant index values
-  (see examples below for more explanation). The index values are computed in
-  32-bit integer math. The GpSimd Engine is capable of casting the integer results
-  into any desirable data type (specified by ``dtype``) before writing
-  them back to SBUF, at no additional performance cost.
+    This instruction gathers elements from the ``data`` tensor using integer indices
+    provided in the ``indices`` tensor. For each element in the ``indices`` tensor, it retrieves
+    the corresponding value from the ``data`` tensor using the index value to select
+    from the free dimension of ``data``. The gather instruction effectively performs up to
+    128 parallel gather operations, with each operation using the corresponding partition
+    of ``data`` and ``indices``.
+
+    The output tensor has the same shape as the ``indices`` tensor, with each output element
+    containing the value from ``data`` at the position specified by the corresponding index.
+    Out of bounds indices will return garbage values.
+
+    Both ``data`` and ``indices`` must be 2-, 3-, or 4-dimensional.
+    The ``indices`` tensor must contain uint32 values.
+
+    For indexing purposes, all free dimensions are flattened and indexed as the same "row".
+    Consider this example:
+
+    .. code-block:: text
+
+        data =
+        [[[1., 2.],
+         [3., 4.]],
+        [[5., 6.],
+         [7., 8.]]]
+        indices =
+        [[[0, 1],
+          [1, 3]],
+         [[3, 3],
+          [1, 0]]]
+        nl.gather_flattened(data, indices) produces this result:
+        [[[1., 2.],
+          [2., 4.]],
+         [[8., 8.],
+          [6., 5.]]]
+
+    With the exception of handling out-of-bounds indices, this behavior is equivalent to:
+
+    .. code-block:: python
+
+        indices_flattened = indices.reshape(indices.shape[0], -1)
+        data_flattened = data.reshape(data.shape[0], -1)
+        result = np.take_along_axis(data_flattened, indices_flattened, axis=-1)
+        result.reshape(indices.shape)
+
+    ((Similar to `torch.gather <https://pytorch.org/docs/master/generated/torch.gather.html>`_))
+
+    :param data: the source tensor to gather values from
+    :param indices: tensor containing uint32 indices to gather across the flattened free dimension.
+    :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+    :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+    :return: a tensor with the same shape as indices containing gathered values from data
+
+    Example:
+
+    .. nki_example:: ../../test/test_nki_nl_gather_flattened.py
+       :language: python
+       :marker: NKI_EXAMPLE_0
+
+    """
+  ...
+
+---
+
+### local_gather
+
+def local_gather(src_buffer, index, num_elem_per_idx=1, num_valid_indices=None, *, mask=None):
+  r"""
+  Gather SBUF data in ``src_buffer`` using ``index`` on GpSimd Engine.
+
+  Each of the eight GpSimd cores in GpSimd Engine connects to 16 contiguous SBUF partitions
+  (e.g., core[0] connected to partition[0:16]) and performs gather from the connected 16
+  SBUF partitions *independently* in parallel. The indices used for gather on each core should also
+  come from the same 16 connected SBUF partitions.
+
+  During execution of the instruction, each GpSimd core reads a 16-partition slice from ``index``, flattens
+  all indices into a 1D array ``indices_1d`` (along the partition dimension first).
+  By default with no ``num_valid_indices`` specified, each GpSimd core
+  will treat all indices from its corresponding 16-partition ``index`` slice as valid indices.
+  However, when the number of valid indices per core
+  is not a multiple of 16, users can explicitly specify the valid index count per core in ``num_valid_indices``.
+  Note, ``num_valid_indices`` must not exceed the total element count in each 16-partition ``index`` slice
+  (i.e., ``num_valid_indices <= index.size / (index.shape[0] / 16)``).
+
+  Next, each GpSimd core uses the flattened ``indices_1d`` indices as *partition offsets* to gather from
+  the connected 16-partition slice of ``src_buffer``. Optionally, this API also allows gathering of multiple
+  contiguous elements starting at each index to improve gather throughput, as indicated by ``num_elem_per_idx``.
+  Behavior of out-of-bound index access is undefined.
+
+  Even though all eight GpSimd cores can gather with completely different indices, a common use case for
+  this API is to make all cores gather with the same set of indices (i.e., partition offsets). In this case,
+  users can generate indices into 16 partitions, replicate them eight times to 128 partitions and then feed them into
+  ``local_gather``.
+
+  As an example, if ``src_buffer`` is (128, 512) in shape and ``index`` is (128, 4) in shape, where the partition
+  dimension size is 128, ``local_gather`` effectively performs the following operation:
+
+  .. nki_example:: ../../test/test_nki_isa_local_gather.py
+   :language: python
+   :marker:   NUMPY_SEMANTICS
+
+  ``local_gather`` preserves the input data types from ``src_buffer`` in the gather output.
+  Therefore, no data type casting is allowed in this API. The indices in ``index`` tile must be uint16 types.
+
+  This API has three tile size constraints [subject to future relaxation]:
+
+  #. The partition axis size of ``src_buffer`` must match that of ``index`` and must
+     be a multiple of 16. In other words, ``src_buffer.shape[0] == index.shape[0] and src_buffer.shape[0] % 16 == 0``.
+  #. The number of contiguous elements to gather per index per partition ``num_elem_per_idx``
+     must be one of the following values: ``[1, 2, 4, 8, 16, 32]``.
+  #. The number of indices for gather per core must be less than or equal to 4096.
 
   **Estimated instruction cost:**
 
-  ``150 + N`` GpSimd Engine cycles, where ``N`` is the number of elements per partition in the output tile.
+  ``150 + (num_valid_indices * num_elem_per_idx)/C`` GpSimd Engine cycles, where ``C`` can be calculated
+  using
+  ``((28 + t * num_elem_per_idx)/(t * num_elem_per_idx)) / min(4/dtype_size, num_elem_per_idx)``.
+  ``dtype_size`` is the size of ``src_buffer.dtype`` in bytes.
+  Currently, ``t`` is a constant 4, but subject to change in future software implementation.
 
-  :param expr: an input affine expression of ``nki.language.arange()``
-  :param dtype: output data type of the generated constant literal (see :ref:`nki-dtype` for more information)
+  :param src_buffer: an input tile for gathering.
+  :param index: an input tile with indices used for gathering.
+  :param num_elem_per_idx: an optional integer value to read multiple contiguous elements per index per partition; default is 1.
+  :param num_valid_indices: an optional integer value to specify the number of valid indices per GpSimd core; default is
+                            ``index.size / (index.shape[0] / 16)``.
   :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: an output tile in SBUF
+  :return: an output tile of the gathered data
+
+  **Example:**
+
+  .. nki_example:: ../../test/test_nki_isa_local_gather.py
+   :language: python
+
+
+  Click :download:`here <../../test/test_nki_isa_local_gather.py>` to download the
+  full NKI code example with equivalent numpy implementation.
+  """
+  ...
+
+---
+
+### gemm_grid
+
+def gemm_grid():
+  r""" Tile definition for result of Matrix Multiplication on Tensor Engine,
+  it is identical to the Tile definition of moving operand of Matrix Multiplication on Tensor Engine as well."""
+  ...
+
+---
+
+### gemm_stationary_grid
+
+def gemm_stationary_grid():
+  r""" Tile definition for stationary operand of Matrix Multiplication on Tensor Engine."""
+  ...
+
+## Math and Arithmetic (Element-wise)
+
+### abs
+
+def abs(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Absolute value of the input, element-wise.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has absolute values of ``x``.
+  """
+  ...
+
+---
+
+### add
+
+def add(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Add the inputs, element-wise.
+
+  ((Similar to `numpy.add <https://numpy.org/doc/stable/reference/generated/numpy.add.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has ``x + y``, element-wise.
+
+  Examples:
+
+  .. nki_example:: ../../test/test_nki_nl_add.py
+   :language: python
+   :marker: NKI_EXAMPLE_20
+
+  .. note::
+    Broadcasting in the partition dimension is generally more expensive than broadcasting in free dimension. It is recommended to align your data to perform free dimension broadcast whenever possible.
+
+  """
+  ...
+
+---
+
+### subtract
+
+def subtract(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Subtract the inputs, element-wise.
+
+  ((Similar to `numpy.subtract <https://numpy.org/doc/stable/reference/generated/numpy.subtract.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has ``x - y``, element-wise.
+  """
+  ...
+
+---
+
+### multiply
+
+def multiply(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Multiply the inputs, element-wise.
+
+  ((Similar to `numpy.multiply <https://numpy.org/doc/stable/reference/generated/numpy.multiply.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has ``x * y``, element-wise.
+  """
+  ...
+
+---
+
+### divide
+
+def divide(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Divide the inputs, element-wise.
+
+  ((Similar to `numpy.divide <https://numpy.org/doc/stable/reference/generated/numpy.divide.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has ``x / y``, element-wise.
+  """
+  ...
+
+---
+
+### negative
+
+def negative(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Numerical negative of the input, element-wise.
+
+  ((Similar to `numpy.negative <https://numpy.org/doc/stable/reference/generated/numpy.negative.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has numerical negative values of ``x``.
+  """
+  ...
+
+---
+
+### square
+
+def square(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Square of the input, element-wise.
+
+  ((Similar to `numpy.square <https://numpy.org/doc/stable/reference/generated/numpy.square.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has square of ``x``.
+  """
+  ...
+
+---
+
+### sqrt
+
+def sqrt(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Non-negative square-root of the input, element-wise.
+
+  ((Similar to `numpy.sqrt <https://numpy.org/doc/stable/reference/generated/numpy.sqrt.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has square-root values of ``x``.
+  """
+  ...
+
+---
+
+### rsqrt
+
+def rsqrt(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Reciprocal of the square-root of the input, element-wise.
+
+  ((Similar to `torch.rsqrt <https://pytorch.org/docs/master/generated/torch.rsqrt.html>`_))
+
+  ``rsqrt(x) = 1 / sqrt(x)``
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has reciprocal square-root values of ``x``.
+  """
+  ...
+
+---
+
+### reciprocal
+
+def reciprocal(data, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Compute reciprocal of each element in the input ``data`` tile using Vector Engine.
+
+  **Estimated instruction cost:**
+
+  ``max(MIN_II, 8*N)`` Vector Engine cycles, where ``N`` is the number of elements per partition in ``data``, and
+  ``MIN_II`` is the minimum instruction initiation interval for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
+
+  :param data: the input tile
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: an output tile of reciprocal computation
 
   Example:
 
-  .. nki_example:: ../../test/test_nki_isa_iota.py
+  .. nki_example:: ../../test/test_nki_isa_reciprocal.py
+   :language: python
+   :marker: NKI_EXAMPLE_6
+
+  """
+  ...
+
+---
+
+### reciprocal
+
+def reciprocal(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Reciprocal of the the input, element-wise.
+
+  ((Similar to `numpy.reciprocal <https://numpy.org/doc/stable/reference/generated/numpy.reciprocal.html>`_))
+
+  ``reciprocal(x) = 1 / x``
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has reciprocal values of ``x``.
+  """
+  ...
+
+---
+
+### power
+
+def power(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Elements of x raised to powers of y, element-wise.
+
+  ((Similar to `numpy.power <https://numpy.org/doc/stable/reference/generated/numpy.power.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x`` to the power of ``y``.
+  """
+  ...
+
+---
+
+### exp
+
+def exp(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Exponential of the input, element-wise.
+
+  ((Similar to `numpy.exp <https://numpy.org/doc/stable/reference/generated/numpy.exp.html>`_))
+
+  The ``exp(x)`` is ``e^x`` where ``e`` is the Euler's number = 2.718281...
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has exponential values of ``x``.
+  """
+  ...
+
+---
+
+### log
+
+def log(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Natural logarithm of the input, element-wise.
+
+  ((Similar to `numpy.log <https://numpy.org/doc/stable/reference/generated/numpy.log.html>`_))
+
+  It is the inverse of the exponential function, such that: ``log(exp(x)) = x`` .
+  The natural logarithm base is ``e``.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has natural logarithm values of ``x``.
+  """
+  ...
+
+---
+
+### ceil
+
+def ceil(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Ceiling of the input, element-wise.
+
+  ((Similar to `numpy.ceil <https://numpy.org/doc/stable/reference/generated/numpy.ceil.html>`_))
+
+  The ceil of the scalar x is the smallest integer i, such that i >= x.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has ceiling values of ``x``.
+  """
+  ...
+
+---
+
+### floor
+
+def floor(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Floor of the input, element-wise.
+
+  ((Similar to `numpy.floor <https://numpy.org/doc/stable/reference/generated/numpy.floor.html>`_))
+
+  The floor of the scalar x is the largest integer i, such that i <= x.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has floor values of ``x``.
+  """
+  ...
+
+---
+
+### trunc
+
+def trunc(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Truncated value of the input, element-wise.
+
+  ((Similar to `numpy.trunc <https://numpy.org/doc/stable/reference/generated/numpy.trunc.html>`_))
+
+  The truncated value of the scalar x is the nearest integer i which is closer to zero than x is.
+  In short, the fractional part of the signed number x is discarded.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has truncated values of ``x``.
+  """
+  ...
+
+---
+
+### sign
+
+def sign(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Sign of the numbers of the input, element-wise.
+
+  ((Similar to `numpy.sign <https://numpy.org/doc/stable/reference/generated/numpy.sign.html>`_))
+
+  The sign function returns ``-1`` if ``x < 0``, ``0`` if ``x==0``, ``1`` if ``x > 0``.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has sign values of ``x``.
+  """
+  ...
+
+---
+
+### fmod
+
+def fmod(x, y, dtype=None, mask=None, **kwargs):
+  r"""
+  Floor-mod of ``x / y``, element-wise.
+
+  The remainder has the same sign as the dividend x.
+  It is equivalent to the Matlab(TM) rem function and should not be confused with the Python modulus operator x % y.
+
+  ((Similar to `numpy.fmod <https://numpy.org/doc/stable/reference/generated/numpy.fmod.html>`_))
+
+  :param x: a tile. If x is a scalar value it will be broadcast to the shape of y. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x fmod y``.
+  """
+  ...
+
+---
+
+### mod
+
+def mod(x, y, dtype=None, mask=None, **kwargs):
+  r"""
+  Integer Mod of ``x / y``, element-wise
+
+  Computes the remainder complementary to the floor_divide function.
+  It is equivalent to the Python modulus x % y and has the same sign as the divisor y.
+
+  ((Similar to `numpy.mod <https://numpy.org/doc/stable/reference/generated/numpy.mod.html>`_))
+
+  :param x: a tile. If x is a scalar value it will be broadcast to the shape of y. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x mod y``.
+  """
+  ...
+
+---
+
+### maximum
+
+def maximum(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Maximum of the inputs, element-wise.
+
+  ((Similar to `numpy.maximum <https://numpy.org/doc/stable/reference/generated/numpy.maximum.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has the maximum of each elements from x and y.
+  """
+  ...
+
+---
+
+### minimum
+
+def minimum(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Minimum of the inputs, element-wise.
+
+  ((Similar to `numpy.minimum <https://numpy.org/doc/stable/reference/generated/numpy.minimum.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has the minimum of each elements from x and y.
+  """
+  ...
+
+---
+
+### sin
+
+def sin(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Sine of the input, element-wise.
+
+  ((Similar to `numpy.sin <https://numpy.org/doc/stable/reference/generated/numpy.sin.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has sine values of ``x``.
+  """
+  ...
+
+---
+
+### cos
+
+def cos(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Cosine of the input, element-wise.
+
+  ((Similar to `numpy.cos <https://numpy.org/doc/stable/reference/generated/numpy.cos.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has cosine values of ``x``.
+  """
+  ...
+
+---
+
+### tan
+
+def tan(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Tangent of the input, element-wise.
+
+  ((Similar to `numpy.tan <https://numpy.org/doc/stable/reference/generated/numpy.tan.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has tangent values of ``x``.
+  """
+  ...
+
+---
+
+### arctan
+
+def arctan(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Inverse tangent of the input, element-wise.
+
+  ((Similar to `numpy.arctan <https://numpy.org/doc/stable/reference/generated/numpy.arctan.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has inverse tangent values of ``x``.
+  """
+  ...
+
+---
+
+### tanh
+
+def tanh(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Hyperbolic tangent of the input, element-wise.
+
+  ((Similar to `numpy.tanh <https://numpy.org/doc/stable/reference/generated/numpy.tanh.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has hyperbolic tangent values of ``x``.
+  """
+  ...
+
+---
+
+### erf
+
+def erf(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Error function of the input, element-wise.
+
+  ((Similar to `torch.erf <https://pytorch.org/docs/master/generated/torch.erf.html>`_))
+
+  ``erf(x) = 2/sqrt(pi)*integral(exp(-t**2), t=0..x)`` .
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has erf of ``x``.
+  """
+  ...
+
+---
+
+### erf_dx
+
+def erf_dx(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Derivative of the Error function (erf) on the input, element-wise.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has erf_dx of ``x``.
+  """
+  ...
+
+## Bitwise and Logical Operations
+
+### bitwise_and
+
+def bitwise_and(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise AND of the two inputs, element-wise.
+
+  ((Similar to `numpy.bitwise_and <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_and.html>`_))
+
+  Computes the bit-wise AND of the underlying binary representation of the integers
+  in the input tiles. This function implements the C/Python operator ``&``
+
+  :param x: a tile or a scalar value of integer type.
+  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x & y``.
+  """
+  ...
+
+---
+
+### bitwise_or
+
+def bitwise_or(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise OR of the two inputs, element-wise.
+
+  ((Similar to `numpy.bitwise_or <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_or.html>`_))
+
+  Computes the bit-wise OR of the underlying binary representation of the integers
+  in the input tiles. This function implements the C/Python operator ``|``
+
+  :param x: a tile or a scalar value of integer type.
+  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x | y``.
+  """
+  ...
+
+---
+
+### bitwise_xor
+
+def bitwise_xor(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise XOR of the two inputs, element-wise.
+
+  ((Similar to `numpy.bitwise_xor <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_xor.html>`_))
+
+  Computes the bit-wise XOR of the underlying binary representation of the integers
+  in the input tiles. This function implements the C/Python operator ``^``
+
+  :param x: a tile or a scalar value of integer type.
+  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x ^ y``.
+  """
+  ...
+
+---
+
+### invert
+
+def invert(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise NOT of the input, element-wise.
+
+  ((Similar to `numpy.invert <https://numpy.org/doc/stable/reference/generated/numpy.invert.html>`_))
+
+  Computes the bit-wise NOT of the underlying binary representation of the integers
+  in the input tile. This ufunc implements the C/Python operator ``~``
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with bitwise NOT ``x`` element-wise.
+  """
+  ...
+
+---
+
+### left_shift
+
+def left_shift(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise left-shift x by y, element-wise.
+
+  ((Similar to `numpy.left_shift <https://numpy.org/doc/stable/reference/generated/numpy.left_shift.html>`_))
+
+  Computes the bit-wise left shift of the underlying binary representation of the integers
+  in the input tiles. This function implements the C/Python operator ``<<``
+
+  :param x: a tile or a scalar value of integer type.
+  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x << y``.
+  """
+  ...
+
+---
+
+### right_shift
+
+def right_shift(x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Bitwise right-shift x by y, element-wise.
+
+  ((Similar to `numpy.right_shift <https://numpy.org/doc/stable/reference/generated/numpy.right_shift.html>`_))
+
+  Computes the bit-wise right shift of the underlying binary representation of the integers
+  in the input tiles. This function implements the C/Python operator ``>>``
+
+  :param x: a tile or a scalar value of integer type.
+  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has values ``x >> y``.
+  """
+  ...
+
+---
+
+### logical_and
+
+def logical_and(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x AND y.
+
+  ((Similar to `numpy.logical_and <https://numpy.org/doc/stable/reference/generated/numpy.logical_and.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x AND y`` element-wise.
+  """
+  ...
+
+---
+
+### logical_or
+
+def logical_or(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x OR y.
+
+  ((Similar to `numpy.logical_or <https://numpy.org/doc/stable/reference/generated/numpy.logical_or.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x OR y`` element-wise.
+  """
+  ...
+
+---
+
+### logical_xor
+
+def logical_xor(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x XOR y.
+
+  ((Similar to `numpy.logical_xor <https://numpy.org/doc/stable/reference/generated/numpy.logical_xor.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x XOR y`` element-wise.
+  """
+  ...
+
+---
+
+### logical_not
+
+def logical_not(x, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of NOT x.
+
+  ((Similar to `numpy.logical_not <https://numpy.org/doc/stable/reference/generated/numpy.logical_not.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``NOT x`` element-wise.
+  """
+  ...
+
+## Comparison Operations
+
+### equal
+
+def equal(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x == y.
+
+  ((Similar to `numpy.equal <https://numpy.org/doc/stable/reference/generated/numpy.equal.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x == y`` element-wise.
+  """
+  ...
+
+---
+
+### not_equal
+
+def not_equal(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x != y.
+
+  ((Similar to `numpy.not_equal <https://numpy.org/doc/stable/reference/generated/numpy.not_equal.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x != y`` element-wise.
+  """
+  ...
+
+---
+
+### greater
+
+def greater(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x > y.
+
+  ((Similar to `numpy.greater <https://numpy.org/doc/stable/reference/generated/numpy.greater.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x > y`` element-wise.
+  """
+  ...
+
+---
+
+### greater_equal
+
+def greater_equal(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x >= y.
+
+  ((Similar to `numpy.greater_equal <https://numpy.org/doc/stable/reference/generated/numpy.greater_equal.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x >= y`` element-wise.
+  """
+  ...
+
+---
+
+### less
+
+def less(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x < y.
+
+  ((Similar to `numpy.less <https://numpy.org/doc/stable/reference/generated/numpy.less.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x < y`` element-wise.
+  """
+  ...
+
+---
+
+### less_equal
+
+def less_equal(x, y, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Element-wise boolean result of x <= y.
+
+  ((Similar to `numpy.less_equal <https://numpy.org/doc/stable/reference/generated/numpy.less_equal.html>`_))
+
+  :param x: a tile or a scalar value.
+  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with boolean result of ``x <= y`` element-wise.
+  """
+  ...
+
+---
+
+### where
+
+def where(condition, x, y, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Return elements chosen from x or y depending on condition.
+
+  ((Similar to `numpy.where <https://numpy.org/doc/stable/reference/generated/numpy.where.html>`_))
+
+  :param condition: if True, yield x, otherwise yield y.
+  :param x: a tile with values from which to choose if condition is True.
+  :param y: a tile or a numerical value from which to choose if condition is False.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with elements from x where condition is True, and elements from y otherwise.
+  """
+  ...
+
+## Activation Functions
+
+### relu
+
+def relu(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Rectified Linear Unit activation function on the input, element-wise.
+
+  ``relu(x) = (x)+ = max(0,x)``
+
+  ((Similar to `torch.nn.functional.relu <https://pytorch.org/docs/stable/generated/torch.nn.functional.relu.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has relu of ``x``.
+  """
+  ...
+
+---
+
+### sigmoid
+
+def sigmoid(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Logistic sigmoid activation function on the input, element-wise.
+
+  ((Similar to `torch.nn.functional.sigmoid <https://pytorch.org/docs/stable/generated/torch.nn.functional.sigmoid.html>`_))
+
+  ``sigmoid(x) = 1/(1+exp(-x))``
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has sigmoid of ``x``.
+  """
+  ...
+
+---
+
+### silu
+
+def silu(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Sigmoid Linear Unit activation function on the input, element-wise.
+
+  ((Similar to `torch.nn.functional.silu <https://pytorch.org/docs/stable/generated/torch.nn.functional.silu.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has silu of ``x``.
+  """
+  ...
+
+---
+
+### silu_dx
+
+def silu_dx(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Derivative of Sigmoid Linear Unit activation function on the input, element-wise.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has silu_dx of ``x``.
+  """
+  ...
+
+---
+
+### gelu
+
+def gelu(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Gaussian Error Linear Unit activation function on the input, element-wise.
+
+  ((Similar to `torch.nn.functional.gelu <https://pytorch.org/docs/stable/generated/torch.nn.functional.gelu.html>`_))
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has gelu of ``x``.
+  """
+  ...
+
+---
+
+### gelu_apprx_sigmoid
+
+def gelu_apprx_sigmoid(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Gaussian Error Linear Unit activation function on the input, element-wise, with sigmoid approximation.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has gelu of ``x``.
+  """
+  ...
+
+---
+
+### gelu_apprx_tanh
+
+def gelu_apprx_tanh(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Gaussian Error Linear Unit activation function on the input, element-wise, with tanh approximation.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has gelu of ``x``.
+  """
+  ...
+
+---
+
+### gelu_dx
+
+def gelu_dx(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Derivative of Gaussian Error Linear Unit (gelu) on the input, element-wise.
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has gelu_dx of ``x``.
+  """
+  ...
+
+---
+
+### mish
+
+def mish(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Mish activation function on the input, element-wise.
+
+  Mish: A Self Regularized Non-Monotonic Neural Activation Function is defined as:
+
+  .. math::
+        mish(x) = x * tanh(softplus(x))
+
+  see: https://arxiv.org/abs/1908.08681
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has mish of ``x``.
+  """
+  ...
+
+---
+
+### softplus
+
+def softplus(x, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Softplus activation function on the input, element-wise.
+
+  Softplus is a smooth approximation to the ReLU activation, defined as:
+
+  ``softplus(x) = log(1 + exp(x))``
+
+  :param x: a tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has softplus of ``x``.
+  """
+  ...
+
+---
+
+### softmax
+
+def softmax(x, axis, *, dtype=None, compute_dtype=None, mask=None, **kwargs):
+  r"""
+  Softmax activation function on the input, element-wise.
+
+  ((Similar to `torch.nn.functional.softmax <https://pytorch.org/docs/stable/generated/torch.nn.functional.softmax.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param compute_dtype: (optional) dtype for the internal computation -
+                        *currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.*
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile that has softmax of ``x``.
+  """
+  ...
+
+---
+
+### activation
+
+def activation(op, data, *, bias=None, scale=1.0, reduce_op=None, reduce_res=None, reduce_cmd=reduce_cmd.idle, mask=None, dtype=None, **kwargs):
+  r"""
+  Apply an activation function on every element of the input tile using Scalar Engine. The activation
+  function is specified in the ``op`` input field (see :ref:`nki-act-func` for a list of
+  supported activation functions and their valid input ranges).
+
+  The activation instruction can optionally multiply the input ``data`` by a scalar or vector ``scale``
+  and then add another vector ``bias`` before the activation function is applied,
+  at no additional performance cost:
+
+  .. math::
+        output = f_{act}(data * scale + bias)
+
+  When the scale is a scalar, it must be a compile-time constant. In this case, the scale
+  is broadcasted to all the elements in the input ``data`` tile.
+  When the scale/bias is a vector, it must have the same partition axis size as the input ``data`` tile
+  and only one element per partition.
+  In this case, the element of scale/bias within each partition is broadcasted to
+  elements of the input ``data`` tile in the same partition.
+
+  There are 128 registers on the scalar engine for storing reduction results, corresponding
+  to the 128 partitions of the input.
+  The scalar engine can reduce along free dimensions without extra performance penalty,
+  and store the result of reduction into these registers. The reduction is done after the activation function
+  is applied.
+
+  .. math::
+        output = f_{act}(data * scale + bias)
+        accu\_registers = reduce\_op(accu\_registers, reduce\_op(output, axis=<FreeAxis>))
+
+  These registers are shared between ``activation`` and ``activation_accu`` calls, and the state of them can be
+  controlled via the ``reduce_cmd`` parameter.
+
+  - ``nisa.reduce_cmd.reset``: Reset the accumulators to zero
+  - ``nisa.reduce_cmd.idle``: Do not use the accumulators
+  - ``nisa.reduce_cmd.reduce``: keeps accumulating over the current value of the accumulator
+  - ``nisa.reduce_cmd.reset_reduce``: Resets the accumulators then immediately accumulate the results of the current instruction into the accumulators
+
+  We can choose to read out the current values stored in the
+  register by passing in a tensor in the ``reduce_res`` arguments. Reading out the accumulator will
+  incur a small overhead.
+
+  Note that ``activation_accu`` can also change the state of the registers. It's user's responsibility
+  to ensure correct ordering. It's recommended to not mixing the use of ``activation_accu`` and ``activation``,
+  when ``reduce_cmd`` is not set to idle.
+
+  Note, the Scalar Engine always performs the math operations in float32 precision.
+  Therefore, the engine automatically casts the input ``data`` tile to float32 before
+  performing multiply/add/activate specified in the activation instruction.
+  The engine is also capable of casting the float32 math results into another
+  output data type specified by the ``dtype`` field at no additional performance cost.
+  If ``dtype`` field is not specified, Neuron Compiler will set output data type of the instruction
+  to be the same as input data type of ``data``. On the other hand, the ``scale`` parameter must
+  have a float32 data type, while the ``bias`` parameter can be float32/float16/bfloat16.
+
+  The input ``data`` tile can be an SBUF or PSUM tile. Similarly, the instruction
+  can write the output tile into either SBUF or PSUM, which is specified
+  using the ``buffer`` field. If not specified, ``nki.language.sbuf`` is selected by default.
+
+  **Estimated instruction cost:**
+
+  ``max(MIN_II, N)`` Scalar Engine cycles, where
+
+  - ``N`` is the number of elements per partition in ``data``.
+  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+    ``MIN_II`` is roughly 64 engine cycles.
+
+  :param op: an activation function (see :ref:`nki-act-func` for supported functions)
+  :param data: the input tile; layout: (partition axis <= 128, free axis)
+  :param bias: a vector with the same partition axis size as ``data``
+               for broadcast add (after broadcast multiply with ``scale``)
+  :param scale: a scalar or a vector with the same partition axis size as ``data``
+                for broadcast multiply
+  :param reduce_op: the reduce operation to perform on the free dimension of the activation result
+  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
+                  is the partition axis size of the input ``data`` tile. The result of ``sum(ReductionResult)``
+                  is written in-place into the tensor.
+  :param reduce_cmd: an enum member from ``nisa.reduce_cmd`` to control the state of reduction registers
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: output tile of the activation instruction; layout: same as input ``data`` tile
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_activation.py
    :language: python
 
+  """
+  ...
+
+## Reduction Operations
+
+### sum
+
+def sum(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
+  r"""
+  Sum of elements along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.sum <https://numpy.org/doc/stable/reference/generated/numpy.sum.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
+                   With this option, the result will broadcast correctly against the input array.
+  :return: a tile with the sum of elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### prod
+
+def prod(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
+  r"""
+  Product of elements along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.prod <https://numpy.org/doc/stable/reference/generated/numpy.prod.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
+                   With this option, the result will broadcast correctly against the input array.
+  :return: a tile with the product of elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### max
+
+def max(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
+  r"""
+  Maximum of elements along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.max <https://numpy.org/doc/stable/reference/generated/numpy.max.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
+                   With this option, the result will broadcast correctly against the input array.
+  :return: a tile with the maximum of elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### min
+
+def min(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
+  r"""
+  Minimum of elements along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.min <https://numpy.org/doc/stable/reference/generated/numpy.min.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
+                   With this option, the result will broadcast correctly against the input array.
+  :return: a tile with the minimum of elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### mean
+
+def mean(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
+  r"""
+  Arithmetic mean along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.mean <https://numpy.org/doc/stable/reference/generated/numpy.mean.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with the average of elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+           ``float32`` intermediate and return values are used for integer inputs.
+  """
+  ...
+
+---
+
+### var
+
+def var(x, axis, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Variance along the specified axis (or axes) of the input.
+
+  ((Similar to `numpy.var <https://numpy.org/doc/stable/reference/generated/numpy.var.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with the variance of the elements along the provided axis. This return tile will have a shape of the input
+           tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### all
+
+def all(x, axis, *, dtype=bool, mask=None, **kwargs):
+  r"""
+  Whether all elements along the specified axis (or axes) evaluate to True.
+
+  ((Similar to `numpy.all <https://numpy.org/doc/stable/reference/generated/numpy.all.html>`_))
+
+  :param x: a tile.
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a boolean tile with the result. This return tile will have a shape of the input tile's shape with the specified axes removed.
+  """
+  ...
+
+---
+
+### tensor_reduce
+
+def tensor_reduce(op, data, axis, *, mask=None, dtype=None, negate=False, keepdims=False, **kwargs):
+  r"""
+  Apply a reduction operation to the free axes of an input ``data`` tile using Vector Engine.
+
+  The reduction operator is specified in the ``op`` input field
+  (see :ref:`nki-aluop` for a list of supported reduction operators).
+  There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or)
+  and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec
+  operators, the input/output data types must be integer types and Vector Engine treats
+  all input elements as bit patterns without any data type casting. For arithmetic operators, there is no
+  restriction on the input/output data types, but the engine automatically casts input data types to float32
+  and performs the reduction operation in float32 math. The float32 reduction results are cast to the target
+  data type specified in the ``dtype`` field before written into the output tile. If the ``dtype`` field is not
+  specified, it is default to be the same as input tile data type.
+
+  When the reduction ``op`` is an arithmetic operator, the instruction can also multiply the output reduction
+  results by ``-1.0`` before writing into the output tile, at no additional performance cost. This behavior is
+  controlled by the ``negate`` input field.
+
+  The reduction axes are specified in the ``axis`` field using a list of integer(s) to indicate axis indices.
+  The reduction axes can contain up to four free axes and must start at the most minor free axis.
+  Since axis 0 is the partition axis in a tile, the reduction axes must contain axis 1 (most-minor). In addition,
+  the reduction axes must be consecutive: e.g., [1, 2, 3, 4] is a legal ``axis`` field, but [1, 3, 4] is not.
+
+  Since this instruction only supports free axes reduction, the output tile must have the same partition
+  axis size as the input ``data`` tile. To perform a partition axis reduction, we can either:
+
+  1. invoke a ``nki.isa.nc_transpose`` instruction on the input tile and then this ``reduce`` instruction
+     to the transposed tile, or
+  2. invoke ``nki.isa.nc_matmul`` instructions to multiply a ``nki.language.ones([128, 1], dtype=data.dtype)``
+     vector with the input tile.
+
+  **Estimated instruction cost:**
+
+  .. list-table::
+    :widths: 30 70
+    :header-rows: 1
+
+    * - Cost `(Vector Engine Cycles)`
+      - Condition
+    * - ``N/2``
+      - both input and output data types are ``bfloat16`` *and* the reduction operator is add or maximum
+    * - ``N``
+      - otherwise
+
+  where,
+
+  - ``N`` is the number of elements per partition in ``data``.
+  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+    ``MIN_II`` is roughly 64 engine cycles.
+
+
+  :param op: the reduction operator (see :ref:`nki-aluop` for supported reduction operators)
+  :param data: the input tile to be reduced
+  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param negate: if True, reduction result is multiplied by ``-1.0``;
+                 only applicable when op is an arithmetic operator
+  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
+                   With this option, the result will broadcast correctly against the input array.
+  :return: output tile of the reduction result
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_reduce.py
+   :language: python
+   :marker: NKI_EXAMPLE_2
+
+  """
+  ...
+
+---
+
+### tensor_partition_reduce
+
+def tensor_partition_reduce(op, data, *, mask=None, dtype=None, **kwargs):
+  r"""
+  Apply a reduction operation across partitions of an input ``data`` tile using GpSimd Engine.
+
+  :param op: the reduction operator (add, max, bitwise_or, bitwise_and)
+  :param data: the input tile to be reduced
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :return: output tile with reduced result
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_partition_reduce.py
+   :language: python
+   :marker: NKI_EXAMPLE_1
+
+  """
+  ...
+
+---
+
+### tensor_scalar_reduce
+
+def tensor_scalar_reduce(*, data, op0, operand0, reduce_op, reduce_res, reverse0=False, dtype=None, mask=None, **kwargs):
+  r"""
+  Perform the same computation as ``nisa.tensor_scalar`` with one math operator
+  and also a reduction along the free dimension of the ``nisa.tensor_scalar`` result using Vector Engine.
+
+  Refer to :doc:`nisa.tensor_scalar <nki.isa.tensor_scalar>` for semantics of ``data/op0/operand0``.
+  Unlike regular ``nisa.tensor_scalar`` where two operators are supported, only one
+  operator is supported in this API. Also, ``op0`` can only be arithmetic operation in :ref:`nki-aluop`.
+  Bitvec operators are not supported in this API.
+
+  In addition to :doc:`nisa.tensor_scalar <nki.isa.activation>` computation, this API also performs a reduction
+  along the free dimension(s) of the :doc:`nisa.tensor_scalar <nki.isa.activation>` result, at a small additional
+  performance cost. The reduction result is returned in ``reduce_res`` in-place, which must be a
+  SBUF/PSUM tile with the same partition axis size as the input tile ``data`` and one element per partition.
+  The ``reduce_op`` can be any of ``nl.add``, ``nl.subtract``, ``nl.multiply``, ``nl.max`` or ``nl.min``.
+
+  Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will
+  reduce across all of them.
+
+  .. math::
+    result = data <op0> operand0 \\
+    reduce\_res = reduce\_op(dst, axis=<FreeAxis>)
+
+  **Estimated instruction cost:**
+
+  ``max(MIN_II, N) + MIN_II`` Vector Engine cycles, where
+
+  - ``N`` is the number of elements per partition in ``data``, and
+  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+    ``MIN_II`` is roughly 64 engine cycles.
+
+  :param data: the input tile
+  :param op0: the math operator used with operand0 (any arithmetic operator in :ref:`nki-aluop` is allowed)
+  :param operand0: a scalar constant or a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
+                  is the partition axis size of the input ``data`` tile
+  :param reverse0: `(not supported yet)` reverse ordering of inputs to ``op0``; if false, ``operand0`` is the rhs of ``op0``;
+                   if true, ``operand0`` is the lhs of ``op0``. `<-- currently not supported yet.`
+  :param reduce_op: the reduce operation to perform on the free dimension of ``data <op0> operand0``
+  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
+                  is the partition axis size of the input ``data`` tile. The result of ``reduce_op(data <op0> operand0)``
+                  is written in-place into the tile.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: an output tile of ``(data <op0> operand0)`` computation
+  """
+  ...
+
+---
+
+### activation_reduce
+
+def activation_reduce(op, data, *, reduce_op, reduce_res, bias=None, scale=1.0, mask=None, dtype=None, **kwargs):
+  r"""
+  Perform the same computation as ``nisa.activation`` and also a reduction along the free dimension of the
+  ``nisa.activation`` result using Scalar Engine. The results for the reduction is stored
+  in the reduce_res.
+
+  This API is equivalent to calling ``nisa.activation`` with
+  ``reduce_cmd=nisa.reduce_cmd.reset_reduce`` and passing in reduce_res. This API is kept for
+  backward compatibility, we recommend using ``nisa.activation`` moving forward.
+
+  Refer to :doc:`nisa.activation <nki.isa.activation>` for semantics of ``op/data/bias/scale``.
+
+  In addition to :doc:`nisa.activation <nki.isa.activation>` computation, this API also performs a reduction
+  along the free dimension(s) of the :doc:`nisa.activation <nki.isa.activation>` result, at a small additional
+  performance cost. The reduction result is returned in ``reduce_res`` in-place, which must be a
+  SBUF/PSUM tile with the same partition axis size as the input tile ``data`` and one element per partition.
+  On NeuronCore-v2, the ``reduce_op`` can only be an addition, ``np.add`` or ``nl.add``.
+
+  There are 128 registers on the scalar engine for storing reduction results, corresponding
+  to the 128 partitions of the input. These registers are shared between ``activation`` and ``activation_accu`` calls.
+  This instruction first resets those
+  registers to zero, performs the reduction on the value after activation function is applied,
+  stores the results into the registers,
+  then reads out the reduction results from the register, eventually store them into ``reduce_res``.
+
+  Note that ``nisa.activation`` can also change the state of the register. It's user's
+  responsibility to ensure correct ordering. It's the best practice to not mixing
+  the use of ``activation_reduce`` and ``activation``.
+
+  Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will
+  reduce across all of them.
+
+  Mathematically, this API performs the following computation:
+
+  .. math::
+        output = f_{act}(data * scale + bias) \\
+        reduce\_res = reduce\_op(output, axis=<FreeAxis>)
+
+  **Estimated instruction cost:**
+
+  ``max(MIN_II, N) + MIN_II`` Scalar Engine cycles, where
+
+  - ``N`` is the number of elements per partition in ``data``, and
+  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+    ``MIN_II`` is roughly 64 engine cycles.
+
+  :param op: an activation function (see :ref:`nki-act-func` for supported functions)
+  :param data: the input tile; layout: (partition axis <= 128, free axis)
+  :param reduce_op: the reduce operation to perform on the free dimension of the activation result
+  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
+                  is the partition axis size of the input ``data`` tile. The result of ``sum(ReductionResult)``
+                  is written in-place into the tensor.
+  :param bias: a vector with the same partition axis size as ``data``
+               for broadcast add (after broadcast multiply with ``scale``)
+  :param scale: a scalar or a vector with the same partition axis size as ``data``
+                for broadcast multiply
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: output tile of the activation instruction; layout: same as input ``data`` tile
+  """
+  ...
+
+---
+
+### select_reduce
+
+def select_reduce(*, dst, predicate, on_true, on_false, reduce_res=None, reduce_cmd=reduce_cmd.idle, reduce_op=np.amax, reverse_pred=False, mask=None, dtype=None, **kwargs):
+  r"""
+    Selectively copy elements from either ``on_true`` or ``on_false`` to the destination tile
+    based on a ``predicate`` using Vector Engine, with optional reduction (max).
+
+    The operation can be expressed in NumPy as:
+
+    .. code-block:: python
+
+        # Select:
+        predicate = ~predicate if reverse_pred else predicate
+        result = np.where(predicate, on_true, on_false)
+
+        # With Reduce:
+        reduction_result = np.max(result, axis=1, keepdims=True)
+
+    **Memory constraints:**
+
+    - Both ``on_true`` and ``predicate`` are permitted to be in SBUF
+    - Either ``on_true`` or ``predicate`` may be in PSUM, but not both simultaneously
+    - The destination ``dst`` can be in either SBUF or PSUM
+
+    **Shape and data type constraints:**
+
+    - ``on_true``, ``dst``, and ``predicate`` must have identical shapes (same number of partitions and elements per partition)
+    - ``on_true`` can be any supported dtype except ``tfloat32``, ``int32``, ``uint32``
+    - ``on_false`` dtype must be ``float32`` if ``on_false`` is a scalar.
+    - ``on_false`` has to be either scalar or vector of shape ``(on_true.shape[0], 1)``
+    - ``predicate`` dtype can be any supported integer type ``int8``, ``uint8``, ``int16``, ``uint16``
+    - ``reduce_res`` must be a vector of shape ``(on_true.shape[0], 1)``
+    - ``reduce_res`` dtype must of float type
+    - ``reduce_op`` only supports ``max``
+
+    **Behavior:**
+
+    - Where predicate is True: The corresponding elements from ``on_true`` are copied to ``dst``
+    - Where predicate is False: The corresponding elements from ``on_false`` are copied to ``dst``
+    - When reduction is enabled, the max value from each partition of the ``result`` is computed and stored in ``reduce_res``
+
+    **Accumulator behavior:**
+
+    The Vector Engine maintains internal accumulator registers that can be controlled via the ``reduce_cmd`` parameter:
+
+    - ``nisa.reduce_cmd.reset_reduce``: Reset accumulators to -inf, then accumulate the current results
+    - ``nisa.reduce_cmd.reduce``: Continue accumulating without resetting (useful for multi-step reductions)
+    - ``nisa.reduce_cmd.idle``: No accumulation performed (default)
+
+    .. note::
+      Even when ``reduce_cmd`` is set to ``idle``, the accumulator state may still be modified.
+      Always use ``reset_reduce`` after any operations that ran with ``idle`` mode to ensure
+      consistent behavior.
+
+    .. note::
+      The accumulator registers are shared for other Vector Engine accumulation instructions such :doc:`nki.isa.range_select <nki.isa.range_select>`
+
+    :param dst: The destination tile to write the selected values to
+    :param predicate: Tile that determines which value to select (on_true or on_false)
+    :param on_true: Tile to select from when predicate is True
+    :param on_false: Value to use when predicate is False, can be a scalar value or a vector tile of ``(on_true.shape[0], 1)``
+    :param reduce_res: (optional) Tile to store reduction results, must have shape ``(on_true.shape[0], 1)``
+    :param reduce_cmd: (optional) Control accumulator behavior using ``nisa.reduce_cmd`` values, defaults to idle
+    :param reduce_op: (optional) Reduction operator to apply (only ``np.max`` is supported)
+    :param reverse_pred: (optional) Reverse the meaning of the predicate condition, defaults to False
+    :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+    :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+    **Example 1: Basic selection**
+
+    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
+       :language: python
+       :marker: NKI_EXAMPLE_1
+
+    **Example 2: Selection with reduction**
+
+    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
+       :language: python
+       :marker: NKI_EXAMPLE_2
+
+    **Example 3: Selection with reversed predicate**
+
+    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
+       :language: python
+       :marker: NKI_EXAMPLE_3
+    """
+  ...
+
+---
+
+### loop_reduce
+
+def loop_reduce(x, op, loop_indices, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Apply reduce operation over a loop. This is an ideal instruction to compute a
+  high performance reduce_max or reduce_min.
+
+  Note: The destination tile is also the rhs input to ``op``. For example,
+
+  .. code-block:: python
+
+    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=float32, buffer=nl.sbuf)
+    for k_i in affine_range(NUM_K_BLOCKS):
+
+      # Skipping over multiple nested loops here.
+      # a, is a psum tile from a matmul accumulation group.
+      b = nl.loop_reduce(a, op=np.add, loop_indices=[k_i], dtype=nl.float32)
+
+  is the same as:
+
+  .. code-block:: python
+
+    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=nl.float32, buffer=nl.sbuf)
+    for k_i in affine_range(NUM_K_BLOCKS):
+
+      # Skipping over multiple nested loops here.
+      # a, is a psum tile from a matmul accumulation group.
+      b = nisa.tensor_tensor(data1=b, data2=a, op=np.add, dtype=nl.float32)
+
+  If you are trying to use this instruction only for accumulating results on SBUF, consider
+  simply using the ``+=`` operator instead.
+
+  The ``loop_indices`` list enables the compiler to recognize which loops this reduction can be
+  optimized across as part of any aggressive loop-level optimizations it may perform.
+
+  :param x: a tile.
+  :param op: numpy ALU operator to use to reduce over the input tile.
+  :param loop_indices: a single loop index or a tuple of loop indices along which the reduction operation is performed.
+                      Can be numbers or loop_index objects coming from ``nl.affine_range``.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: the reduced resulting tile
+  """
+  ...
+
+---
+
+### all_reduce
+
+def all_reduce(x, op, program_axes, *, dtype=None, mask=None, parallel_reduce=True, asynchronous=False, **kwargs):
+  r"""
+  Apply reduce operation over multiple SPMD programs.
+
+  :param x: a tile.
+  :param op: numpy ALU operator to use to reduce over the input tile.
+  :param program_axes: a single axis or a tuple of axes along which the reduction operation is performed.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param parallel_reduce: optional boolean parameter whether to turn on parallel reduction. Enable parallel
+               reduction consumes additional memory.
+  :param asynchronous: Defaults to False. If `True`, caller should synchronize before
+                       reading final result, e.g. using `nki.sync_thread`.
+  :return: the reduced resulting tile
   """
   ...
 
@@ -1556,1514 +3402,7 @@ def nc_matmul(stationary, moving, *, is_stationary_onezero=False, is_moving_onez
   """
   ...
 
-## Element-wise Arithmetic Operations
-
-### add
-
-def add(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Add the inputs, element-wise.
-
-  ((Similar to `numpy.add <https://numpy.org/doc/stable/reference/generated/numpy.add.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has ``x + y``, element-wise.
-
-  Examples:
-
-  .. nki_example:: ../../test/test_nki_nl_add.py
-   :language: python
-   :marker: NKI_EXAMPLE_20
-
-  .. note::
-    Broadcasting in the partition dimension is generally more expensive than broadcasting in free dimension. It is recommended to align your data to perform free dimension broadcast whenever possible.
-
-  """
-  ...
-
----
-
-### subtract
-
-def subtract(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Subtract the inputs, element-wise.
-
-  ((Similar to `numpy.subtract <https://numpy.org/doc/stable/reference/generated/numpy.subtract.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has ``x - y``, element-wise.
-  """
-  ...
-
----
-
-### multiply
-
-def multiply(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Multiply the inputs, element-wise.
-
-  ((Similar to `numpy.multiply <https://numpy.org/doc/stable/reference/generated/numpy.multiply.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has ``x * y``, element-wise.
-  """
-  ...
-
----
-
-### divide
-
-def divide(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Divide the inputs, element-wise.
-
-  ((Similar to `numpy.divide <https://numpy.org/doc/stable/reference/generated/numpy.divide.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has ``x / y``, element-wise.
-  """
-  ...
-
----
-
-### negative
-
-def negative(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Numerical negative of the input, element-wise.
-
-  ((Similar to `numpy.negative <https://numpy.org/doc/stable/reference/generated/numpy.negative.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has numerical negative values of ``x``.
-  """
-  ...
-
----
-
-### abs
-
-def abs(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Absolute value of the input, element-wise.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has absolute values of ``x``.
-  """
-  ...
-
----
-
-### square
-
-def square(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Square of the input, element-wise.
-
-  ((Similar to `numpy.square <https://numpy.org/doc/stable/reference/generated/numpy.square.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has square of ``x``.
-  """
-  ...
-
----
-
-### power
-
-def power(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Elements of x raised to powers of y, element-wise.
-
-  ((Similar to `numpy.power <https://numpy.org/doc/stable/reference/generated/numpy.power.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x`` to the power of ``y``.
-  """
-  ...
-
----
-
-### sqrt
-
-def sqrt(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Non-negative square-root of the input, element-wise.
-
-  ((Similar to `numpy.sqrt <https://numpy.org/doc/stable/reference/generated/numpy.sqrt.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has square-root values of ``x``.
-  """
-  ...
-
----
-
-### rsqrt
-
-def rsqrt(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Reciprocal of the square-root of the input, element-wise.
-
-  ((Similar to `torch.rsqrt <https://pytorch.org/docs/master/generated/torch.rsqrt.html>`_))
-
-  ``rsqrt(x) = 1 / sqrt(x)``
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has reciprocal square-root values of ``x``.
-  """
-  ...
-
----
-
-### reciprocal
-
-def reciprocal(data, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Compute reciprocal of each element in the input ``data`` tile using Vector Engine.
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, 8*N)`` Vector Engine cycles, where ``N`` is the number of elements per partition in ``data``, and
-  ``MIN_II`` is the minimum instruction initiation interval for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
-
-  :param data: the input tile
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: an output tile of reciprocal computation
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_reciprocal.py
-   :language: python
-   :marker: NKI_EXAMPLE_6
-
-  """
-  ...
-
----
-
-### reciprocal
-
-def reciprocal(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Reciprocal of the the input, element-wise.
-
-  ((Similar to `numpy.reciprocal <https://numpy.org/doc/stable/reference/generated/numpy.reciprocal.html>`_))
-
-  ``reciprocal(x) = 1 / x``
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has reciprocal values of ``x``.
-  """
-  ...
-
----
-
-### fmod
-
-def fmod(x, y, dtype=None, mask=None, **kwargs):
-  r"""
-  Floor-mod of ``x / y``, element-wise.
-
-  The remainder has the same sign as the dividend x.
-  It is equivalent to the Matlab(TM) rem function and should not be confused with the Python modulus operator x % y.
-
-  ((Similar to `numpy.fmod <https://numpy.org/doc/stable/reference/generated/numpy.fmod.html>`_))
-
-  :param x: a tile. If x is a scalar value it will be broadcast to the shape of y. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x fmod y``.
-  """
-  ...
-
----
-
-### mod
-
-def mod(x, y, dtype=None, mask=None, **kwargs):
-  r"""
-  Integer Mod of ``x / y``, element-wise
-
-  Computes the remainder complementary to the floor_divide function.
-  It is equivalent to the Python modulus x % y and has the same sign as the divisor y.
-
-  ((Similar to `numpy.mod <https://numpy.org/doc/stable/reference/generated/numpy.mod.html>`_))
-
-  :param x: a tile. If x is a scalar value it will be broadcast to the shape of y. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x mod y``.
-  """
-  ...
-
----
-
-### sign
-
-def sign(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Sign of the numbers of the input, element-wise.
-
-  ((Similar to `numpy.sign <https://numpy.org/doc/stable/reference/generated/numpy.sign.html>`_))
-
-  The sign function returns ``-1`` if ``x < 0``, ``0`` if ``x==0``, ``1`` if ``x > 0``.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has sign values of ``x``.
-  """
-  ...
-
----
-
-### ceil
-
-def ceil(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Ceiling of the input, element-wise.
-
-  ((Similar to `numpy.ceil <https://numpy.org/doc/stable/reference/generated/numpy.ceil.html>`_))
-
-  The ceil of the scalar x is the smallest integer i, such that i >= x.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has ceiling values of ``x``.
-  """
-  ...
-
----
-
-### floor
-
-def floor(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Floor of the input, element-wise.
-
-  ((Similar to `numpy.floor <https://numpy.org/doc/stable/reference/generated/numpy.floor.html>`_))
-
-  The floor of the scalar x is the largest integer i, such that i <= x.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has floor values of ``x``.
-  """
-  ...
-
----
-
-### trunc
-
-def trunc(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Truncated value of the input, element-wise.
-
-  ((Similar to `numpy.trunc <https://numpy.org/doc/stable/reference/generated/numpy.trunc.html>`_))
-
-  The truncated value of the scalar x is the nearest integer i which is closer to zero than x is.
-  In short, the fractional part of the signed number x is discarded.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has truncated values of ``x``.
-  """
-  ...
-
-## Element-wise Transcendental and Math Functions
-
-### exp
-
-def exp(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Exponential of the input, element-wise.
-
-  ((Similar to `numpy.exp <https://numpy.org/doc/stable/reference/generated/numpy.exp.html>`_))
-
-  The ``exp(x)`` is ``e^x`` where ``e`` is the Euler's number = 2.718281...
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has exponential values of ``x``.
-  """
-  ...
-
----
-
-### log
-
-def log(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Natural logarithm of the input, element-wise.
-
-  ((Similar to `numpy.log <https://numpy.org/doc/stable/reference/generated/numpy.log.html>`_))
-
-  It is the inverse of the exponential function, such that: ``log(exp(x)) = x`` .
-  The natural logarithm base is ``e``.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has natural logarithm values of ``x``.
-  """
-  ...
-
----
-
-### sin
-
-def sin(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Sine of the input, element-wise.
-
-  ((Similar to `numpy.sin <https://numpy.org/doc/stable/reference/generated/numpy.sin.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has sine values of ``x``.
-  """
-  ...
-
----
-
-### cos
-
-def cos(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Cosine of the input, element-wise.
-
-  ((Similar to `numpy.cos <https://numpy.org/doc/stable/reference/generated/numpy.cos.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has cosine values of ``x``.
-  """
-  ...
-
----
-
-### tan
-
-def tan(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Tangent of the input, element-wise.
-
-  ((Similar to `numpy.tan <https://numpy.org/doc/stable/reference/generated/numpy.tan.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has tangent values of ``x``.
-  """
-  ...
-
----
-
-### arctan
-
-def arctan(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Inverse tangent of the input, element-wise.
-
-  ((Similar to `numpy.arctan <https://numpy.org/doc/stable/reference/generated/numpy.arctan.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has inverse tangent values of ``x``.
-  """
-  ...
-
----
-
-### tanh
-
-def tanh(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Hyperbolic tangent of the input, element-wise.
-
-  ((Similar to `numpy.tanh <https://numpy.org/doc/stable/reference/generated/numpy.tanh.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has hyperbolic tangent values of ``x``.
-  """
-  ...
-
----
-
-### erf
-
-def erf(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Error function of the input, element-wise.
-
-  ((Similar to `torch.erf <https://pytorch.org/docs/master/generated/torch.erf.html>`_))
-
-  ``erf(x) = 2/sqrt(pi)*integral(exp(-t**2), t=0..x)`` .
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has erf of ``x``.
-  """
-  ...
-
----
-
-### erf_dx
-
-def erf_dx(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Derivative of the Error function (erf) on the input, element-wise.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has erf_dx of ``x``.
-  """
-  ...
-
-## Activation Functions
-
-### activation
-
-def activation(op, data, *, bias=None, scale=1.0, reduce_op=None, reduce_res=None, reduce_cmd=reduce_cmd.idle, mask=None, dtype=None, **kwargs):
-  r"""
-  Apply an activation function on every element of the input tile using Scalar Engine. The activation
-  function is specified in the ``op`` input field (see :ref:`nki-act-func` for a list of
-  supported activation functions and their valid input ranges).
-
-  The activation instruction can optionally multiply the input ``data`` by a scalar or vector ``scale``
-  and then add another vector ``bias`` before the activation function is applied,
-  at no additional performance cost:
-
-  .. math::
-        output = f_{act}(data * scale + bias)
-
-  When the scale is a scalar, it must be a compile-time constant. In this case, the scale
-  is broadcasted to all the elements in the input ``data`` tile.
-  When the scale/bias is a vector, it must have the same partition axis size as the input ``data`` tile
-  and only one element per partition.
-  In this case, the element of scale/bias within each partition is broadcasted to
-  elements of the input ``data`` tile in the same partition.
-
-  There are 128 registers on the scalar engine for storing reduction results, corresponding
-  to the 128 partitions of the input.
-  The scalar engine can reduce along free dimensions without extra performance penalty,
-  and store the result of reduction into these registers. The reduction is done after the activation function
-  is applied.
-
-  .. math::
-        output = f_{act}(data * scale + bias)
-        accu\_registers = reduce\_op(accu\_registers, reduce\_op(output, axis=<FreeAxis>))
-
-  These registers are shared between ``activation`` and ``activation_accu`` calls, and the state of them can be
-  controlled via the ``reduce_cmd`` parameter.
-
-  - ``nisa.reduce_cmd.reset``: Reset the accumulators to zero
-  - ``nisa.reduce_cmd.idle``: Do not use the accumulators
-  - ``nisa.reduce_cmd.reduce``: keeps accumulating over the current value of the accumulator
-  - ``nisa.reduce_cmd.reset_reduce``: Resets the accumulators then immediately accumulate the results of the current instruction into the accumulators
-
-  We can choose to read out the current values stored in the
-  register by passing in a tensor in the ``reduce_res`` arguments. Reading out the accumulator will
-  incur a small overhead.
-
-  Note that ``activation_accu`` can also change the state of the registers. It's user's responsibility
-  to ensure correct ordering. It's recommended to not mixing the use of ``activation_accu`` and ``activation``,
-  when ``reduce_cmd`` is not set to idle.
-
-  Note, the Scalar Engine always performs the math operations in float32 precision.
-  Therefore, the engine automatically casts the input ``data`` tile to float32 before
-  performing multiply/add/activate specified in the activation instruction.
-  The engine is also capable of casting the float32 math results into another
-  output data type specified by the ``dtype`` field at no additional performance cost.
-  If ``dtype`` field is not specified, Neuron Compiler will set output data type of the instruction
-  to be the same as input data type of ``data``. On the other hand, the ``scale`` parameter must
-  have a float32 data type, while the ``bias`` parameter can be float32/float16/bfloat16.
-
-  The input ``data`` tile can be an SBUF or PSUM tile. Similarly, the instruction
-  can write the output tile into either SBUF or PSUM, which is specified
-  using the ``buffer`` field. If not specified, ``nki.language.sbuf`` is selected by default.
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, N)`` Scalar Engine cycles, where
-
-  - ``N`` is the number of elements per partition in ``data``.
-  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-    ``MIN_II`` is roughly 64 engine cycles.
-
-  :param op: an activation function (see :ref:`nki-act-func` for supported functions)
-  :param data: the input tile; layout: (partition axis <= 128, free axis)
-  :param bias: a vector with the same partition axis size as ``data``
-               for broadcast add (after broadcast multiply with ``scale``)
-  :param scale: a scalar or a vector with the same partition axis size as ``data``
-                for broadcast multiply
-  :param reduce_op: the reduce operation to perform on the free dimension of the activation result
-  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
-                  is the partition axis size of the input ``data`` tile. The result of ``sum(ReductionResult)``
-                  is written in-place into the tensor.
-  :param reduce_cmd: an enum member from ``nisa.reduce_cmd`` to control the state of reduction registers
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: output tile of the activation instruction; layout: same as input ``data`` tile
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_activation.py
-   :language: python
-
-  """
-  ...
-
----
-
-### relu
-
-def relu(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Rectified Linear Unit activation function on the input, element-wise.
-
-  ``relu(x) = (x)+ = max(0,x)``
-
-  ((Similar to `torch.nn.functional.relu <https://pytorch.org/docs/stable/generated/torch.nn.functional.relu.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has relu of ``x``.
-  """
-  ...
-
----
-
-### sigmoid
-
-def sigmoid(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Logistic sigmoid activation function on the input, element-wise.
-
-  ((Similar to `torch.nn.functional.sigmoid <https://pytorch.org/docs/stable/generated/torch.nn.functional.sigmoid.html>`_))
-
-  ``sigmoid(x) = 1/(1+exp(-x))``
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has sigmoid of ``x``.
-  """
-  ...
-
----
-
-### gelu
-
-def gelu(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Gaussian Error Linear Unit activation function on the input, element-wise.
-
-  ((Similar to `torch.nn.functional.gelu <https://pytorch.org/docs/stable/generated/torch.nn.functional.gelu.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has gelu of ``x``.
-  """
-  ...
-
----
-
-### gelu_apprx_sigmoid
-
-def gelu_apprx_sigmoid(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Gaussian Error Linear Unit activation function on the input, element-wise, with sigmoid approximation.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has gelu of ``x``.
-  """
-  ...
-
----
-
-### gelu_apprx_tanh
-
-def gelu_apprx_tanh(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Gaussian Error Linear Unit activation function on the input, element-wise, with tanh approximation.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has gelu of ``x``.
-  """
-  ...
-
----
-
-### gelu_dx
-
-def gelu_dx(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Derivative of Gaussian Error Linear Unit (gelu) on the input, element-wise.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has gelu_dx of ``x``.
-  """
-  ...
-
----
-
-### silu
-
-def silu(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Sigmoid Linear Unit activation function on the input, element-wise.
-
-  ((Similar to `torch.nn.functional.silu <https://pytorch.org/docs/stable/generated/torch.nn.functional.silu.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has silu of ``x``.
-  """
-  ...
-
----
-
-### silu_dx
-
-def silu_dx(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Derivative of Sigmoid Linear Unit activation function on the input, element-wise.
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has silu_dx of ``x``.
-  """
-  ...
-
----
-
-### mish
-
-def mish(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Mish activation function on the input, element-wise.
-
-  Mish: A Self Regularized Non-Monotonic Neural Activation Function is defined as:
-
-  .. math::
-        mish(x) = x * tanh(softplus(x))
-
-  see: https://arxiv.org/abs/1908.08681
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has mish of ``x``.
-  """
-  ...
-
----
-
-### softmax
-
-def softmax(x, axis, *, dtype=None, compute_dtype=None, mask=None, **kwargs):
-  r"""
-  Softmax activation function on the input, element-wise.
-
-  ((Similar to `torch.nn.functional.softmax <https://pytorch.org/docs/stable/generated/torch.nn.functional.softmax.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param compute_dtype: (optional) dtype for the internal computation -
-                        *currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.*
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has softmax of ``x``.
-  """
-  ...
-
----
-
-### softplus
-
-def softplus(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Softplus activation function on the input, element-wise.
-
-  Softplus is a smooth approximation to the ReLU activation, defined as:
-
-  ``softplus(x) = log(1 + exp(x))``
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has softplus of ``x``.
-  """
-  ...
-
-## Element-wise Comparison and Logical Operations
-
-### equal
-
-def equal(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x == y.
-
-  ((Similar to `numpy.equal <https://numpy.org/doc/stable/reference/generated/numpy.equal.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x == y`` element-wise.
-  """
-  ...
-
----
-
-### not_equal
-
-def not_equal(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x != y.
-
-  ((Similar to `numpy.not_equal <https://numpy.org/doc/stable/reference/generated/numpy.not_equal.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x != y`` element-wise.
-  """
-  ...
-
----
-
-### greater
-
-def greater(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x > y.
-
-  ((Similar to `numpy.greater <https://numpy.org/doc/stable/reference/generated/numpy.greater.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x > y`` element-wise.
-  """
-  ...
-
----
-
-### greater_equal
-
-def greater_equal(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x >= y.
-
-  ((Similar to `numpy.greater_equal <https://numpy.org/doc/stable/reference/generated/numpy.greater_equal.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x >= y`` element-wise.
-  """
-  ...
-
----
-
-### less
-
-def less(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x < y.
-
-  ((Similar to `numpy.less <https://numpy.org/doc/stable/reference/generated/numpy.less.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x < y`` element-wise.
-  """
-  ...
-
----
-
-### less_equal
-
-def less_equal(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x <= y.
-
-  ((Similar to `numpy.less_equal <https://numpy.org/doc/stable/reference/generated/numpy.less_equal.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x <= y`` element-wise.
-  """
-  ...
-
----
-
-### logical_and
-
-def logical_and(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x AND y.
-
-  ((Similar to `numpy.logical_and <https://numpy.org/doc/stable/reference/generated/numpy.logical_and.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x AND y`` element-wise.
-  """
-  ...
-
----
-
-### logical_or
-
-def logical_or(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x OR y.
-
-  ((Similar to `numpy.logical_or <https://numpy.org/doc/stable/reference/generated/numpy.logical_or.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x OR y`` element-wise.
-  """
-  ...
-
----
-
-### logical_xor
-
-def logical_xor(x, y, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of x XOR y.
-
-  ((Similar to `numpy.logical_xor <https://numpy.org/doc/stable/reference/generated/numpy.logical_xor.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``x XOR y`` element-wise.
-  """
-  ...
-
----
-
-### logical_not
-
-def logical_not(x, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Element-wise boolean result of NOT x.
-
-  ((Similar to `numpy.logical_not <https://numpy.org/doc/stable/reference/generated/numpy.logical_not.html>`_))
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with boolean result of ``NOT x`` element-wise.
-  """
-  ...
-
----
-
-### where
-
-def where(condition, x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Return elements chosen from x or y depending on condition.
-
-  ((Similar to `numpy.where <https://numpy.org/doc/stable/reference/generated/numpy.where.html>`_))
-
-  :param condition: if True, yield x, otherwise yield y.
-  :param x: a tile with values from which to choose if condition is True.
-  :param y: a tile or a numerical value from which to choose if condition is False.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with elements from x where condition is True, and elements from y otherwise.
-  """
-  ...
-
-## Element-wise Bitwise Operations
-
-### bitwise_and
-
-def bitwise_and(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise AND of the two inputs, element-wise.
-
-  ((Similar to `numpy.bitwise_and <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_and.html>`_))
-
-  Computes the bit-wise AND of the underlying binary representation of the integers
-  in the input tiles. This function implements the C/Python operator ``&``
-
-  :param x: a tile or a scalar value of integer type.
-  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x & y``.
-  """
-  ...
-
----
-
-### bitwise_or
-
-def bitwise_or(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise OR of the two inputs, element-wise.
-
-  ((Similar to `numpy.bitwise_or <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_or.html>`_))
-
-  Computes the bit-wise OR of the underlying binary representation of the integers
-  in the input tiles. This function implements the C/Python operator ``|``
-
-  :param x: a tile or a scalar value of integer type.
-  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x | y``.
-  """
-  ...
-
----
-
-### bitwise_xor
-
-def bitwise_xor(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise XOR of the two inputs, element-wise.
-
-  ((Similar to `numpy.bitwise_xor <https://numpy.org/doc/stable/reference/generated/numpy.bitwise_xor.html>`_))
-
-  Computes the bit-wise XOR of the underlying binary representation of the integers
-  in the input tiles. This function implements the C/Python operator ``^``
-
-  :param x: a tile or a scalar value of integer type.
-  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x ^ y``.
-  """
-  ...
-
----
-
-### invert
-
-def invert(x, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise NOT of the input, element-wise.
-
-  ((Similar to `numpy.invert <https://numpy.org/doc/stable/reference/generated/numpy.invert.html>`_))
-
-  Computes the bit-wise NOT of the underlying binary representation of the integers
-  in the input tile. This ufunc implements the C/Python operator ``~``
-
-  :param x: a tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with bitwise NOT ``x`` element-wise.
-  """
-  ...
-
----
-
-### left_shift
-
-def left_shift(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise left-shift x by y, element-wise.
-
-  ((Similar to `numpy.left_shift <https://numpy.org/doc/stable/reference/generated/numpy.left_shift.html>`_))
-
-  Computes the bit-wise left shift of the underlying binary representation of the integers
-  in the input tiles. This function implements the C/Python operator ``<<``
-
-  :param x: a tile or a scalar value of integer type.
-  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x << y``.
-  """
-  ...
-
----
-
-### right_shift
-
-def right_shift(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Bitwise right-shift x by y, element-wise.
-
-  ((Similar to `numpy.right_shift <https://numpy.org/doc/stable/reference/generated/numpy.right_shift.html>`_))
-
-  Computes the bit-wise right shift of the underlying binary representation of the integers
-  in the input tiles. This function implements the C/Python operator ``>>``
-
-  :param x: a tile or a scalar value of integer type.
-  :param y: a tile or a scalar value of integer type. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has values ``x >> y``.
-  """
-  ...
-
-## Element-wise Min/Max Operations
-
-### maximum
-
-def maximum(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Maximum of the inputs, element-wise.
-
-  ((Similar to `numpy.maximum <https://numpy.org/doc/stable/reference/generated/numpy.maximum.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has the maximum of each elements from x and y.
-  """
-  ...
-
----
-
-### minimum
-
-def minimum(x, y, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Minimum of the inputs, element-wise.
-
-  ((Similar to `numpy.minimum <https://numpy.org/doc/stable/reference/generated/numpy.minimum.html>`_))
-
-  :param x: a tile or a scalar value.
-  :param y: a tile or a scalar value. ``x.shape`` and ``y.shape`` must be `broadcastable <https://numpy.org/doc/stable/user/basics.broadcasting.html>`__ to a common shape, that will become the shape of the output.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile that has the minimum of each elements from x and y.
-  """
-  ...
-
-## Reduction Operations
-
-### sum
-
-def sum(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
-  r"""
-  Sum of elements along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.sum <https://numpy.org/doc/stable/reference/generated/numpy.sum.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
-                   With this option, the result will broadcast correctly against the input array.
-  :return: a tile with the sum of elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### max
-
-def max(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
-  r"""
-  Maximum of elements along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.max <https://numpy.org/doc/stable/reference/generated/numpy.max.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
-                   With this option, the result will broadcast correctly against the input array.
-  :return: a tile with the maximum of elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### min
-
-def min(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
-  r"""
-  Minimum of elements along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.min <https://numpy.org/doc/stable/reference/generated/numpy.min.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
-                   With this option, the result will broadcast correctly against the input array.
-  :return: a tile with the minimum of elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### mean
-
-def mean(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
-  r"""
-  Arithmetic mean along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.mean <https://numpy.org/doc/stable/reference/generated/numpy.mean.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with the average of elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-           ``float32`` intermediate and return values are used for integer inputs.
-  """
-  ...
-
----
-
-### var
-
-def var(x, axis, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Variance along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.var <https://numpy.org/doc/stable/reference/generated/numpy.var.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with the variance of the elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### prod
-
-def prod(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs):
-  r"""
-  Product of elements along the specified axis (or axes) of the input.
-
-  ((Similar to `numpy.prod <https://numpy.org/doc/stable/reference/generated/numpy.prod.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
-                   With this option, the result will broadcast correctly against the input array.
-  :return: a tile with the product of elements along the provided axis. This return tile will have a shape of the input
-           tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### all
-
-def all(x, axis, *, dtype=bool, mask=None, **kwargs):
-  r"""
-  Whether all elements along the specified axis (or axes) evaluate to True.
-
-  ((Similar to `numpy.all <https://numpy.org/doc/stable/reference/generated/numpy.all.html>`_))
-
-  :param x: a tile.
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a boolean tile with the result. This return tile will have a shape of the input tile's shape with the specified axes removed.
-  """
-  ...
-
----
-
-### tensor_reduce
-
-def tensor_reduce(op, data, axis, *, mask=None, dtype=None, negate=False, keepdims=False, **kwargs):
-  r"""
-  Apply a reduction operation to the free axes of an input ``data`` tile using Vector Engine.
-
-  The reduction operator is specified in the ``op`` input field
-  (see :ref:`nki-aluop` for a list of supported reduction operators).
-  There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or)
-  and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec
-  operators, the input/output data types must be integer types and Vector Engine treats
-  all input elements as bit patterns without any data type casting. For arithmetic operators, there is no
-  restriction on the input/output data types, but the engine automatically casts input data types to float32
-  and performs the reduction operation in float32 math. The float32 reduction results are cast to the target
-  data type specified in the ``dtype`` field before written into the output tile. If the ``dtype`` field is not
-  specified, it is default to be the same as input tile data type.
-
-  When the reduction ``op`` is an arithmetic operator, the instruction can also multiply the output reduction
-  results by ``-1.0`` before writing into the output tile, at no additional performance cost. This behavior is
-  controlled by the ``negate`` input field.
-
-  The reduction axes are specified in the ``axis`` field using a list of integer(s) to indicate axis indices.
-  The reduction axes can contain up to four free axes and must start at the most minor free axis.
-  Since axis 0 is the partition axis in a tile, the reduction axes must contain axis 1 (most-minor). In addition,
-  the reduction axes must be consecutive: e.g., [1, 2, 3, 4] is a legal ``axis`` field, but [1, 3, 4] is not.
-
-  Since this instruction only supports free axes reduction, the output tile must have the same partition
-  axis size as the input ``data`` tile. To perform a partition axis reduction, we can either:
-
-  1. invoke a ``nki.isa.nc_transpose`` instruction on the input tile and then this ``reduce`` instruction
-     to the transposed tile, or
-  2. invoke ``nki.isa.nc_matmul`` instructions to multiply a ``nki.language.ones([128, 1], dtype=data.dtype)``
-     vector with the input tile.
-
-  **Estimated instruction cost:**
-
-  .. list-table::
-    :widths: 30 70
-    :header-rows: 1
-
-    * - Cost `(Vector Engine Cycles)`
-      - Condition
-    * - ``N/2``
-      - both input and output data types are ``bfloat16`` *and* the reduction operator is add or maximum
-    * - ``N``
-      - otherwise
-
-  where,
-
-  - ``N`` is the number of elements per partition in ``data``.
-  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-    ``MIN_II`` is roughly 64 engine cycles.
-
-
-  :param op: the reduction operator (see :ref:`nki-aluop` for supported reduction operators)
-  :param data: the input tile to be reduced
-  :param axis: int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: ``[1], [1,2], [1,2,3], [1,2,3,4]``
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param negate: if True, reduction result is multiplied by ``-1.0``;
-                 only applicable when op is an arithmetic operator
-  :param keepdims: If this is set to True, the axes which are reduced are left in the result as dimensions with size one.
-                   With this option, the result will broadcast correctly against the input array.
-  :return: output tile of the reduction result
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_reduce.py
-   :language: python
-   :marker: NKI_EXAMPLE_2
-
-  """
-  ...
-
----
-
-### tensor_partition_reduce
-
-def tensor_partition_reduce(op, data, *, mask=None, dtype=None, **kwargs):
-  r"""
-  Apply a reduction operation across partitions of an input ``data`` tile using GpSimd Engine.
-
-  :param op: the reduction operator (add, max, bitwise_or, bitwise_and)
-  :param data: the input tile to be reduced
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :return: output tile with reduced result
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_partition_reduce.py
-   :language: python
-   :marker: NKI_EXAMPLE_1
-
-  """
-  ...
-
----
-
-### loop_reduce
-
-def loop_reduce(x, op, loop_indices, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Apply reduce operation over a loop. This is an ideal instruction to compute a
-  high performance reduce_max or reduce_min.
-
-  Note: The destination tile is also the rhs input to ``op``. For example,
-
-  .. code-block:: python
-
-    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=float32, buffer=nl.sbuf)
-    for k_i in affine_range(NUM_K_BLOCKS):
-
-      # Skipping over multiple nested loops here.
-      # a, is a psum tile from a matmul accumulation group.
-      b = nl.loop_reduce(a, op=np.add, loop_indices=[k_i], dtype=nl.float32)
-
-  is the same as:
-
-  .. code-block:: python
-
-    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-    for k_i in affine_range(NUM_K_BLOCKS):
-
-      # Skipping over multiple nested loops here.
-      # a, is a psum tile from a matmul accumulation group.
-      b = nisa.tensor_tensor(data1=b, data2=a, op=np.add, dtype=nl.float32)
-
-  If you are trying to use this instruction only for accumulating results on SBUF, consider
-  simply using the ``+=`` operator instead.
-
-  The ``loop_indices`` list enables the compiler to recognize which loops this reduction can be
-  optimized across as part of any aggressive loop-level optimizations it may perform.
-
-  :param x: a tile.
-  :param op: numpy ALU operator to use to reduce over the input tile.
-  :param loop_indices: a single loop index or a tuple of loop indices along which the reduction operation is performed.
-                      Can be numbers or loop_index objects coming from ``nl.affine_range``.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: the reduced resulting tile
-  """
-  ...
-
----
-
-### activation_reduce
-
-def activation_reduce(op, data, *, reduce_op, reduce_res, bias=None, scale=1.0, mask=None, dtype=None, **kwargs):
-  r"""
-  Perform the same computation as ``nisa.activation`` and also a reduction along the free dimension of the
-  ``nisa.activation`` result using Scalar Engine. The results for the reduction is stored
-  in the reduce_res.
-
-  This API is equivalent to calling ``nisa.activation`` with
-  ``reduce_cmd=nisa.reduce_cmd.reset_reduce`` and passing in reduce_res. This API is kept for
-  backward compatibility, we recommend using ``nisa.activation`` moving forward.
-
-  Refer to :doc:`nisa.activation <nki.isa.activation>` for semantics of ``op/data/bias/scale``.
-
-  In addition to :doc:`nisa.activation <nki.isa.activation>` computation, this API also performs a reduction
-  along the free dimension(s) of the :doc:`nisa.activation <nki.isa.activation>` result, at a small additional
-  performance cost. The reduction result is returned in ``reduce_res`` in-place, which must be a
-  SBUF/PSUM tile with the same partition axis size as the input tile ``data`` and one element per partition.
-  On NeuronCore-v2, the ``reduce_op`` can only be an addition, ``np.add`` or ``nl.add``.
-
-  There are 128 registers on the scalar engine for storing reduction results, corresponding
-  to the 128 partitions of the input. These registers are shared between ``activation`` and ``activation_accu`` calls.
-  This instruction first resets those
-  registers to zero, performs the reduction on the value after activation function is applied,
-  stores the results into the registers,
-  then reads out the reduction results from the register, eventually store them into ``reduce_res``.
-
-  Note that ``nisa.activation`` can also change the state of the register. It's user's
-  responsibility to ensure correct ordering. It's the best practice to not mixing
-  the use of ``activation_reduce`` and ``activation``.
-
-  Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will
-  reduce across all of them.
-
-  Mathematically, this API performs the following computation:
-
-  .. math::
-        output = f_{act}(data * scale + bias) \\
-        reduce\_res = reduce\_op(output, axis=<FreeAxis>)
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, N) + MIN_II`` Scalar Engine cycles, where
-
-  - ``N`` is the number of elements per partition in ``data``, and
-  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-    ``MIN_II`` is roughly 64 engine cycles.
-
-  :param op: an activation function (see :ref:`nki-act-func` for supported functions)
-  :param data: the input tile; layout: (partition axis <= 128, free axis)
-  :param reduce_op: the reduce operation to perform on the free dimension of the activation result
-  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
-                  is the partition axis size of the input ``data`` tile. The result of ``sum(ReductionResult)``
-                  is written in-place into the tensor.
-  :param bias: a vector with the same partition axis size as ``data``
-               for broadcast add (after broadcast multiply with ``scale``)
-  :param scale: a scalar or a vector with the same partition axis size as ``data``
-                for broadcast multiply
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: output tile of the activation instruction; layout: same as input ``data`` tile
-  """
-  ...
-
-## Low-Level Tensor-Scalar and Tensor-Tensor Operations
+## Low-Level Engine Operations
 
 ### tensor_scalar
 
@@ -3140,57 +3479,6 @@ def tensor_scalar(data, op0, operand0, reverse0=False, op1=None, operand1=None, 
    :marker: NKI_EXAMPLE_5
 
 
-  """
-  ...
-
----
-
-### tensor_scalar_reduce
-
-def tensor_scalar_reduce(*, data, op0, operand0, reduce_op, reduce_res, reverse0=False, dtype=None, mask=None, **kwargs):
-  r"""
-  Perform the same computation as ``nisa.tensor_scalar`` with one math operator
-  and also a reduction along the free dimension of the ``nisa.tensor_scalar`` result using Vector Engine.
-
-  Refer to :doc:`nisa.tensor_scalar <nki.isa.tensor_scalar>` for semantics of ``data/op0/operand0``.
-  Unlike regular ``nisa.tensor_scalar`` where two operators are supported, only one
-  operator is supported in this API. Also, ``op0`` can only be arithmetic operation in :ref:`nki-aluop`.
-  Bitvec operators are not supported in this API.
-
-  In addition to :doc:`nisa.tensor_scalar <nki.isa.activation>` computation, this API also performs a reduction
-  along the free dimension(s) of the :doc:`nisa.tensor_scalar <nki.isa.activation>` result, at a small additional
-  performance cost. The reduction result is returned in ``reduce_res`` in-place, which must be a
-  SBUF/PSUM tile with the same partition axis size as the input tile ``data`` and one element per partition.
-  The ``reduce_op`` can be any of ``nl.add``, ``nl.subtract``, ``nl.multiply``, ``nl.max`` or ``nl.min``.
-
-  Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will
-  reduce across all of them.
-
-  .. math::
-    result = data <op0> operand0 \\
-    reduce\_res = reduce\_op(dst, axis=<FreeAxis>)
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, N) + MIN_II`` Vector Engine cycles, where
-
-  - ``N`` is the number of elements per partition in ``data``, and
-  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-    ``MIN_II`` is roughly 64 engine cycles.
-
-  :param data: the input tile
-  :param op0: the math operator used with operand0 (any arithmetic operator in :ref:`nki-aluop` is allowed)
-  :param operand0: a scalar constant or a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
-                  is the partition axis size of the input ``data`` tile
-  :param reverse0: `(not supported yet)` reverse ordering of inputs to ``op0``; if false, ``operand0`` is the rhs of ``op0``;
-                   if true, ``operand0`` is the lhs of ``op0``. `<-- currently not supported yet.`
-  :param reduce_op: the reduce operation to perform on the free dimension of ``data <op0> operand0``
-  :param reduce_res: a tile of shape ``(data.shape[0], 1)``, where data.shape[0]
-                  is the partition axis size of the input ``data`` tile. The result of ``reduce_op(data <op0> operand0)``
-                  is written in-place into the tile.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: an output tile of ``(data <op0> operand0)`` computation
   """
   ...
 
@@ -3406,94 +3694,60 @@ def scalar_tensor_tensor(*, data, op0, operand0, op1, operand1, reverse0=False, 
   """
   ...
 
-## Selection and Conditional Operations
+---
 
-### select_reduce
+### affine_select
 
-def select_reduce(*, dst, predicate, on_true, on_false, reduce_res=None, reduce_cmd=reduce_cmd.idle, reduce_op=np.amax, reverse_pred=False, mask=None, dtype=None, **kwargs):
+def affine_select(pred, on_true_tile, on_false_value, *, mask=None, dtype=None, **kwargs):
   r"""
-    Selectively copy elements from either ``on_true`` or ``on_false`` to the destination tile
-    based on a ``predicate`` using Vector Engine, with optional reduction (max).
+  Select elements between an input tile ``on_true_tile`` and a scalar value ``on_false_value``
+  according to a boolean predicate tile using GpSimd Engine. The predicate tile is
+  calculated on-the-fly in the engine by evaluating an affine expression element-by-element as indicated in ``pred``.
 
-    The operation can be expressed in NumPy as:
+  ``pred`` must meet the following requirements:
 
-    .. code-block:: python
+    - It must not depend on any runtime variables that can't be resolved at compile-time.
+    - It can't be multiple masks combined using logical operators such as ``&`` and ``|``.
 
-        # Select:
-        predicate = ~predicate if reverse_pred else predicate
-        result = np.where(predicate, on_true, on_false)
+  For a complex predicate that doesn't meet the above requirements, consider using :doc:`nl.where <nki.language.where>`.
 
-        # With Reduce:
-        reduction_result = np.max(result, axis=1, keepdims=True)
+  The input tile ``on_true_tile``, the calculated boolean predicate tile expressed by ``pred``,
+  and the returned output tile of this instruction
+  must have the same shape. If the predicate value of a given position is ``True``,
+  the corresponding output element will take the element from ``on_true_tile`` in the same position.
+  If the predicate value of a given position is ``False``,
+  the corresponding output element will take the value of ``on_false_value``.
 
-    **Memory constraints:**
+  A common use case for ``affine_select`` is to apply a causal mask on the attention
+  scores for transformer decoder models.
 
-    - Both ``on_true`` and ``predicate`` are permitted to be in SBUF
-    - Either ``on_true`` or ``predicate`` may be in PSUM, but not both simultaneously
-    - The destination ``dst`` can be in either SBUF or PSUM
+  This instruction allows any float or 8-bit/16-bit integer data types
+  for both the input data tile and output tile (see :ref:`nki-dtype` for more information).
+  The output tile data type is specified using
+  the ``dtype`` field. If ``dtype`` is not specified, the output data type will be the same as
+  the input data type of ``data``. However, the data type of ``on_false_value`` must be float32,
+  regardless of the input/output tile data types.
 
-    **Shape and data type constraints:**
+  **Estimated instruction cost:**
 
-    - ``on_true``, ``dst``, and ``predicate`` must have identical shapes (same number of partitions and elements per partition)
-    - ``on_true`` can be any supported dtype except ``tfloat32``, ``int32``, ``uint32``
-    - ``on_false`` dtype must be ``float32`` if ``on_false`` is a scalar.
-    - ``on_false`` has to be either scalar or vector of shape ``(on_true.shape[0], 1)``
-    - ``predicate`` dtype can be any supported integer type ``int8``, ``uint8``, ``int16``, ``uint16``
-    - ``reduce_res`` must be a vector of shape ``(on_true.shape[0], 1)``
-    - ``reduce_res`` dtype must of float type
-    - ``reduce_op`` only supports ``max``
+  ``GPSIMD_START + N`` GpSimd Engine cycles, where ``N`` is the number of elements per partition in ``on_true_tile`` and
+  ``GPSIMD_START`` is the instruction startup overhead on GpSimdE, roughly 150 engine cycles.
 
-    **Behavior:**
+  :param pred: an affine expression that defines the boolean predicate
+  :param on_true_tile: an input tile for selection with a ``True`` predicate value
+  :param on_false_value: a scalar value for selection with a ``False`` predicate value
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
+  :return: an output tile with values selected from either ``on_true_tile`` or
+           ``on_false_value`` according to the following equation:
+           output[x] = (pred[x] > 0) ? on_true_tile[x] : on_false_value
 
-    - Where predicate is True: The corresponding elements from ``on_true`` are copied to ``dst``
-    - Where predicate is False: The corresponding elements from ``on_false`` are copied to ``dst``
-    - When reduction is enabled, the max value from each partition of the ``result`` is computed and stored in ``reduce_res``
+  Example:
 
-    **Accumulator behavior:**
+  .. nki_example:: ../../test/test_nki_isa_affine_select.py
+   :language: python
 
-    The Vector Engine maintains internal accumulator registers that can be controlled via the ``reduce_cmd`` parameter:
-
-    - ``nisa.reduce_cmd.reset_reduce``: Reset accumulators to -inf, then accumulate the current results
-    - ``nisa.reduce_cmd.reduce``: Continue accumulating without resetting (useful for multi-step reductions)
-    - ``nisa.reduce_cmd.idle``: No accumulation performed (default)
-
-    .. note::
-      Even when ``reduce_cmd`` is set to ``idle``, the accumulator state may still be modified.
-      Always use ``reset_reduce`` after any operations that ran with ``idle`` mode to ensure
-      consistent behavior.
-
-    .. note::
-      The accumulator registers are shared for other Vector Engine accumulation instructions such :doc:`nki.isa.range_select <nki.isa.range_select>`
-
-    :param dst: The destination tile to write the selected values to
-    :param predicate: Tile that determines which value to select (on_true or on_false)
-    :param on_true: Tile to select from when predicate is True
-    :param on_false: Value to use when predicate is False, can be a scalar value or a vector tile of ``(on_true.shape[0], 1)``
-    :param reduce_res: (optional) Tile to store reduction results, must have shape ``(on_true.shape[0], 1)``
-    :param reduce_cmd: (optional) Control accumulator behavior using ``nisa.reduce_cmd`` values, defaults to idle
-    :param reduce_op: (optional) Reduction operator to apply (only ``np.max`` is supported)
-    :param reverse_pred: (optional) Reverse the meaning of the predicate condition, defaults to False
-    :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-    :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-    **Example 1: Basic selection**
-
-    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
-       :language: python
-       :marker: NKI_EXAMPLE_1
-
-    **Example 2: Selection with reduction**
-
-    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
-       :language: python
-       :marker: NKI_EXAMPLE_2
-
-    **Example 3: Selection with reversed predicate**
-
-    .. nki_example:: ../../test/test_nki_isa_select_reduce.py
-       :language: python
-       :marker: NKI_EXAMPLE_3
-    """
+  """
   ...
 
 ---
@@ -3601,83 +3855,6 @@ def range_select(*, on_true_tile, comp_op0, comp_op1, bound0, bound1, reduce_cmd
 
 ---
 
-### affine_select
-
-def affine_select(pred, on_true_tile, on_false_value, *, mask=None, dtype=None, **kwargs):
-  r"""
-  Select elements between an input tile ``on_true_tile`` and a scalar value ``on_false_value``
-  according to a boolean predicate tile using GpSimd Engine. The predicate tile is
-  calculated on-the-fly in the engine by evaluating an affine expression element-by-element as indicated in ``pred``.
-
-  ``pred`` must meet the following requirements:
-
-    - It must not depend on any runtime variables that can't be resolved at compile-time.
-    - It can't be multiple masks combined using logical operators such as ``&`` and ``|``.
-
-  For a complex predicate that doesn't meet the above requirements, consider using :doc:`nl.where <nki.language.where>`.
-
-  The input tile ``on_true_tile``, the calculated boolean predicate tile expressed by ``pred``,
-  and the returned output tile of this instruction
-  must have the same shape. If the predicate value of a given position is ``True``,
-  the corresponding output element will take the element from ``on_true_tile`` in the same position.
-  If the predicate value of a given position is ``False``,
-  the corresponding output element will take the value of ``on_false_value``.
-
-  A common use case for ``affine_select`` is to apply a causal mask on the attention
-  scores for transformer decoder models.
-
-  This instruction allows any float or 8-bit/16-bit integer data types
-  for both the input data tile and output tile (see :ref:`nki-dtype` for more information).
-  The output tile data type is specified using
-  the ``dtype`` field. If ``dtype`` is not specified, the output data type will be the same as
-  the input data type of ``data``. However, the data type of ``on_false_value`` must be float32,
-  regardless of the input/output tile data types.
-
-  **Estimated instruction cost:**
-
-  ``GPSIMD_START + N`` GpSimd Engine cycles, where ``N`` is the number of elements per partition in ``on_true_tile`` and
-  ``GPSIMD_START`` is the instruction startup overhead on GpSimdE, roughly 150 engine cycles.
-
-  :param pred: an affine expression that defines the boolean predicate
-  :param on_true_tile: an input tile for selection with a ``True`` predicate value
-  :param on_false_value: a scalar value for selection with a ``False`` predicate value
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see :ref:`nki-type-promotion` for more information);
-  :return: an output tile with values selected from either ``on_true_tile`` or
-           ``on_false_value`` according to the following equation:
-           output[x] = (pred[x] > 0) ? on_true_tile[x] : on_false_value
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_affine_select.py
-   :language: python
-
-  """
-  ...
-
-## Normalization and Statistics
-
-### rms_norm
-
-def rms_norm(x, w, axis, n, epsilon=1e-06, *, dtype=None, compute_dtype=None, mask=None, **kwargs):
-  r"""
-  Apply Root Mean Square Layer Normalization.
-
-  :param x: input tile
-  :param w: weight tile
-  :param axis: axis along which to compute the root mean square (rms) value
-  :param n: total number of values to calculate rms
-  :param epsilon: epsilon value used by rms calculation to avoid divide-by-zero
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param compute_dtype: (optional) dtype for the internal computation -
-                        *currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.*
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: `` x / RMS(x) * w ``
-  """
-  ...
-
----
-
 ### bn_stats
 
 def bn_stats(data, *, mask=None, dtype=None, **kwargs):
@@ -3775,286 +3952,77 @@ def bn_aggr(data, *, mask=None, dtype=None, **kwargs):
   """
   ...
 
-## Gather, Shuffle, and Data Movement
-
-### gather_flattened
-
-def gather_flattened(data, indices, *, mask=None, dtype=None, **kwargs):
-  r"""
-    Gather elements from ``data`` according to the ``indices``.
-
-    This instruction gathers elements from the ``data`` tensor using integer indices
-    provided in the ``indices`` tensor. For each element in the ``indices`` tensor, it retrieves
-    the corresponding value from the ``data`` tensor using the index value to select
-    from the free dimension of ``data``. The gather instruction effectively performs up to
-    128 parallel gather operations, with each operation using the corresponding partition
-    of ``data`` and ``indices``.
-
-    The output tensor has the same shape as the ``indices`` tensor, with each output element
-    containing the value from ``data`` at the position specified by the corresponding index.
-    Out of bounds indices will return garbage values.
-
-    Both ``data`` and ``indices`` must be 2-, 3-, or 4-dimensional.
-    The ``indices`` tensor must contain uint32 values.
-
-    For indexing purposes, all free dimensions are flattened and indexed as the same "row".
-    Consider this example:
-
-    .. code-block:: text
-
-        data =
-        [[[1., 2.],
-         [3., 4.]],
-        [[5., 6.],
-         [7., 8.]]]
-        indices =
-        [[[0, 1],
-          [1, 3]],
-         [[3, 3],
-          [1, 0]]]
-        nl.gather_flattened(data, indices) produces this result:
-        [[[1., 2.],
-          [2., 4.]],
-         [[8., 8.],
-          [6., 5.]]]
-
-    With the exception of handling out-of-bounds indices, this behavior is equivalent to:
-
-    .. code-block:: python
-
-        indices_flattened = indices.reshape(indices.shape[0], -1)
-        data_flattened = data.reshape(data.shape[0], -1)
-        result = np.take_along_axis(data_flattened, indices_flattened, axis=-1)
-        result.reshape(indices.shape)
-
-    ((Similar to `torch.gather <https://pytorch.org/docs/master/generated/torch.gather.html>`_))
-
-    :param data: the source tensor to gather values from
-    :param indices: tensor containing uint32 indices to gather across the flattened free dimension.
-    :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-    :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-    :return: a tensor with the same shape as indices containing gathered values from data
-
-    Example:
-
-    .. nki_example:: ../../test/test_nki_nl_gather_flattened.py
-       :language: python
-       :marker: NKI_EXAMPLE_0
-
-    """
-  ...
-
 ---
 
-### local_gather
+### dropout
 
-def local_gather(src_buffer, index, num_elem_per_idx=1, num_valid_indices=None, *, mask=None):
+def dropout(data, prob, *, mask=None, dtype=None, **kwargs):
   r"""
-  Gather SBUF data in ``src_buffer`` using ``index`` on GpSimd Engine.
+  Randomly replace some elements of the input tile ``data`` with zeros
+  based on input probabilities using Vector Engine.
+  The probability of replacing input elements with zeros (i.e., drop probability)
+  is specified using the ``prob`` field:
+  - If the probability is 1.0, all elements are replaced with zeros.
+  - If the probability is 0.0, all elements are kept with their original values.
 
-  Each of the eight GpSimd cores in GpSimd Engine connects to 16 contiguous SBUF partitions
-  (e.g., core[0] connected to partition[0:16]) and performs gather from the connected 16
-  SBUF partitions *independently* in parallel. The indices used for gather on each core should also
-  come from the same 16 connected SBUF partitions.
+  The ``prob`` field can be a scalar constant or a tile of shape ``(data.shape[0], 1)``,
+  where each partition contains one drop probability value.
+  The drop probability value in each partition is applicable to the input
+  ``data`` elements from the same partition only.
 
-  During execution of the instruction, each GpSimd core reads a 16-partition slice from ``index``, flattens
-  all indices into a 1D array ``indices_1d`` (along the partition dimension first).
-  By default with no ``num_valid_indices`` specified, each GpSimd core
-  will treat all indices from its corresponding 16-partition ``index`` slice as valid indices.
-  However, when the number of valid indices per core
-  is not a multiple of 16, users can explicitly specify the valid index count per core in ``num_valid_indices``.
-  Note, ``num_valid_indices`` must not exceed the total element count in each 16-partition ``index`` slice
-  (i.e., ``num_valid_indices <= index.size / (index.shape[0] / 16)``).
+  Data type of the input ``data`` tile can be any valid NKI data types
+  (see :ref:`nki-dtype` for more information).
+  However, data type of ``prob`` has restrictions based on the data type of ``data``:
 
-  Next, each GpSimd core uses the flattened ``indices_1d`` indices as *partition offsets* to gather from
-  the connected 16-partition slice of ``src_buffer``. Optionally, this API also allows gathering of multiple
-  contiguous elements starting at each index to improve gather throughput, as indicated by ``num_elem_per_idx``.
-  Behavior of out-of-bound index access is undefined.
+  - If data type of ``data`` is any of the integer types (e.g., int32, int16),
+    ``prob`` data type must be float32
+  - If data type of data is any of the float types (e.g., float32, bfloat16),
+    ``prob`` data can be any valid float type
 
-  Even though all eight GpSimd cores can gather with completely different indices, a common use case for
-  this API is to make all cores gather with the same set of indices (i.e., partition offsets). In this case,
-  users can generate indices into 16 partitions, replicate them eight times to 128 partitions and then feed them into
-  ``local_gather``.
-
-  As an example, if ``src_buffer`` is (128, 512) in shape and ``index`` is (128, 4) in shape, where the partition
-  dimension size is 128, ``local_gather`` effectively performs the following operation:
-
-  .. nki_example:: ../../test/test_nki_isa_local_gather.py
-   :language: python
-   :marker:   NUMPY_SEMANTICS
-
-  ``local_gather`` preserves the input data types from ``src_buffer`` in the gather output.
-  Therefore, no data type casting is allowed in this API. The indices in ``index`` tile must be uint16 types.
-
-  This API has three tile size constraints [subject to future relaxation]:
-
-  #. The partition axis size of ``src_buffer`` must match that of ``index`` and must
-     be a multiple of 16. In other words, ``src_buffer.shape[0] == index.shape[0] and src_buffer.shape[0] % 16 == 0``.
-  #. The number of contiguous elements to gather per index per partition ``num_elem_per_idx``
-     must be one of the following values: ``[1, 2, 4, 8, 16, 32]``.
-  #. The number of indices for gather per core must be less than or equal to 4096.
+  The output data type of this instruction is specified by the ``dtype`` field. The output data type
+  must match the input data type of ``data`` if input data type is any of the integer types.
+  Otherwise, output data type can be any valid NKI data types. If output data type is not specified,
+  it is default to be the same as input data type.
 
   **Estimated instruction cost:**
 
-  ``150 + (num_valid_indices * num_elem_per_idx)/C`` GpSimd Engine cycles, where ``C`` can be calculated
-  using
-  ``((28 + t * num_elem_per_idx)/(t * num_elem_per_idx)) / min(4/dtype_size, num_elem_per_idx)``.
-  ``dtype_size`` is the size of ``src_buffer.dtype`` in bytes.
-  Currently, ``t`` is a constant 4, but subject to change in future software implementation.
+  ``max(MIN_II, N)`` Vector Engine cycles, where ``N`` is the number of elements per partition in ``data``,
+  and ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+  ``MIN_II`` is roughly 64 engine cycles.
 
-  :param src_buffer: an input tile for gathering.
-  :param index: an input tile with indices used for gathering.
-  :param num_elem_per_idx: an optional integer value to read multiple contiguous elements per index per partition; default is 1.
-  :param num_valid_indices: an optional integer value to specify the number of valid indices per GpSimd core; default is
-                            ``index.size / (index.shape[0] / 16)``.
+  :param data: the input tile
+  :param prob: a scalar or a tile of shape ``(data.shape[0], 1)`` to indicate the
+               probability of replacing elements with zeros
   :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: an output tile of the gathered data
-
-  **Example:**
-
-  .. nki_example:: ../../test/test_nki_isa_local_gather.py
-   :language: python
-
-
-  Click :download:`here <../../test/test_nki_isa_local_gather.py>` to download the
-  full NKI code example with equivalent numpy implementation.
-  """
-  ...
-
----
-
-### nc_stream_shuffle
-
-def nc_stream_shuffle(src, dst, shuffle_mask, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Apply cross-partition data movement within a quadrant of 32 partitions from source tile
-  ``src`` to destination tile ``dst`` using Vector Engine.
-
-  Both source and destination tiles can be in either SBUF or PSUM, and passed in by reference as arguments.
-  In-place shuffle is allowed, i.e., ``dst`` same as ``src``. ``shuffle_mask`` is a 32-element list. Each mask
-  element must be in data type int or affine expression. ``shuffle_mask[i]`` indicates which input partition the
-  output partition [i] copies from within each 32-partition quadrant. The special value ``shuffle_mask[i]=255``
-  means the output tensor in partition [i] will be unmodified. ``nc_stream_shuffle`` can be applied to multiple
-  of quadrants. In the case with more than one quadrant, the shuffle is applied to each quadrant independently,
-  and the same ``shuffle_mask`` is used for each quadrant. ``mask`` applies to ``dst``, meaning that locations
-  masked out by ``mask`` will be unmodified. For more information about the cross-partition data movement,
-  see :ref:`arch_guide_cross_partition_data_movement`.
-
-  This API has 3 constraints on ``src`` and ``dst``:
-
-  #. ``dst`` must have same data type as ``src``.
-  #. ``dst`` must have the same number of elements per partition as ``src``.
-  #. The access start partition of ``src`` (``src_start_partition``), does not have to match or be in the same quadrant
-     as that of ``dst`` (``dst_start_partition``). However, ``src_start_partition``/``dst_start_partition`` needs to follow
-     some special hardware rules with the number of active partitions ``num_active_partitions``.
-     ``num_active_partitions = ceil(max(src_num_partitions, dst_num_partitions)/32) * 32``, where ``src_num_partitions`` and
-     ``dst_num_partitions`` refer to the number of partitions the ``src`` and ``dst`` tensors access respectively.
-     ``src_start_partition``/``dst_start_partition`` is constrained based on the value of ``num_active_partitions``:
-
-    * If ``num_active_partitions`` is 96/128, ``src_start_partition``/``dst_start_partition`` must be 0.
-
-    * If ``num_active_partitions`` is 64, ``src_start_partition``/``dst_start_partition`` must be 0/64.
-
-    * If ``num_active_partitions`` is 32, ``src_start_partition``/``dst_start_partition`` must be 0/32/64/96.
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, N)`` Vector Engine cycles, where ``N`` is the number of elements per
-  partition in ``src``, and ``MIN_II`` is the minimum instruction initiation interval
-  for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
-
-  :param src: the source tile
-  :param dst: the destination tile
-  :param shuffle_mask: a 32-element list that specifies the shuffle source and destination partition
   :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
 
-  **Example:**
-
-  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
-   :language: python
-   :marker: NKI_EXAMPLE_0
-
-  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
-   :language: python
-   :marker: NKI_EXAMPLE_1
-
-  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
-   :language: python
-   :marker: NKI_EXAMPLE_2
-
-  """
-  ...
-
----
-
-### nc_transpose
-
-def nc_transpose(data, *, mask=None, dtype=None, engine=engine.unknown, **kwargs):
-  r"""
-  Perform a 2D transpose between the partition axis and the free axis of input ``data``, i.e., a PF-transpose,
-  using Tensor or Vector Engine. If the ``data`` tile has more than one free axes,
-  this API implicitly collapses all free axes into one axis and then performs a 2D PF-transpose.
-
-  In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but they support different input shapes.
-  Tensor Engine ``nc_transpose`` can handle an input tile of shape (128, 128) or smaller, while Vector
-  Engine can handle shape (32, 32) or smaller.
-  Therefore, when the input tile shape is (32, 32) or smaller,
-  we have an option to run it on either engine, which is controlled by the
-  ``engine`` field. If no ``engine`` is specified, Neuron Compiler will automatically select an engine
-  based on the input shape. Note, similar to other Tensor Engine instructions, the Tensor Engine
-  ``nc_transpose`` must read the input tile from SBUF and write the transposed result to PSUM. On the other hand,
-  Vector Engine ``nc_transpose`` can read/write from/to either SBUF or PSUM.
-
-  Note, PF-transpose on Tensor Engine is done by performing a matrix multiplication between ``data`` as the
-  stationary tensor and an identity matrix as the moving tensor.
-  See :ref:`architecture guide <arch_sec_tensor_engine_alternative_use>` for more information. On NeuronCore-v2,
-  such matmul-style transpose is not bit-accurate if the input ``data`` contains NaN/Inf. You may consider replacing
-  NaN/Inf with regular floats (float_max/float_min/zeros) in the input matrix before calling
-  ``nc_transpose(engine=nki.isa.constants.engine.tensor)``.
-
-
-  **Estimated instruction cost:**
-
-  .. list-table::
-    :widths: 40 60
-    :header-rows: 1
-
-    * - Cost `(Engine Cycles)`
-      - Condition
-    * - ``max(MIN_II, N)``
-      - ``engine`` set to ``nki.isa.constants.engine.vector``
-    * - ``max(P, min(64, F))``
-      - ``engine`` set to ``nki.isa.constants.engine.tensor`` and assuming many back-to-back ``nc_transpose`` of the same shape on Tensor Engine
-
-  where,
-
-  - ``N`` is the number of elements per partition in ``data``.
-  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-    ``MIN_II`` is roughly 64 engine cycles.
-  - ``P`` is partition axis size of ``data``.
-  - ``F`` is the number of elements per partition in ``data``.
-
-
-  :param data: the input tile to be transposed
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param dtype: if specified and it's different from the data type of input tile ``data``, an additional
-                nki.isa.cast instruction will be inserted to cast the transposed data into the target ``dtype``
-                (see :ref:`nki-dtype` for more information)
-  :param engine: specify which engine to use for transpose: ``nki.isa.tensor_engine`` or ``nki.isa.vector_engine`` ;
-                 by default, the best engine will be selected for the given input tile shape
-  :return: a tile with transposed result of input ``data`` tile
+  :return: an output tile of the dropout result
 
   Example:
 
-  .. nki_example:: ../../test/test_nki_isa_nc_transpose.py
+  .. nki_example:: ../../test/test_nki_isa_dropout.py
    :language: python
-   :marker: NKI_EXAMPLE_1
 
   """
   ...
 
-## Search and Replace Operations
+---
+
+### dropout
+
+def dropout(x, rate, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Randomly zeroes some of the elements of the input tile given a probability rate.
+
+  :param x: a tile.
+  :param rate: a scalar value or a tile with 1 element, with the probability rate.
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return: a tile with randomly zeroed elements of ``x``.
+  """
+  ...
+
+---
 
 ### max8
 
@@ -4241,7 +4209,140 @@ def nc_match_replace8(*, data, vals, imm, dst_idx=None, mask=None, dtype=None, *
   """
   ...
 
-## Sequence and Special Operations
+---
+
+### nc_stream_shuffle
+
+def nc_stream_shuffle(src, dst, shuffle_mask, *, dtype=None, mask=None, **kwargs):
+  r"""
+  Apply cross-partition data movement within a quadrant of 32 partitions from source tile
+  ``src`` to destination tile ``dst`` using Vector Engine.
+
+  Both source and destination tiles can be in either SBUF or PSUM, and passed in by reference as arguments.
+  In-place shuffle is allowed, i.e., ``dst`` same as ``src``. ``shuffle_mask`` is a 32-element list. Each mask
+  element must be in data type int or affine expression. ``shuffle_mask[i]`` indicates which input partition the
+  output partition [i] copies from within each 32-partition quadrant. The special value ``shuffle_mask[i]=255``
+  means the output tensor in partition [i] will be unmodified. ``nc_stream_shuffle`` can be applied to multiple
+  of quadrants. In the case with more than one quadrant, the shuffle is applied to each quadrant independently,
+  and the same ``shuffle_mask`` is used for each quadrant. ``mask`` applies to ``dst``, meaning that locations
+  masked out by ``mask`` will be unmodified. For more information about the cross-partition data movement,
+  see :ref:`arch_guide_cross_partition_data_movement`.
+
+  This API has 3 constraints on ``src`` and ``dst``:
+
+  #. ``dst`` must have same data type as ``src``.
+  #. ``dst`` must have the same number of elements per partition as ``src``.
+  #. The access start partition of ``src`` (``src_start_partition``), does not have to match or be in the same quadrant
+     as that of ``dst`` (``dst_start_partition``). However, ``src_start_partition``/``dst_start_partition`` needs to follow
+     some special hardware rules with the number of active partitions ``num_active_partitions``.
+     ``num_active_partitions = ceil(max(src_num_partitions, dst_num_partitions)/32) * 32``, where ``src_num_partitions`` and
+     ``dst_num_partitions`` refer to the number of partitions the ``src`` and ``dst`` tensors access respectively.
+     ``src_start_partition``/``dst_start_partition`` is constrained based on the value of ``num_active_partitions``:
+
+    * If ``num_active_partitions`` is 96/128, ``src_start_partition``/``dst_start_partition`` must be 0.
+
+    * If ``num_active_partitions`` is 64, ``src_start_partition``/``dst_start_partition`` must be 0/64.
+
+    * If ``num_active_partitions`` is 32, ``src_start_partition``/``dst_start_partition`` must be 0/32/64/96.
+
+  **Estimated instruction cost:**
+
+  ``max(MIN_II, N)`` Vector Engine cycles, where ``N`` is the number of elements per
+  partition in ``src``, and ``MIN_II`` is the minimum instruction initiation interval
+  for small input tiles. ``MIN_II`` is roughly 64 engine cycles.
+
+  :param src: the source tile
+  :param dst: the destination tile
+  :param shuffle_mask: a 32-element list that specifies the shuffle source and destination partition
+  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+
+  **Example:**
+
+  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
+   :language: python
+   :marker: NKI_EXAMPLE_0
+
+  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
+   :language: python
+   :marker: NKI_EXAMPLE_1
+
+  .. nki_example:: ../../test/test_nki_isa_nc_stream_shuffle.py
+   :language: python
+   :marker: NKI_EXAMPLE_2
+
+  """
+  ...
+
+---
+
+### nc_transpose
+
+def nc_transpose(data, *, mask=None, dtype=None, engine=engine.unknown, **kwargs):
+  r"""
+  Perform a 2D transpose between the partition axis and the free axis of input ``data``, i.e., a PF-transpose,
+  using Tensor or Vector Engine. If the ``data`` tile has more than one free axes,
+  this API implicitly collapses all free axes into one axis and then performs a 2D PF-transpose.
+
+  In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but they support different input shapes.
+  Tensor Engine ``nc_transpose`` can handle an input tile of shape (128, 128) or smaller, while Vector
+  Engine can handle shape (32, 32) or smaller.
+  Therefore, when the input tile shape is (32, 32) or smaller,
+  we have an option to run it on either engine, which is controlled by the
+  ``engine`` field. If no ``engine`` is specified, Neuron Compiler will automatically select an engine
+  based on the input shape. Note, similar to other Tensor Engine instructions, the Tensor Engine
+  ``nc_transpose`` must read the input tile from SBUF and write the transposed result to PSUM. On the other hand,
+  Vector Engine ``nc_transpose`` can read/write from/to either SBUF or PSUM.
+
+  Note, PF-transpose on Tensor Engine is done by performing a matrix multiplication between ``data`` as the
+  stationary tensor and an identity matrix as the moving tensor.
+  See :ref:`architecture guide <arch_sec_tensor_engine_alternative_use>` for more information. On NeuronCore-v2,
+  such matmul-style transpose is not bit-accurate if the input ``data`` contains NaN/Inf. You may consider replacing
+  NaN/Inf with regular floats (float_max/float_min/zeros) in the input matrix before calling
+  ``nc_transpose(engine=nki.isa.constants.engine.tensor)``.
+
+
+  **Estimated instruction cost:**
+
+  .. list-table::
+    :widths: 40 60
+    :header-rows: 1
+
+    * - Cost `(Engine Cycles)`
+      - Condition
+    * - ``max(MIN_II, N)``
+      - ``engine`` set to ``nki.isa.constants.engine.vector``
+    * - ``max(P, min(64, F))``
+      - ``engine`` set to ``nki.isa.constants.engine.tensor`` and assuming many back-to-back ``nc_transpose`` of the same shape on Tensor Engine
+
+  where,
+
+  - ``N`` is the number of elements per partition in ``data``.
+  - ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
+    ``MIN_II`` is roughly 64 engine cycles.
+  - ``P`` is partition axis size of ``data``.
+  - ``F`` is the number of elements per partition in ``data``.
+
+
+  :param data: the input tile to be transposed
+  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param dtype: if specified and it's different from the data type of input tile ``data``, an additional
+                nki.isa.cast instruction will be inserted to cast the transposed data into the target ``dtype``
+                (see :ref:`nki-dtype` for more information)
+  :param engine: specify which engine to use for transpose: ``nki.isa.tensor_engine`` or ``nki.isa.vector_engine`` ;
+                 by default, the best engine will be selected for the given input tile shape
+  :return: a tile with transposed result of input ``data`` tile
+
+  Example:
+
+  .. nki_example:: ../../test/test_nki_isa_nc_transpose.py
+   :language: python
+   :marker: NKI_EXAMPLE_1
+
+  """
+  ...
+
+---
 
 ### sequence_bounds
 
@@ -4287,102 +4388,22 @@ def sequence_bounds(*, segment_ids, dtype=None):
 
 ---
 
-### dropout
+### rms_norm
 
-def dropout(data, prob, *, mask=None, dtype=None, **kwargs):
+def rms_norm(x, w, axis, n, epsilon=1e-06, *, dtype=None, compute_dtype=None, mask=None, **kwargs):
   r"""
-  Randomly replace some elements of the input tile ``data`` with zeros
-  based on input probabilities using Vector Engine.
-  The probability of replacing input elements with zeros (i.e., drop probability)
-  is specified using the ``prob`` field:
-  - If the probability is 1.0, all elements are replaced with zeros.
-  - If the probability is 0.0, all elements are kept with their original values.
+  Apply Root Mean Square Layer Normalization.
 
-  The ``prob`` field can be a scalar constant or a tile of shape ``(data.shape[0], 1)``,
-  where each partition contains one drop probability value.
-  The drop probability value in each partition is applicable to the input
-  ``data`` elements from the same partition only.
-
-  Data type of the input ``data`` tile can be any valid NKI data types
-  (see :ref:`nki-dtype` for more information).
-  However, data type of ``prob`` has restrictions based on the data type of ``data``:
-
-  - If data type of ``data`` is any of the integer types (e.g., int32, int16),
-    ``prob`` data type must be float32
-  - If data type of data is any of the float types (e.g., float32, bfloat16),
-    ``prob`` data can be any valid float type
-
-  The output data type of this instruction is specified by the ``dtype`` field. The output data type
-  must match the input data type of ``data`` if input data type is any of the integer types.
-  Otherwise, output data type can be any valid NKI data types. If output data type is not specified,
-  it is default to be the same as input data type.
-
-  **Estimated instruction cost:**
-
-  ``max(MIN_II, N)`` Vector Engine cycles, where ``N`` is the number of elements per partition in ``data``,
-  and ``MIN_II`` is the minimum instruction initiation interval for small input tiles.
-  ``MIN_II`` is roughly 64 engine cycles.
-
-  :param data: the input tile
-  :param prob: a scalar or a tile of shape ``(data.shape[0], 1)`` to indicate the
-               probability of replacing elements with zeros
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :param x: input tile
+  :param w: weight tile
+  :param axis: axis along which to compute the root mean square (rms) value
+  :param n: total number of values to calculate rms
+  :param epsilon: epsilon value used by rms calculation to avoid divide-by-zero
   :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  :return: an output tile of the dropout result
-
-  Example:
-
-  .. nki_example:: ../../test/test_nki_isa_dropout.py
-   :language: python
-
-  """
-  ...
-
----
-
-### dropout
-
-def dropout(x, rate, *, dtype=None, mask=None, **kwargs):
-  r"""
-  Randomly zeroes some of the elements of the input tile given a probability rate.
-
-  :param x: a tile.
-  :param rate: a scalar value or a tile with 1 element, with the probability rate.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
+  :param compute_dtype: (optional) dtype for the internal computation -
+                        *currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.*
   :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: a tile with randomly zeroed elements of ``x``.
-  """
-  ...
-
----
-
-### rand
-
-def rand(shape, dtype=np.float32, **kwargs):
-  r"""
-  Generate a tile of given shape and dtype, filled with random values that are
-  sampled from a uniform distribution between 0 and 1.
-
-  :param shape: the shape of the tile.
-  :param dtype: the data type of the tile (see :ref:`nki-dtype` for more information).
-  :return: a tile with random values.
-  """
-  ...
-
----
-
-### random_seed
-
-def random_seed(seed, *, mask=None, **kwargs):
-  r"""
-  Sets a seed, specified by user, to the random number generator on HW.
-  Using the same seed will generate the same sequence of random numbers when using
-  together with the random() API
-
-  :param seed: a 32-bit scalar value to use as the seed.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return: none
+  :return: `` x / RMS(x) * w ``
   """
   ...
 
@@ -4454,20 +4475,6 @@ def program_id(axis):
 
 ---
 
-### num_programs
-
-def num_programs(axes=None):
-  r"""
-  Number of SPMD programs along the given axes in the launch grid. If ``axes`` is not provided,
-  returns the total number of programs.
-
-  :param axes: The axes of the ND launch grid. If not provided, returns the total number of programs along the entire launch grid.
-  :return:     The number of SPMD(single process multiple data) programs along ``axes`` in the launch grid
-  """
-  ...
-
----
-
 ### program_ndim
 
 def program_ndim():
@@ -4480,26 +4487,19 @@ def program_ndim():
 
 ---
 
-### all_reduce
+### num_programs
 
-def all_reduce(x, op, program_axes, *, dtype=None, mask=None, parallel_reduce=True, asynchronous=False, **kwargs):
+def num_programs(axes=None):
   r"""
-  Apply reduce operation over multiple SPMD programs.
+  Number of SPMD programs along the given axes in the launch grid. If ``axes`` is not provided,
+  returns the total number of programs.
 
-  :param x: a tile.
-  :param op: numpy ALU operator to use to reduce over the input tile.
-  :param program_axes: a single axis or a tuple of axes along which the reduction operation is performed.
-  :param dtype: (optional) data type to cast the output type to (see :ref:`nki-dtype` for more information); if not specified, it will default to be the same as the data type of the input tile.
-  :param mask: (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :param parallel_reduce: optional boolean parameter whether to turn on parallel reduction. Enable parallel
-               reduction consumes additional memory.
-  :param asynchronous: Defaults to False. If `True`, caller should synchronize before
-                       reading final result, e.g. using `nki.sync_thread`.
-  :return: the reduced resulting tile
+  :param axes: The axes of the ND launch grid. If not provided, returns the total number of programs along the entire launch grid.
+  :return:     The number of SPMD(single process multiple data) programs along ``axes`` in the launch grid
   """
   ...
 
-## Loop Iterators and Control Flow
+## Control Flow and Loop Iterators
 
 ### affine_range
 
@@ -4648,568 +4648,248 @@ def static_range(*args):
   """
   ...
 
-## Memory Allocation
+## Debugging and Profiling
 
-### ncc.sbuf.alloc()
+### device_print
 
-``ncc.sbuf.alloc()``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-This SBUF allocation API enables user to control:
-
-- the number of physical tiles to allocate for a given NKI Tensor, and
-- the exact mapping between logical tile and physical tile in SBUF
-
-``ncc.sbuf.alloc()`` accepts a single input parameter, ``func``, which is a user-defined callable object
-that takes in:
-
-1. a tuple of integers ``idx`` representing a logical block index,
-2. an integer ``pdim_size`` for the number of partitions the logical tile has, and
-3. an integer ``fdim_size`` for the number of bytes the logical tile has per partition.
-
-The ``func`` returns a tuple of two integers, ``(start_partition, byte_addr)``, representing the memory location
-of the mapped physical tile for the given logical block. ``start_partition`` indicates the starting partition of
-physical tile and must follow these ISA rules:
-
-- If ``64 < pdim_size <= 128``, ``start_partition`` must be 0
-- If ``32 < pdim_size <= 64``,  ``start_partition`` must be 0 or 64
-- If ``0  < pdim_size <= 32``,  ``start_partition`` must be one of 0/32/64/96
-
-The ``byte_addr`` indicates the byte offset into each partition the physical tile allocation starts from.
-For example, on NeuronCore-v2, a valid ``byte_addr`` can be any integer values from 0 (inclusive) to
-``192KiB-16KiB=(192-16)*1024`` (exclusive). 192KiB is the physical size of a SBUF partition
-and 16KiB is allocated for compiler internal usage.
-Refer to :doc:`NeuronDevice Architecture Guide <nki_arch_guides>` for the physical SBUF partition size
-on each NeuronCore version.
-In addition, ``byte_addr`` must be aligned to ``nki.language.constants.sbuf_min_align``.
-
-At compile time, the compiler will statically evaluate ``func`` over indices of all the
-logical tiles defined in the NKI tensor to calculate physical addresses for each tile. As an
-example, consider the following simple allocation that allocates four physical tiles back to back along the free
-dimension of SBUF, with every logical tile mapped to a different physical tile sequentially.
-
-.. code-block:: python
-
-  def simple_1d_alloc_func(idx, pdim_size, fdim_size):
-    idx, = idx # unpack the tuple
-    return (0, idx * fdim_size)
-
-  t = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                 buffer=ncc.sbuf.alloc(simple_1d_alloc_func))
-
-In this example, the compiler will query `simple_1d_alloc_func` with ``idx`` ranging from ``(0, )`` to ``(3, )``,
-``pdim_size=128``, and ``fdim_size=512*sizeof(nl.bfloat16)=1024``. We can visualize the final allocation in
-:numref:`Fig. %s <nki-fig-alloc-simple>`.
-
-.. _nki-fig-alloc-simple:
-.. figure:: img/nki_allocation/nki-allocation-func.png
-   :align: center
-   :width: 60%
-
-   Visualization of ``simple_1d_alloc_func`` in SBUF.
-
-This ``ncc.sbuf.alloc`` API provides great flexibility through the customizable function to perform
-logical to physical tile mapping. With Python closures, the function can carry arbitrary metadata,
-which enables programmers to define their own memory allocator. As another example, here's a simple
-allocator that queries a global variable ``next_addr`` to keep track of the next available byte address
-in the free dimension.
-
-.. code-block:: python
-
-  next_addr = 0
-  def simple_1d_alloc_factory(total_fdim_size):
-    base_addr = next_addr
-    next_addr += total_fdim_size
-
-    def simple_1d_alloc_func(idx, pdim_size, fdim_size):
-      # unpack the tuple
-      idx, = idx
-
-      # hard-code to partition 0, since each tile takes up 128 partitions
-      start_partition = 0
-
-      return (start_partition, base_addr + idx * fdim_size)
-
-    return simple_1d_alloc_func
-
-  # Using simple_1d_alloc_factory, next_addr is automatically incremented.
-  # Physical tiles of t0 and t1 start at 0 and 4096, respectively
-  t0 = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                  buffer=ncc.sbuf.alloc(simple_1d_alloc_factory(512*2*4)))
-  t1 = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                  buffer=ncc.sbuf.alloc(simple_1d_alloc_factory(512*2*4)))
-
-
----
-
-### ncc.sbuf.mod_alloc()
-
-``ncc.sbuf.mod_alloc()``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Alternative to the ``ncc.sbuf.alloc()`` API which requires programmers to define an allocation algorithm
-from scratch, NKI also provides the ``ncc.sbuf.mod_alloc()`` API which invokes a pre-defined
-modulo allocation scheme in Neuron Compiler.
-
-Modulo allocation works as follows. Suppose that we allocate
-**two** physical tiles for a tensor with a logical shape of ``(8, par_dim(128), 512)``. The eight logical tiles
-are assigned to the two physical tiles by taking a modulo of two on the logical tile index (that is, block index).
-Therefore, logical tiles with index ``(0, ), (2, ), (4, ), (6, )`` share
-the same physical tile, while logical tiles ``(1, ), (3, ), (5, ), (7, )`` share
-the other physical tile.
-
-The ``ncc.sbuf.mod_alloc`` API takes four input parameters:
-
-1. ``base_addr`` indicates the starting byte offset within each SBUF partition of the physical tiles.
-2. ``base_partition`` indicates the starting SBUF partition of the physical tiles.
-3. ``num_par_tiles`` indicates the number of physical tiles to be allocated along the partition dimension of SBUF.
-   This is only applicable for tiles that use fewer than 64 partitions per ISA constraints.
-4. ``num_free_tiles`` indicates the number of physical tiles to be allocated along the free dimension of SBUF.
-
-Given the above input parameters and the modulo allocation scheme, Neuron Compiler is then able to calculate
-the physical tile memory location, ``(start_partition, byte_addr)`` for each logical tile in the tensor.
-Note, this is the same information that the callable allocation function passed into ``ncc.sbuf.mod_alloc()``
-would return. See :doc:`API reference manual for ncc.sbuf.mod_alloc <api/generated/nki.compiler.sbuf.mod_alloc>`
-for the exact formula to calculate ``(start_partition, base_addr)``.
-
-Next, we discuss a common use case of ``ncc.sbuf.mod_alloc``, which specifies only
-the ``base_addr`` and ``num_free_tiles`` fields while leaving the remaining parameters to default
-(``base_partition=0`` and ``num_par_tiles=(1,)``) .
-
-.. code-block:: python
-
-  nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                          buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-
-This produces the following allocation:
-
-.. list-table:: Modulo Allocation Example
-  :header-rows: 1
-
-  * - Logical Tile Index
-    - Physical Tile ``start_partition``
-    - Physical Tile ``byte_addr``
-  * - (0, )
-    - 0
-    - 0 + (0 % 2) * 512 * sizeof(nl.bfloat16) = 0
-
-  * - (1, )
-    - 0
-    - 0 + (1 % 2) * 512 * sizeof(nl.bfloat16) = 1024
-
-  * - (2, )
-    - 0
-    - 0 + (2 % 2) * 512 * sizeof(nl.bfloat16) = 0
-
-  * - (3, )
-    - 0
-    - 0 + (3 % 2) * 512 * sizeof(nl.bfloat16) = 1024
-
-The above example is an easy way to implement double buffering without having to define a callable function
-manually like how we did for ``ncc.sbuf.alloc()``. We can also implement multi-buffering
-using ``ncc.sbuf.mod_alloc()`` by changing the value of ``num_free_tiles`` (or ``num_par_tiles``
-when each tile occupies less than 64 partitions).
-
-
----
-
-### alloc
-
-def alloc(func):
+def device_print(prefix, x, *, mask=None, **kwargs):
   r"""
-    Allocate PSUM memory space for each logical block in a tensor using a customized allocation method.
+  Print a message with a String ``prefix`` followed by the value of a tile ``x``.
+  Printing is currently only supported in kernel simulation mode
+  (see :doc:`nki.simulate_kernel <nki.simulate_kernel>` for a code example).
 
-    This is one of the NKI direction allocation APIs.
-    We recommend reading :doc:`NKI Direct Allocation Developer Guide <../../nki_direct_allocation_guide>` before
-    using these APIs.
-
-    In NKI, a PSUM tensor (declared using :ref:`NKI tensor creation APIs <nl_creation>`)
-    can have three kinds of dimensions, in order: logical block(B), partition(P),
-    and free(F). The partition and free dimensions directly map to the PSUM dimensions.
-    Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints.
-    The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number
-    of physical tiles being allocated.
-
-    ``ncc.psum.alloc`` should be assigned to the ``buffer`` field of a NKI tensor declaration API. For example,
-
-    .. code-block::
-
-      nki_tensor = nl.ndarray((2, 4, nl.par_dim(128), 512), dtype=nl.float32, buffer=ncc.psum.alloc(...))
-
-    ``ncc.psum.alloc`` allows programmers to specify the physical location of each logical tile in
-    the tensor. The API accepts a single input ``func`` parameter, which is a callable
-    object that takes in:
-
-    1. a tuple of integers ``idx`` representing a logical block index,
-    2. an integer ``pdim_size`` for the number of partitions the logical tile has, and
-    3. an integer ``fdim_size`` for the number of bytes the logical tile has per partition.
-
-    The number of integers in ``idx`` must match the number of B dimensions the PSUM tensor has. For example, for the
-    above ``nki_tensor``, we expect the ``idx`` tuple to have two integers for a 2D block index.
-
-    ``pdim_size`` should match the partition dimension size of the NKI tensor exactly. ``fdim_size`` should be the
-    total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes.
-    For the above ``nki_tensor``, ``pdim_size`` should be 128, and ``fdim_size`` should be
-    ``512*sizeof(nl.float32) = 2048`` bytes.
-
-    .. note::
-
-      In current release, ``fdim_size`` cannot exceed 2KiB, which is the size
-      of a single PSUM bank per partition. Therefore, a physical PSUM tile cannot span multiple PSUM banks.
-      Check out :ref:`trainium_inferentia2_arch` for more information on PSUM banks.
-
-    The ``func`` returns a tuple of three integers ``(bank_id, start_partition, byte_addr)`` indicating
-    the physical tile location for the input logical block index.
-
-    ``bank_id`` indicates the PSUM bank ID of the physical tile.
-    ``start_partition`` indicates the lowest partition the physical tile allocation starts from.
-    The ``byte_addr`` indicates the byte offset into each PSUM bank per partition the physical tile starts from.
-
-    .. note::
-
-      In current release, ``start_partition`` and ``byte_addr`` must both be 0.
-
-    .. note::
-
-      In current release, programmers cannot mix NKI tensor declarations using automatic allocation
-      (``ncc.psum.auto_alloc()`` or the SBUF variant) and
-      direction allocation APIs (``ncc.psum.alloc()``, ``ncc.psum.mod_alloc()`` or the SBUF variants) in the same kernel.
-
-
-    :param func: a callable object to specify how to place the logical block in PSUM memory.
-    """
+  :param prefix: prefix of the print message
+  :param x:      data to print out
+  :param mask:   (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
+  :return:       None
+  """
   ...
 
 ---
 
-### alloc
+### simulate_kernel
 
-def alloc(func):
+def simulate_kernel(kernel, *args, **kwargs):
   r"""
-    Allocate SBUF memory space for each logical block in a tensor using a customized allocation method.
+  Simulate a nki kernel on CPU using a built-in simulator in Neuron Compiler.
+  This simulation mode is especially useful for inspecting intermediate tensor
+  values using :doc:`nki.language.device_print <nki.language.device_print>`
+  (see code example below).
 
-    This is one of the NKI direction allocation APIs.
-    We recommend reading :doc:`NKI Direct Allocation Developer Guide <../../nki_direct_allocation_guide>` before
-    using these APIs.
+  .. note::
 
-    In NKI, a SBUF tensor (declared using :ref:`NKI tensor creation APIs <nl_creation>`)
-    can have three kinds of dimensions, in order: logical block(B), partition(P),
-    and free(F). The partition and free dimensions directly map to the SBUF dimensions.
-    Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints.
-    The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number
-    of physical tiles being allocated.
+    All input and output tensors to the kernel must be
+    `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_ when
+    using this ``simulate_kernel`` API.
 
-    ``ncc.sbuf.alloc`` should be assigned to the ``buffer`` field of a NKI tensor declaration API. For example,
+  To run the kernel on a NeuronCore instead, please refer to
+  :doc:`Getting Started with NKI <../../getting_started>`.
 
-    .. code-block::
+  :param kernel: The kernel to be simulated
+  :param args:   The args of the kernel
+  :param kwargs: The kwargs of the kernel
+  :return:
 
-      nki_tensor = nl.ndarray((4, 8, nl.par_dim(128), 4, 32), dtype=nl.bfloat16, buffer=ncc.sbuf.alloc(...))
+  Examples:
 
-    ``ncc.sbuf.alloc`` allows programmers to specify the physical location of each logical tile in
-    the tensor. The API accepts a single input ``func`` parameter, which is a callable
-    object that takes in:
-
-    1. a tuple of integers ``idx`` representing a logical block index,
-    2. an integer ``pdim_size`` for the number of partitions the logical tile has, and
-    3. an integer ``fdim_size`` for the number of bytes the logical tile has per partition.
-
-    The number of integers in ``idx`` must match the number of B dimensions the SBUF tensor has. For example, for the
-    above ``nki_tensor``, we expect the ``idx`` tuple to have two integers for a 2D block index.
-
-    ``pdim_size`` should match the partition dimension size of the NKI tensor exactly. ``fdim_size`` should be the
-    total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes.
-    For the above ``sbuf_tensor``, ``pdim_size`` should be 128, and ``fdim_size`` should be
-    ``4*32*sizeof(nl.bfloat16) = 256`` bytes.
-
-    The ``func`` callable must return a tuple of two integers ``(start_partition, byte_addr)`` indicating
-    the physical tile location for the input logical block index. ``start_partition`` indicates
-    the lowest partition the physical tile allocation
-    starts from and must follow the these ISA rules:
-
-    - If ``64 < pdim_size <= 128``, ``start_partition`` must be 0
-    - If ``32 < pdim_size <= 64``,  ``start_partition`` must be 0 or 64
-    - If ``0  < pdim_size <= 32``,  ``start_partition`` must be one of 0/32/64/96
-
-    The ``byte_addr`` indicates the byte offset into each partition the physical tile starts from.
-    On NeuronCore-v2, a valid ``byte_addr`` can be any integer values from 0 (inclusive) to
-    192KiB-16KiB=(192-16)*1024 (exclusive). 192KiB is the physical size of a SBUF partition
-    (defined in :doc:`architecture guide <../../arch/trainium_inferentia2_arch>`) and 16KiB is allocated for compiler internal usage.
-    In addition, the ``base_addr`` must be aligned to ``nki.language.constants.sbuf_min_align``.
-
-
-    .. note::
-
-      In current release, programmers cannot mix NKI tensor declarations using automatic allocation
-      (``ncc.sbuf.auto_alloc()`` or the PSUM variant) and
-      direction allocation APIs (``ncc.sbuf.alloc()``, ``ncc.sbuf.mod_alloc()`` or the PSUM variants) in the same kernel.
-
-
-    :param func: a callable object to specify how to place the logical block in SBUF memory.
-    """
+  .. nki_example:: ../../test/test_nki_simulate_kernel.py
+   :language: python
+  """
   ...
 
 ---
 
-### mod_alloc
+### profile
 
-def mod_alloc(*, base_bank, base_addr=0, base_partition=0, num_bank_tiles=(), num_par_tiles=(), num_free_tiles=()):
+def profile(func=None, **kwargs):
   r"""
-    Allocate PSUM memory space for each logical block in a tensor through modulo allocation.
+  Profile a NKI kernel on a NeuronDevice by using ``nki.profile`` as a decorator. 
 
-    This is one of the NKI direction allocation APIs.
-    We recommend reading :doc:`NKI Direct Allocation Developer Guide <../../nki_direct_allocation_guide>` before
-    using these APIs.
+  .. note::
 
-    This API is equivalent to calling :doc:`nki.compiler.psum.alloc() <nki.compiler.psum.alloc>`
-    with a callable ``psum_modulo_alloc_func`` as defined below.
+    Similar to ``nki.baremetal``, The decorated function using ``nki.benchmark`` expects
+    `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_ as input/output
+    tensors instead of ML framework tensor objects.
 
-    .. nki_example:: ../../../nki/test/test_psum_modulo_alloc.py
-      :language: python
-      :linenos:
-      :marker: NKI_EXAMPLE_0
-
-    Here's an example usage of this API:
-
-    .. code-block:: python
-
-      psum_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.float32,
-                               buffer=ncc.psum.mod_alloc(base_bank=0,
-                                                          base_addr=0,
-                                                          num_bank_tiles=(2,)))
-
-      for i_block in nl.affine_range(4):
-        psum[i_block, :, :] = nisa.nc_matmul(...)
-        ...                 = nl.exp(psum[i_block, :, :])
-
-    This produces the following allocation:
-
-    .. list-table:: Modulo Allocation Example
-      :header-rows: 1
-
-      * - Logical Tile Index
-        - Physical Tile ``bank_id``
-        - Physical Tile ``start_partition``
-        - Physical Tile ``byte_addr``
-      * - (0, )
-        - 0
-        - 0
-        - 0
-
-      * - (1, )
-        - 1
-        - 0
-        - 0
-
-      * - (2, )
-        - 0
-        - 0
-        - 0
-
-      * - (3, )
-        - 1
-        - 0
-        - 0
-
-    With above scheme, we are able to implement double buffering in ``nki_tensor``, such that ``nisa.nc_matmul``
-    in one iteration can write to one physical tile while ``nl.exp`` of the previous iteration can
-    read from the other physical tile simultaneously.
-
-    .. note::
-
-      In current release, programmers cannot mix NKI tensor declarations using automatic allocation
-      (``ncc.psum.auto_alloc()`` or the SBUF variant) and
-      direction allocation APIs (``ncc.psum.alloc()``, ``ncc.psum.mod_alloc()`` or the SBUF variants).
-
-
-    :param base_addr: the base address in bytes along the free(F) dimension of the PSUM bank. Must be 0 in the current version.
-    :param base_bank: the base bank ID that the physical tiles start from.
-    :param num_bank_tiles: the number of PSUM banks allocated for the tensor.
-    :param base_partition: the partition ID the physical tiles start from. Must be 0 in the current version.
-    :param num_par_tiles: the number of physical tiles along the partition dimension allocated for the tensor.
-      The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-      Currently must be an empty tuple or (1, 1, ...).
-    :param num_free_tiles: the number of physical tiles on the free dimension per PSUM bank allocated for the tensor.
-      The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-      Currently must be an empty tuple or (1, 1, ...).
-    """
-  ...
-
----
-
-### mod_alloc
-
-def mod_alloc(*, base_addr, base_partition=0, num_par_tiles=(), num_free_tiles=()):
-  r"""
-    Allocate SBUF memory space for each logical tile in a tensor through modulo allocation.
-
-    This is one of the NKI direction allocation APIs.
-    We recommend reading :doc:`NKI Direct Allocation Developer Guide <../../nki_direct_allocation_guide>` before
-    using these APIs.
-
-    This API is equivalent to calling :doc:`nisa.compiler.alloc() <nki.compiler.sbuf.alloc>`
-    with a callable ``psum_modulo_alloc_func`` as defined below.
-
-    .. nki_example:: ../../../nki/test/test_sbuf_modulo_alloc.py
-      :language: python
-      :linenos:
-      :marker: NKI_EXAMPLE_0
-
-    Here's an example usage of this API:
-
-    .. code-block:: python
-
-      nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                              buffer=nki.compiler.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-
-      for i_block in nl.affine_range(4):
-        nki_tensor[i_block, :, :] = nl.load(...)
-        ...                       = nl.exp(nki_tensor[i_block, :, :])
-
-    This produces the following allocation:
-
-    .. list-table:: Modulo Allocation Example
-      :header-rows: 1
-
-      * - Logical Tile Index
-        - Physical Tile ``start_partition``
-        - Physical Tile ``byte_addr``
-      * - (0, )
-        - 0
-        - 0 + (0 % 2) * 512 * sizeof(nl.bfloat16) = 0
-
-      * - (1, )
-        - 0
-        - 0 + (1 % 2) * 512 * sizeof(nl.bfloat16) = 1024
-
-      * - (2, )
-        - 0
-        - 0 + (2 % 2) * 512 * sizeof(nl.bfloat16) = 0
-
-      * - (3, )
-        - 0
-        - 0 + (3 % 2) * 512 * sizeof(nl.bfloat16) = 1024
-
-    With above scheme, we are able to implement double buffering in ``nki_tensor``, such that ``nl.load`` in one iteration
-    can write to one physical tile while ``nl.exp`` of the previous iteration can read from the other physical tile
-    simultaneously.
-
-
-    .. note::
-
-      In current release, programmers cannot mix NKI tensor declarations using automatic allocation
-      (``ncc.sbuf.auto_alloc()`` or the PSUM variant) and
-      direction allocation APIs (``ncc.sbuf.alloc()``, ``ncc.sbuf.mod_alloc()`` or the PSUM variants).
-
-    :param base_addr: the base address in the free(F) dimension of the SBUF in bytes.
-    :param base_partition: the partition where the physical tile starts from. Must be 0 in the current version.
-    :param num_par_tiles: the number of physical tiles on the partition dimension of SBUF allocated for the tensor.
-      The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-    :param num_free_tiles: the number of physical tiles on the free dimension of SBUF allocated for the tensor.
-      The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-    """
-  ...
-
----
-
-### auto_alloc
-
-def auto_alloc():
-  r"""
-    Returns a maker to indicate the tensor should be automatically allocated by compiler.
-    All PSUM tensors in a kernel must either all be marked as ``auto_alloc()``, or all be allocated
-    with ``alloc`` or ``mod_alloc``.
-
-    Initialize a tensor with ``buffer=nl.psum`` is equivalent to ``buffer=ncc.psum.auto_alloc()``.
-    """
-  ...
-
----
-
-### auto_alloc
-
-def auto_alloc():
-  r"""
-    Returns a maker to indicate the tensor should be automatically allocated by compiler.
-    All SBUF tensors in a kernel must either all be marked as ``auto_alloc()``, or all be allocated
-    with ``alloc`` or ``mod_alloc``.
-
-    Initialize a tensor with ``buffer=nl.sbuf`` is equivalent to ``buffer=ncc.sbuf.auto_alloc()``.
-    """
-  ...
-
----
-
-### allocation_scope
-
-def allocation_scope():
-  r"""AllocationScope class for managing tensor allocation scopes."""
-  ...
-
----
-
-### enable_stack_allocator
-
-def enable_stack_allocator(func=None, log_level=50):
-  r"""
-  Use stack allocator to allocate the psum and sbuf tensors in the kernel.
-
-  Must use together with skip_middle_end_transformations.
+  :param working_directory: A path to working directory where profile artifacts are saved,
+                            This must be specified and must also be an absolute path.
+  :param save_neff_name: Name of the saved neff file if specified
+                         (file.neff by default).
+  :param save_trace_name: Name of the saved trace (profile) file if specified
+                          (profile.ntff by default)
+  :param additional_compile_opt: Additional Neuron compiler flags to pass in
+                                 when compiling the kernel.
+  :param overwrite: Overwrite existing profile artifacts if set to True.
+                    Default is False.
+  :param profile_nth: Profiles the `profile_nth` execution.
+                      Default is 1.
+  :return: None
 
   .. code-block:: python
+    :caption: An Example
 
     from neuronxcc import nki
+    import neuronxcc.nki.language as nl
 
-    @nki.compiler.enable_stack_allocator
-    @nki.compiler.skip_middle_end_transformations
-    @nki.jit
-    def kernel(...):
-      ...
+    @nki.profile(working_directory="/home/ubuntu/profiles", save_neff_name='file.neff', save_trace_name='profile.ntff')
+    def nki_tensor_tensor_add(a_tensor, b_tensor):
+      c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
+
+      a = nl.load(a_tensor)
+      b = nl.load(b_tensor)
+
+      c = a + b
+
+      nl.store(c_tensor, c)
+
+      return c_tensor
+
+  ``nki.profile`` will save file.neff, profile.ntff, along with json files containing a profile summary
+  inside of the working_directory.
+
+  See `Profiling NKI kernels with Neuron Profile <https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/neuron_profile_for_nki.html#neuron-profile-for-nki>`_ 
+  for more information on how to visualize the execution trace for profiling purposes.
+  
+  In addition, more information about `neuron-profile` can be found in its 
+  `documentation <https://awsdocs-neuron.readthedocs-hosted.com/en/latest/tools/neuron-sys-tools/neuron-profile-user-guide.html>`_.
+
+  .. note::
+	  
+	     ``nki.profile`` does not use the actual inputs passed into the profiled function when running the 
+	     neff file. For instance, in the above example, the output c tensor is undefined and should not be used 
+	     for numerical accuracy checks. The input tensors are used mainly to specify the shape of inputs.
 
   """
   ...
 
 ---
 
-### force_auto_alloc
+### benchmark
 
-def force_auto_alloc(func=None):
-  r""" Force automatic allocation to be turned on in the kernel.
+def benchmark(kernel=None, **kwargs):
+  r"""
+  Benchmark a NKI kernel on a NeuronDevice by using ``nki.benchmark`` as a decorator. You must run this API on a
+  Trn/Inf instance with NeuronDevices (v2 or beyond) attached and also ``aws-neuronx-tools`` installed on the host using
+  the following steps:
 
-  This will ignore any direct allocation inside the kernel
-  """
-  ...
+  .. code-block:: bash
 
-## Compiler Directives and Optimization
+    # on Ubuntu
+    sudo apt-get install aws-neuronx-tools=2.* -y
 
-### multi_buffer
+    # on Amazon Linux
+    sudo dnf install aws-neuronx-tools-2.* -y
 
-def multi_buffer(factor=2):
-  r"""Create a MultiBufferDirective to enable multi-buffered allocation.
+  You may specify a path to save your NEFF file through input
+  parameter ``save_neff_name`` and a path to save your NTFF file through ``save_trace_name``.
+  See :doc:`Profiling NKI kernels with Neuron Profile <../../neuron_profile_for_nki>` for more information on how to
+  visualize the execution trace for profiling purposes.
 
-  Args:
-      factor: The multi-buffer factor determining how many buffers to use.
+  .. note::
+
+    Similar to ``nki.baremetal``, The decorated function using ``nki.benchmark`` expects
+    `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_ as input/output
+    tensors instead of ML framework tensor objects.
+  
+  In additional to generating NEFF/NTFF files, this decorator also invokes ``neuron-bench`` to collect
+  execution latency statistics of the NEFF file and prints the statistics to the console.
+
+  ``neuron-bench`` is a tool that launches the NEFF file on a NeuronDevice in a loop to collect
+  end-to-end latency statistics. You may specify the number of warm-up iterations to skip benchmarking in input
+  parameter ``warmup``, and the number of benchmarking iterations in ``iters``. Currently, ``nki.benchmark`` only
+  supports benchmarking on a single NeuronCore, since NKI not yet supports collective compute. Note, ``neuron-bench``
+  measures not only the device latency but also the time taken to transfer data between host and device. However, the tool
+  does not rely on any ML framework to launch the NEFF and therefore reports NEFF latency without any framework overhead.
+
+  :param warmup: The number of iterations for warmup execution (10 by default).
+  :param iters: The number of iterations for benchmarking (100 by default).
+  :param save_neff_name: Save the compiled neff file if specify a name
+                         (unspecified by default).
+  :param save_trace_name: Save the trace (profile) file if specified a name
+                          (unspecified by default); at the moment, it requires
+                          that the `save_neff_name` is unspecified or specified
+                          as 'file.neff'.
+  :param additional_compile_opt: Additional Neuron compiler flags to pass in
+                                 when compiling the kernel.
+  :return: A function object that wraps the decorating function. A property ``benchmark_result.nc_latency`` is
+           available after invocation.
+           ``get_latency_percentile(int)`` of the property returns the specified percentile latency in microsecond(us).
+           Available percentiles: [0, 1, 10, 25, 50, 90, 99, 100]
+
+  .. code-block:: python
+    :caption: An Example
+
+    from neuronxcc.nki import benchmark
+    import neuronxcc.nki.language as nl
+    import numpy as np
+
+    @benchmark(warmup=10, iters = 100, save_neff_name='file.neff', save_trace_name='profile.ntff')
+    def nki_tensor_tensor_add(a_tensor, b_tensor):
+      c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
+
+      a = nl.load(a_tensor)
+      b = nl.load(b_tensor)
+
+      c = a + b
+
+      nl.store(c_tensor, c)
+
+      return c_tensor
+
+    a = np.zeros([128, 1024], dtype=np.float32)
+    b = np.random.random_sample([128, 1024]).astype(np.float32)
+    c = nki_tensor_tensor_add(a, b)
+
+    metrics = nki_tensor_tensor_add.benchmark_result.nc_latency
+    print("latency.p50 = " + str(metrics.get_latency_percentile(50)))
+    print("latency.p99 = " + str(metrics.get_latency_percentile(99)))
+
+  .. note::
+
+    ``nki.benchmark`` does not use the actual inputs passed into the benchmarked function when running the 
+    neff file. For instance, in the above example, the output c tensor is undefined and should not be used 
+    for numerical accuracy checks.
   """
   ...
 
 ---
 
-### no_reorder
+### benchmark
 
-def no_reorder():
-  r"""Create an OperationOrderGuard to prevent operation reordering."""
-  ...
+.. py:function:: benchmark(load_fn: Callable[[str, int], Any], model_filename: str, inputs: Any, batch_sizes: Union[int, List[int]] = None, duration: float = BENCHMARK_SECS, n_models: Union[int, List[int]] = None, pipeline_sizes: Union[int, List[int]] = None, cast_modes: Union[str, List[str]] = None, workers_per_model: Union[int, None] = None, env_setup_fn: Callable[[int, Dict], None] = None, setup_fn: Callable[[int, Dict, Any], None] = None, preprocess_fn: Callable[[Any], Any] = None, postprocess_fn: Callable[[Any], Any] = None, dataset_loader_fn: Callable[[Any, int], Any] = None, verbosity: int = 1, multiprocess: bool = True, multiinterpreter: bool = False, return_timers: bool = False, device_type: str = "neuron") -> List[Dict]:
 
----
+    Benchmarks the model index or individiual model using the provided inputs.
+    If a model index is provided, additional fields such as ``pipeline_sizes`` and
+    ``performance_levels`` can be used to filter the models to benchmark. The default
+    behavior is to benchmark all configurations in the model index.
 
-### skip_middle_end_transformations
+    :param load_fn: A function that accepts a model filename and device id, and returns a loaded model. This is automatically passed through the subpackage calls (e.g. ``neuronperf.torch.benchmark``).
+    :param str model_filename: A path to a model index from compile or path to an individual model. For CPU benchmarking, a class should be passed that can be instantiated with a default constructor (e.g. ``MyModelClass``).
+    :param list inputs: A list of example inputs. If the list contains tuples, they will be destructured on inference to support multiple arguments.
+    :param batch_sizes: A list of ints indicating batch sizes that correspond to the inputs. Assumes 1 if not provided.
+    :param float duration: The number of seconds to benchmark each model.
+    :param n_models: The number of models to run in parallel. Default behavior runs 1 model and the max number of models possible, determined by a best effort from ``device_type``, instance size, or other environment state.
+    :param pipeline_sizes: A list of pipeline sizes to use. See :ref:`neuroncore-pipeline`.
+    :param performance_levels: A list of performance levels to try. Options are: 0 (max accuracy), 1, 2, 3 (max performance, default). See :ref:`neuron-cc-training-mixed-precision`.
+    :param workers_per_model: The number of workers to use per model loaded. If ``None``, this is automatically selected.
+    :param env_setup_fn: A custom environment setup function to run in each subprocess before model loading. It will receive the benchmarker id and config.
+    :param setup_fn: A function that receives the benchmarker id, config, and model to perform last minute configuration before inference.
+    :param preprocess_fn: A custom preprocessing function to perform on each input before inference.
+    :param postprocess_fn: A custom postprocessing function to perform on each input after inference.
+    :param bool multiprocess: When True, model loading is dispatched to forked subprocesses. Should be left alone unless debugging.
+    :param bool multiinterpreter: When True, benchmarking is performed in a new python interpreter per model. All parameters must be serializable. Overrides multiprocess.
+    :param bool return_timers: When True, the return of this function is a list of tuples ``(config, results)`` with detailed information. This can be converted to reports with ``get_reports(results)``.
+    :param float stats_interval: Collection interval (in seconds) for metrics during benchmarking, such as CPU and memory usage.
+    :param str device_type: This will be set automatically to one of the ``SUPPORTED_DEVICE_TYPES``.
+    :param float cost_per_hour: The price of this device / hour. Used to estimate cost / 1 million infs in reports.
+    :param str model_name: A friendly name for the model to use in reports.
+    :param str model_class_name: Internal use.
+    :param str model_class_file: Internal use.
+    :param int verbosity: 0 = error, 1 = info, 2 = debug
+    :return: A list of benchmarking results.
+    :rtype: list[dict]
 
-def skip_middle_end_transformations(func=None):
-  r""" Skip all middle end transformations on the kernel
-
-  """
-  ...
-
-## Kernel Compilation and Execution
+## Kernel Decorators and Compilation
 
 ### baremetal
 
@@ -5317,51 +4997,74 @@ def jit(func=None, mode="auto", **kwargs):
   """
   ...
 
+## Compiler Directives and Allocation
+
+### allocation_scope
+
+def allocation_scope():
+  r"""AllocationScope class for managing tensor allocation scopes."""
+  ...
+
 ---
 
-### simulate_kernel
+### enable_stack_allocator
 
-def simulate_kernel(kernel, *args, **kwargs):
+def enable_stack_allocator(func=None, log_level=50):
   r"""
-  Simulate a nki kernel on CPU using a built-in simulator in Neuron Compiler.
-  This simulation mode is especially useful for inspecting intermediate tensor
-  values using :doc:`nki.language.device_print <nki.language.device_print>`
-  (see code example below).
+  Use stack allocator to allocate the psum and sbuf tensors in the kernel.
 
-  .. note::
+  Must use together with skip_middle_end_transformations.
 
-    All input and output tensors to the kernel must be
-    `numpy.ndarray <https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html>`_ when
-    using this ``simulate_kernel`` API.
+  .. code-block:: python
 
-  To run the kernel on a NeuronCore instead, please refer to
-  :doc:`Getting Started with NKI <../../getting_started>`.
+    from neuronxcc import nki
 
-  :param kernel: The kernel to be simulated
-  :param args:   The args of the kernel
-  :param kwargs: The kwargs of the kernel
-  :return:
+    @nki.compiler.enable_stack_allocator
+    @nki.compiler.skip_middle_end_transformations
+    @nki.jit
+    def kernel(...):
+      ...
 
-  Examples:
-
-  .. nki_example:: ../../test/test_nki_simulate_kernel.py
-   :language: python
   """
   ...
 
-## Debugging
+---
 
-### device_print
+### force_auto_alloc
 
-def device_print(prefix, x, *, mask=None, **kwargs):
-  r"""
-  Print a message with a String ``prefix`` followed by the value of a tile ``x``.
-  Printing is currently only supported in kernel simulation mode
-  (see :doc:`nki.simulate_kernel <nki.simulate_kernel>` for a code example).
+def force_auto_alloc(func=None):
+  r""" Force automatic allocation to be turned on in the kernel.
 
-  :param prefix: prefix of the print message
-  :param x:      data to print out
-  :param mask:   (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see :ref:`nki-mask` for details)
-  :return:       None
+  This will ignore any direct allocation inside the kernel
+  """
+  ...
+
+---
+
+### multi_buffer
+
+def multi_buffer(factor=2):
+  r"""Create a MultiBufferDirective to enable multi-buffered allocation.
+
+  Args:
+      factor: The multi-buffer factor determining how many buffers to use.
+  """
+  ...
+
+---
+
+### no_reorder
+
+def no_reorder():
+  r"""Create an OperationOrderGuard to prevent operation reordering."""
+  ...
+
+---
+
+### skip_middle_end_transformations
+
+def skip_middle_end_transformations(func=None):
+  r""" Skip all middle end transformations on the kernel
+
   """
   ...

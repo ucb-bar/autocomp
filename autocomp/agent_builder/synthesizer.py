@@ -38,7 +38,7 @@ class ISAEntry:
     markdown: str
 
 
-_ROUTE_PREVIEW_CHARS = 2000
+_ROUTE_PREVIEW_CHARS = 6000
 
 _BUCKET_NAMES = ["isa", "architecture", "optimization", "rules", "examples"]
 
@@ -72,24 +72,64 @@ class ComponentSynthesizer:
 
     def _chat(self, prompt: str, **kwargs) -> list[str]:
         results = self.llm.chat_async(
-            [self._context_prefix + prompt], **kwargs,
+            [prompt], **kwargs,
         )
         return results[0] if results else []
 
     def _chat_light(self, prompt: str, **kwargs) -> list[str]:
         results = self.light_llm.chat_async(
-            [self._context_prefix + prompt], **kwargs,
+            [prompt], **kwargs,
         )
         return results[0] if results else []
 
     def _chat_light_async(self, prompts: list[str], **kwargs) -> list[list[str]]:
         return self.light_llm.chat_async(
-            [self._context_prefix + p for p in prompts], **kwargs,
+            prompts, **kwargs,
         )
 
     # ------------------------------------------------------------------
     # LLM-based content routing (replaces heuristic routing + filter)
     # ------------------------------------------------------------------
+
+    def _pre_filter(
+        self, items: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """Binary relevance filter: remove items clearly outside the agent's scope.
+
+        Runs one light LLM call per item in parallel with a simple yes/no prompt.
+        Skipped when no user context is provided.
+        """
+        if not self._context_prefix or not items:
+            return items
+
+        prompts: list[str] = []
+        for key, text in items:
+            preview = text[:_ROUTE_PREVIEW_CHARS]
+            prompts.append(
+                f"Source: {key}\n\n"
+                f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
+                f"{self._context_prefix}"
+                f"Is this content relevant to the agent's task described above?\n\n"
+                f"Answer YES or NO."
+            )
+
+        logger.info("Pre-filter: checking relevance of %d items", len(prompts))
+        all_responses = self._chat_light_async(
+            prompts, num_candidates=1, temperature=0,
+        )
+
+        filtered: list[tuple[str, str]] = []
+        removed = 0
+        for (key, text), responses in zip(items, all_responses):
+            raw = (responses[0].strip() if responses else "").lower()
+            if "no" in raw and "yes" not in raw:
+                removed += 1
+            else:
+                filtered.append((key, text))
+
+        logger.info("Pre-filter: %d -> %d items (%d removed)",
+                     len(items), len(filtered), removed)
+        return filtered
 
     def _llm_route_content(
         self, indices: list[SourceIndex]
@@ -111,6 +151,11 @@ class ComponentSynthesizer:
         if not all_items:
             return buckets
 
+        all_items = self._pre_filter(all_items)
+
+        if not all_items:
+            return buckets
+
         bucket_list = "\n".join(
             f"- {name}: {_BUCKET_DESCRIPTIONS[name]}" for name in _BUCKET_NAMES
         )
@@ -121,23 +166,27 @@ class ComponentSynthesizer:
         if self._context_prefix:
             context_note = (
                 f"\n{self._context_prefix}"
-                f"SCOPE: Only classify content as 'isa' if it is directly relevant to the task described above. "
-                f"API reference for tangential tools, frameworks, or libraries that the agent won't call directly should be 'skip' or 'examples'.\n\n"
+                f"SCOPE: Only classify content into a category if it is directly relevant "
+                f"to the agent's task described above. Content about topics outside that "
+                f"scope should be classified as 'skip', even if it technically matches a "
+                f"category description.\n\n"
             )
         for key, text in all_items:
             preview = text[:_ROUTE_PREVIEW_CHARS]
             prompts.append(
+                f"Source: {key}\n\n"
+                f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
                 f"Classify this content into one or more categories.\n\n"
-                f"{context_note}"
                 f"Categories:\n{bucket_list}\n- skip: {skip_desc}\n\n"
                 f"IMPORTANT DISTINCTIONS:\n"
                 f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions) "
-                f"that the agent will directly use when writing kernel code. "
-                f"API docs for deployment, serving, distributed training, model compilation, or framework integration are NOT 'isa'.\n"
+                f"that the agent will directly use when writing code. "
+                f"API docs for tools, services, or libraries outside the agent's scope are NOT 'isa'.\n"
                 f"- Files with runnable code (function bodies with implementations) are 'examples', not 'isa'.\n"
-                f"- Operator support tables (lists of supported ops for a framework) are 'examples', not 'isa'.\n\n"
-                f"Source: {key}\n\n"
-                f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
+                f"- Operator support tables (lists of supported ops for a framework) are 'examples', not 'isa'.\n"
+                f"- 'optimization' is ONLY for guidance on optimizing code that the agent writes. "
+                f"Optimization advice for things outside the agent's scope is 'skip'.\n\n"
+                f"{context_note}"
                 f"Return ONLY a comma-separated list of category names "
                 f"(from: {', '.join(_BUCKET_NAMES)}, skip). "
                 f"Example: isa, rules"
@@ -248,9 +297,9 @@ class ComponentSynthesizer:
     def _arch_single_pass(self, items: list[tuple[str, str]]) -> str:
         content = _items_to_text(items, max_chars=self._ARCH_SINGLE_DOC_CHARS)
         prompt = (
-            f"Below is documentation about the hardware target.\n\n"
-            f"{self._ARCH_PROMPT}\n\n"
             f"=== DOCUMENTATION ===\n{content}\n=== END DOCUMENTATION ===\n\n"
+            f"{self._context_prefix}"
+            f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
         responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
@@ -262,12 +311,13 @@ class ComponentSynthesizer:
         for key, text in items:
             truncated = _truncate(text, max_chars=self._ARCH_SINGLE_DOC_CHARS)
             prompts.append(
+                f"Source: {key}\n\n"
+                f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
+                f"{self._context_prefix}"
                 f"Extract architecture-relevant information from this document.\n"
                 f"Focus on: hardware capabilities, memory hierarchy, compute units, "
                 f"constraints, and performance characteristics.\n"
                 f"Be thorough -- include specific numbers (sizes, bandwidths, limits).\n\n"
-                f"Source: {key}\n\n"
-                f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
                 f"Architecture-relevant notes:"
             )
 
@@ -276,7 +326,7 @@ class ComponentSynthesizer:
         ) if len(prompts) == 1 else [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                [self._context_prefix + p for p in prompts],
+                prompts,
                 num_candidates=1, temperature=0,
             )
         ]
@@ -289,10 +339,11 @@ class ComponentSynthesizer:
 
         # Reduce: merge summaries into final architecture summary
         prompt = (
-            f"Below are architecture notes extracted from multiple documents "
-            f"about the same hardware target.\n\n"
-            f"{self._ARCH_PROMPT}\n\n"
             f"=== EXTRACTED NOTES ===\n{summaries}\n=== END ===\n\n"
+            f"Above are architecture notes extracted from multiple documents "
+            f"about the same hardware target.\n\n"
+            f"{self._context_prefix}"
+            f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
         responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
@@ -393,13 +444,13 @@ class ComponentSynthesizer:
 
         prompt = f"""{self._context_prefix}Below are API entries extracted from the SDK. Each line is "name: description".
 
-Keep ONLY entries the agent would directly call or reference when writing optimized kernel code. Remove runtime, deployment, framework integration, profiling, distributed training, error catalogs, and other non-kernel APIs.
-
-Return ONLY a JSON array of entry names to keep.
-
 === ENTRIES ({len(seen)} total) ===
 {index_text}
 === END ===
+
+Keep ONLY entries the agent would directly call or reference when writing optimized code. Remove APIs that are outside the agent's scope as described above.
+
+Return ONLY a JSON array of entry names to keep.
 
 JSON array:"""
 
@@ -435,13 +486,13 @@ JSON array:"""
 
         prompt = f"""Below is a list of API/instruction entries from the hardware SDK. Each line is "name: description".
 
-Group these entries into functional categories (e.g., "Memory Operations", "Math and Arithmetic", "Tensor Operations", "Control Flow", "Data Types and Constants", etc.).
-
-Return a JSON object mapping category names to lists of entry names. Order categories from fundamental to specialized. Every entry name must appear in exactly one category.
-
 === ENTRIES ===
 {index_text}
 === END ===
+
+{self._context_prefix}Group these entries into functional categories (e.g., "Memory Operations", "Math and Arithmetic", "Tensor Operations", "Control Flow", "Data Types and Constants", etc.).
+
+Return a JSON object mapping category names to lists of entry names. Order categories from fundamental to specialized. Every entry name must appear in exactly one category.
 
 Return ONLY a JSON object:"""
 
@@ -469,7 +520,11 @@ Return ONLY a JSON object:"""
         numbered = _truncate(numbered, max_chars=120_000)
         return f"""Below is a numbered source file "{key}". Identify ALL API/instruction reference entries (functions, classes, methods, enums, instructions) that have proper documentation.
 
-For each entry, return a JSON object with:
+=== FILE (numbered lines) ===
+{numbered}
+=== END ===
+
+{self._context_prefix}For each entry, return a JSON object with:
 - "name": the entry name (function, class, instruction, etc.)
 - "description": a one-line summary
 - "start_line": the line number where this entry begins (inclusive)
@@ -486,10 +541,6 @@ RULES:
 - If no API reference content is found, return an empty array []
 
 Return ONLY a JSON array:
-
-=== FILE (numbered lines) ===
-{numbered}
-=== END ===
 
 JSON array:"""
 
@@ -566,7 +617,9 @@ JSON array:"""
             basenames.append(basename)
             text_trunc = _truncate(text, max_chars=40_000)
             prompts.append(
-                f'Below is code from example file "{basename}". '
+                f"Source: {basename}\n\n"
+                f"=== FILE ===\n{text_trunc}\n=== END ===\n\n"
+                f"{self._context_prefix}"
                 "Extract the core code examples that demonstrate API usage.\n\n"
                 "RULES:\n"
                 "- Keep the full function bodies including decorators and type hints\n"
@@ -575,7 +628,6 @@ JSON array:"""
                 "and setup boilerplate\n"
                 "- Wrap each example in a fenced code block with the appropriate language\n"
                 '- If no meaningful code examples are found, output "NO_EXAMPLE"\n\n'
-                f"=== FILE ===\n{text_trunc}\n=== END ===\n\n"
                 "Extracted code examples:"
             )
 
@@ -621,11 +673,15 @@ JSON array:"""
 
         prompt = f"""Below is documentation about the hardware target.
 
-The agent uses an "optimization menu" -- a list of strategies it picks from when planning how to optimize a kernel. Here are the generic strategies already included:
+=== DOCUMENTATION ===
+{content}
+=== END DOCUMENTATION ===
+
+The agent uses an "optimization menu" -- a list of strategies it picks from when planning how to optimize a single kernel's code. Here are the generic strategies already included:
 
 {chr(10).join("- " + d for d in defaults)}
 
-Generate 5-15 ADDITIONAL hardware-specific optimization strategies from the documentation.
+Generate 5-15 ADDITIONAL hardware-specific performance optimization strategies from the documentation.
 
 EXAMPLES:
 - "keep reusable data in local memory across outer loop iterations"
@@ -638,21 +694,17 @@ EXAMPLES:
 - "delay division until after all reductions are complete"
 - "use the streaming softmax with running max and scaling trick"
 
-RULES:
+{self._context_prefix}RULES:
 - Avoid making the strategies overly specific
 - Each strategy MUST be under 15 words.
 - Write as a short action phrase, not a full sentence
-- ONLY kernel-level and algorithmic optimizations
-- NO deployment, serving, threading, batching, environment, profiling, or configuration advice
+- ONLY optimizations within the agent's scope as described above
+- NOT optimizations outside that scope, even if mentioned in the documentation
 - Do NOT repeat the generic strategies above
 
 Return each strategy on its own line, prefixed with "- ".
 
-=== DOCUMENTATION ===
-{content}
-=== END DOCUMENTATION ===
-
-Hardware-specific optimization strategies:"""
+Performance optimization strategies:"""
 
         responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
         raw = responses[0].strip() if responses else ""
@@ -720,14 +772,18 @@ Hardware-specific optimization strategies:"""
 
         prompt = f"""Below is documentation about the hardware target's programming model.
 
+=== DOCUMENTATION ===
+{content}
+=== END DOCUMENTATION ===
+
 {extra_context}
 
-Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:
+{self._context_prefix}Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:
 - Programming model constraints (e.g., "the partition dimension is always 128", "free dimensions must be multiples of 512 for the Tensor Engine")
 - Memory layout rules (e.g., "tiles in scratchpad must not exceed X KB", "data must be contiguous along dimension Y")
 - Correctness constraints (e.g., "loop variables cannot be used for indexing in this context")
 - API usage pitfalls (e.g., "reduction output must be stored before reuse")
-Generate as few rules as possible. Only include rules that are truly critical to generating correct code and relevant to the context provided above.
+Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Aim for 3-5 rules per category, fewer if possible.
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases
@@ -735,10 +791,6 @@ Categorize each rule into one of:
 - "coding" -- applies only when generating code
 
 Return as a JSON object with keys "general", "planning", "coding", each mapping to a list of rule strings.
-
-=== DOCUMENTATION ===
-{content}
-=== END DOCUMENTATION ===
 
 Return ONLY a JSON object:"""
 

@@ -1,33 +1,39 @@
 general:
-- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
-- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
-- Each NKI kernel executes on a single NeuronCore; there is no cross-core pipelining, so all optimization must target single-core
-  performance.
-- Static, known-at-compile-time tensor shapes are strongly preferred; dynamic shapes trigger recompilation and should be avoided.
-- Data must be explicitly moved between HBM → SBUF → compute engines → SBUF → HBM; minimizing data movement and maximizing
-  data reuse in SBUF is essential for performance.
-- The tensor engine always accumulates in FP32 regardless of input precision; FP16 and BF16 inputs provide significantly higher
-  throughput than FP32/TF32.
-- SBUF is on-chip SRAM and is the primary working memory; tile sizes in SBUF must not exceed the available on-chip memory
-  (use tile_size.total_available_sbuf_size).
-- Reduction output must be stored before reuse in subsequent operations.
+- The rewritten program should be semantically equivalent to the original program,
+  within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions
+  can be renamed or deleted).
+- All tensor dimensions must be known at compile time; dynamic shapes are not supported.
+- The partition dimension (axis 0) is always 128 on NeuronCore-v2; free dimensions
+  are all other axes.
+- Data movement between HBM and on-chip SRAM (SBUF/PSUM) via DMA is the primary performance
+  bottleneck and must be minimized.
+- Tiles in SBUF cannot exceed 192 KB total size; PSUM tiles cannot exceed 2 KB per
+  partition per bank.
+- Matrix multiplication (nc_matmul) must read from SBUF and write to PSUM; inputs
+  and outputs cannot be reversed.
 planning:
 - Limit the scope of the plan to the selected optimization.
-- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
-- Prefer BF16/FP16 for matmul inputs to maximize tensor engine throughput; FP32 matmuls are significantly slower and are auto-cast
-  to BF16 by default.
-- Use fast transpose via matmul in FP16/BF16 when precision loss is acceptable, as it is much faster than byte-level data
-  movement.
-- Pre-cast I/O tensors to FP16/BF16 in the framework before compilation to avoid FP32 transfer overhead.
-- For collective communication workloads, valid NeuronCore counts are 1, 2, 8, or 32, and allocations must start at core IDs
-  that are multiples of the count.
-- 'Sequence bucketing: input sequence lengths must fit pre-compiled buckets; pad to fixed lengths to avoid recompilation.'
+- Do not count out any of the optimizations unless they are clearly irrelevant to
+  the code.
+- When planning data layout, account for the fact that SBUF and PSUM have separate
+  address spaces and require explicit DMA transfers between them.
+- Identify opportunities to reuse data in on-chip memory across multiple operations
+  to reduce HBM bandwidth consumption.
+- For operations exceeding hardware size limits (e.g., large normalization kernels),
+  plan decomposition into smaller sub-operations that fit within constraints.
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
-- Data loaded into SBUF via dma_copy or tensor_copy must be contiguous along the innermost dimension for efficient memory
-  access.
-- Loop variables cannot be used for indexing in gather/scatter operations; use static indices or pre-computed index tensors.
-- Tensor operations must respect SBUF alignment requirements (use tile_size.sbuf_min_align for alignment constraints).
-- PSUM buffer accumulations are always in FP32; results must be explicitly moved to SBUF or HBM before further processing.
-- When using the GPSIMD engine for custom operations, ensure operations fit within available instruction bandwidth and do
-  not exceed SBUF capacity for intermediate results.
+- Reduction results must be stored to a tile before being reused as input to another
+  operation; intermediate reduction values cannot be directly chained.
+- When using direct allocation APIs (psum.alloc, sbuf.alloc, psum.mod_alloc, sbuf.mod_alloc),
+  do not mix them with automatic allocation (psum.auto_alloc, sbuf.auto_alloc) in
+  the same kernel.
+- Loop variables and runtime values cannot be used for static indexing operations;
+  only compile-time constants and affine expressions are permitted for tile indexing.
+- "The partition axis size of input tiles to nc_matmul must be identical and \u2264\
+  128; free axis of stationary must be \u2264128, free axis of moving must be \u2264\
+  512."
+- When writing to PSUM via nc_matmul or other Tensor Engine operations, ensure the
+  output tile does not exceed 2 KB per partition; use multiple smaller operations
+  or accumulation if necessary.

@@ -755,7 +755,10 @@ def main():
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT,
                         help="Base output directory for built agents (default: ./output/built)")
     parser.add_argument("--description", default="",
-                        help="Context description for LLM prompts")
+                        help="Context prepended to every LLM prompt. Be specific: what "
+                             "code level the agent optimizes (kernels, operators), the "
+                             "programming interface (NKI, CUDA, HLO), and what's out of "
+                             "scope (deployment, serving, distributed training).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Test ingestion only (no LLM calls needed)")
     parser.add_argument("--model", default="aws::us.anthropic.claude-opus-4-6-v1",

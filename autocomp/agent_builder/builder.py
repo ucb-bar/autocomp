@@ -36,8 +36,18 @@ class AgentBuilder:
                        or just the model name for auto-detection.
             light_llm_model: Optional cheaper/faster model for high-token extraction tasks.
                              Uses the same "provider::model" syntax. Falls back to llm_model if not set.
-            description: User-provided context about what the agent is for
-                         (e.g., "Optimizing NKI kernels on AWS Trainium/Inferentia").
+            description: User-provided context about what the agent is for.
+                         This is prepended to every LLM prompt and strongly
+                         influences content routing, ISA filtering, and strategy
+                         generation. Be specific about:
+                         - What level of code the agent optimizes (e.g., kernels,
+                           operators, full models)
+                         - The programming interface (e.g., NKI, CUDA, HLO)
+                         - What's out of scope (e.g., deployment, serving, distributed)
+                         Example: "Optimizing NKI kernel code on AWS Trainium 1.
+                         The agent rewrites single-kernel source code for better
+                         performance. Model-level concerns like sharding, serving,
+                         and distributed training are out of scope."
         """
         if "::" in llm_model:
             provider, model = llm_model.split("::", 1)
