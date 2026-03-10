@@ -78,26 +78,25 @@ _NRT_FRAMEWORK_TYPE_NO_FW = 1
 _NRT_TENSOR_PLACEMENT_DEVICE = 0
 _NRT_TENSOR_USAGE_INPUT = 0
 
-# Map nrt_dtype_t enum (from nrt.h) to numpy dtypes
+# Map NRT dtype enum to numpy dtypes
 def _build_dtype_map():
     m = {
-        0x1: np.uint64,
-        0x2: np.int8,
-        0x3: np.uint8,
-        0x4: np.int16,
-        0x5: np.uint16,
-        0x7: np.float16,
-        0x8: np.int32,
-        0x9: np.uint32,
-        0xA: np.float32,
-        0xB: np.float32,  # FP32R (stochastic rounding) — treat as float32
-        0xC: np.int64,
+        1: np.float32,
+        2: np.float16,
+        4: np.int8,
+        5: np.uint8,
+        6: np.int16,
+        7: np.uint16,
+        8: np.int32,
+        9: np.uint32,
+        10: np.int64,
+        11: np.uint64,
     }
     try:
         import neuronxcc.nki.language as nl
-        m[0x6] = nl.bfloat16
+        m[3] = nl.bfloat16
     except Exception:
-        m[0x6] = np.uint16
+        m[3] = np.uint16
     return m
 
 _NRT_DTYPE_MAP = _build_dtype_map()
