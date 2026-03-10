@@ -199,52 +199,34 @@ class PDFLoader(SourceLoader):
         )
 
 
-_BLOCK_ELEMENTS = {
-    "address", "article", "aside", "blockquote", "br", "dd", "details",
-    "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure",
-    "form", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li",
-    "main", "ol", "p", "section", "summary", "table", "tbody",
-    "td", "tfoot", "th", "thead", "tr", "ul",
-}
-
-
 def _extract_text(soup) -> str:
-    """Extract text from BeautifulSoup, preserving code blocks verbatim.
+    """Convert HTML soup to clean markdown via html2text.
 
-    <pre> blocks are extracted with original whitespace wrapped in markdown
-    fences. All other block elements get newlines; inline elements get spaces.
+    Uses ignore_emphasis and ignore_links to avoid escaping artifacts
+    from Sphinx-generated API docs (e.g. \\* in signatures, [[source]] links).
     """
-    from bs4 import NavigableString, Tag
+    import html2text
 
-    # First, replace <pre> blocks with placeholders to preserve formatting
-    pre_blocks: list[str] = []
-    for pre in soup.find_all("pre"):
-        code = pre.get_text()
-        if code.strip():
-            placeholder = f"\n__CODE_BLOCK_{len(pre_blocks)}__\n"
-            pre_blocks.append(code)
-            pre.replace_with(placeholder)
+    for tag in soup.find_all(["script", "style"]):
+        tag.decompose()
 
-    parts: list[str] = []
-    for element in soup.descendants:
-        if isinstance(element, NavigableString):
-            text = element.strip()
-            if text:
-                parts.append(text)
-        elif isinstance(element, Tag):
-            if element.name in _BLOCK_ELEMENTS:
-                parts.append("\n")
+    h2t = html2text.HTML2Text()
+    h2t.ignore_links = True
+    h2t.ignore_images = True
+    h2t.ignore_emphasis = True
+    h2t.body_width = 0
 
-    raw = " ".join(parts)
-    # Collapse whitespace around newlines
-    lines = [line.strip() for line in raw.split("\n")]
-    text = "\n".join(line for line in lines if line)
+    md = h2t.handle(str(soup))
 
-    # Restore code blocks with markdown fences
-    for i, code in enumerate(pre_blocks):
-        text = text.replace(f"__CODE_BLOCK_{i}__", f"\n```\n{code}```\n")
+    # Strip Sphinx [source]# permalink suffixes on function signatures
+    md = re.sub(r'\[source\]\s*#', '', md)
+    # Strip trailing # permalink anchors on headings (e.g. "## Heading#")
+    md = re.sub(r'(?m)^(#+\s+.+?)#\s*$', r'\1', md)
 
-    return text
+    # Collapse runs of 3+ blank lines to 2
+    md = re.sub(r'\n{3,}', '\n\n', md)
+
+    return md.strip()
 
 
 class WebpageLoader(SourceLoader):

@@ -1,47 +1,37 @@
 general:
 - The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
 - Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
-- The partition dimension (first dimension of all on-chip tiles) must be ≤ 128 and maps to all 128 parallel lanes; every tile
-  operation costs the same whether using 1 or 128 partitions.
-- All computation requires data in SBUF or PSUM; HBM tensors cannot be directly operated on—they must be loaded first via
-  nl.load() or nl.load_transpose2d().
-- SBUF and PSUM are 2D memories organized as (partition_dim, free_dim); the partition dimension is always the first dimension
-  of any tile shape.
-- Tensor Engine matmul (nc_matmul) reads from SBUF and writes to PSUM; outputs are always FP32 regardless of input dtype,
-  and accumulation is always FP32.
-- DMA operations (load, store, load_transpose2d) move data between HBM and SBUF only; PSUM is not directly accessible via
-  DMA.
-- Mask expressions must be affine expressions of static loop indices (e.g., i < 64, 2*i + j < 100); runtime tensor values
-  and non-affine operations (e.g., i % 4) are not allowed in masks.
-- Loop-carried dependencies require sequential_range(); affine_range() assumes iterations are independent and can be parallelized/pipelined.
-- The partition dimension of all operands in a single compute instruction must match (e.g., nl.add(a[128, 512], b[128, 512])
-  is valid; nl.add(a[128, 512], b[64, 512]) is invalid unless b is broadcast).
+- All NKI kernel inputs and outputs must reside in HBM (device memory). Data must be explicitly loaded from HBM to SBUF via
+  nl.load() before computation and stored back to HBM via nl.store() after computation.
+- The partition dimension (P) is always the first dimension of a tile and must never exceed 128 elements (nl.tile_size.pmax).
+  All NKI compute APIs operate on tiles with partition dimension as the first dimension.
+- SBUF is organized as 128 partitions × 176 KiB usable per partition. PSUM is organized as 128 partitions × 16 KiB per partition,
+  divided into 8 banks; PSUM tiles cannot cross bank boundaries (max 2 KiB = 512 FP32 elements per bank per partition).
+- For matrix multiplication, the contraction axis (K dimension) must be mapped to the partition dimension for both operands.
+  Use nl.matmul() for automatic layout handling or nc_matmul() with explicit [K, M] × [K, N] shapes.
+- All on-chip memories (SBUF and PSUM) are software-managed with no hardware caches. Programmers must explicitly manage data
+  movement and lifetime; the compiler will insert spills to HBM if on-chip capacity is exceeded.
 planning:
 - Limit the scope of the plan to the selected optimization.
 - Do not count out any of the optimizations unless they are clearly irrelevant to the code.
-- 'Matmul tile sizes must satisfy: contraction axis K ≤ 128 (partition dim), stationary free axis M ≤ 128, moving free axis
-  N ≤ 512; for K > 128, accumulate multiple matmul outputs into the same PSUM tile.'
-- SBUF capacity is 24 MiB (128 partitions × 192 KiB each); estimate live SBUF usage and plan tiling/loop fusion to avoid compiler-inserted
-  spills that degrade performance.
-- VectorE and GpSimdE cannot access SBUF simultaneously; VectorE and ScalarE cannot access PSUM simultaneously—plan instruction
-  sequences to avoid serialization bottlenecks.
-- Tensor Engine throughput is 4× slower for FP32 than for BF16/FP16/TF32/cFP8; plan to downcast FP32 inputs before matmul
-  when possible.
-- DMA engines run in parallel with compute; plan to overlap load/store operations with compute to hide latency.
+- When planning loop structures, use nl.affine_range() for loops without loop-carried dependencies to enable compiler parallelism;
+  use nl.sequential_range() only when ordering is required (e.g., accumulation into the same buffer).
+- For matmul accumulation patterns, initialize PSUM buffers to zero and use += with nl.affine_range() to enable parallel tile
+  processing; results must be copied from PSUM to SBUF before storing to HBM.
+- 'Plan tensor tiling to respect constraints: PSUM free dimension ≤ 512 elements, matmul stationary free dim ≤ 128, matmul
+  moving free dim ≤ 512. Partition dimension always ≤ 128.'
+- When planning direct allocation (ncc.sbuf.alloc or ncc.sbuf.mod_alloc), ensure all tensors in the kernel use direct allocation;
+  mixing automatic and direct allocation will cause compilation errors.
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
-- Indexing a tile with 1D arange is not supported; always use 2D indexing with shape (P, F) where P is partition dimension
-  and F is free dimension, e.g., nl.arange(128)[:, None] for partition and nl.arange(512)[None, :] for free.
-- Tensors defined inside if/else/for blocks cannot be used outside their scope; define tensors at the appropriate scope level
-  and use assignment (tensor[...] = value) to update them within nested blocks.
-- Mutable kernel parameters must be explicitly returned in the return statement; immutable parameters cannot be modified.
-- Control flow (if/while/for conditions) cannot depend on arange or mgrid values; use mask parameter instead to conditionally
-  execute instructions.
-- Reduction outputs (e.g., from loop_reduce or matmul accumulation) must be stored or explicitly copied before reuse in a
-  different context to avoid undefined behavior.
-- nc_matmul requires both stationary and moving inputs to have the contraction dimension (K) in the partition dimension; if
-  K is in the free dimension, transpose the input first.
-- Indirect indexing (using one tensor to index another) is only supported for load/store operations; other APIs like load_transpose2d
-  do not support indirect indices.
-- Bias and scale parameters in activation instructions must be float32 (bias) or float32 scalar/vector (scale); other dtypes
-  will cause a compilation error.
+- Tile indexing must use nl.arange() for indirect access patterns; nl.mgrid() is not supported. Index expressions must be
+  affine (e.g., start + stride * nl.arange(size)).
+- Tiles in SBUF/PSUM must have at least 2 dimensions. For 1D buffers, reshape to [N, 1] and index with both indices (e.g.,
+  buf[0:N, 0]) rather than buf[0:N].
+- Reduction outputs must be stored or copied before reuse in subsequent operations. Do not directly feed a reduction result
+  back into another compute operation without an intermediate store or copy.
+- When using masks, combine them with & (bitwise AND) operator, not Python's and keyword. Masks must be valid boolean expressions
+  over tensor indices.
+- Output tensors declared with buffer=nl.shared_hbm must be explicitly returned from the kernel function; they cannot be used
+  as intermediate tensors. Non-IO HBM tensors (buffer=nl.hbm or buffer=nl.private_hbm) are not allowed when direct allocation
+  is used.

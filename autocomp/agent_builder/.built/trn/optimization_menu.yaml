@@ -9,18 +9,16 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Maximize SBUF tile partition dimension to 128 for full compute lane utilization
-- strategy: Map large free-axis matrix as stationary operand in TensorE matmul
-- strategy: Use transpose_x=True in matmul to avoid extra transpose instruction
-- strategy: Accumulate multiple nc_matmul results into same PSUM bank via affine_range
-- strategy: Pack small VectorE operations across partitions via partition vectorization
-- strategy: Combine multiply-add with nonlinear function into single ScalarE activation instruction
-- strategy: Ensure minimum 4KiB free dimension size for DMA transfer efficiency
-- strategy: Avoid most-minor free dimension strides exceeding 16 bytes in SBUF access
-- strategy: Use TensorE for cross-partition broadcast or transpose instead of explicit data movement
-- strategy: Coalesce small result tiles into larger contiguous SBUF buffers before HBM store
-- strategy: Hoist SBUF tensor declarations inside loops to enable compiler multi-buffering
-- strategy: Use PE tiling for small matmuls to improve TensorE systolic array utilization
-- strategy: Pipeline TensorE background LoadStationary with MultiplyMoving computation
-- strategy: Cast FP32 matmul inputs to BF16/FP16/TF32/cFP8 before TensorE execution
+- strategy: Leverage TensorE fast LoadStationary by mapping short tensors to moving operand
+- strategy: Vectorize partition dimension to fill all 128 SBUF partitions per instruction
+- strategy: Combine scalar/vector pipeline stages into single `nisa.activation` instructions
+- strategy: Replace `nl.load_transpose2d` with `nl.load` plus `nisa.nc_transpose` for bandwidth
+- strategy: Use direct allocation with modulo buffering to control SBUF tile rotation
+- strategy: Swap stationary and moving operands in nc_matmul to eliminate intermediate transposes
+- strategy: Choose IO tensor layouts compatible with compute API to avoid TensorE transpose overhead
+- strategy: Maximize DMA transfer size to exceed 32KiB per transfer for full bandwidth utilization
+- strategy: Use TensorE PE tiling for small matmuls to fill the 128x128 systolic array
+- strategy: Accumulate multiple nc_matmul results into same PSUM tile to increase arithmetic intensity
+- strategy: Declare buffers inside inner loops to prevent unnecessary spilling
+- strategy: Exploit TensorE for cross-partition reductions instead of requiring layout transposes
 - strategy: Other methods not listed here.

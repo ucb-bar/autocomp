@@ -28,6 +28,7 @@ agent-builder = [
     "pymupdf",
     "requests",
     "beautifulsoup4",
+    "html2text",
 ]
 
 [project.urls]
