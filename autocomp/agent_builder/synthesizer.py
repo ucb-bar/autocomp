@@ -342,6 +342,11 @@ class ComponentSynthesizer:
         logger.info("  ISA extraction complete: %d entries from %d files",
                      len(all_entries), len(candidates))
 
+        all_entries = self._filter_isa_entries(all_entries)
+
+        if not all_entries:
+            return "No ISA documentation found. Please add manually."
+
         categories = self._categorize_isa_entries(all_entries)
         logger.info("  ISA categorization: %d categories", len(categories))
         for cat_name, entry_names in categories.items():
@@ -375,6 +380,45 @@ class ComponentSynthesizer:
         logger.info("  ISA docs assembled: %d chars, %d categories, %d entries",
                      len(combined), len(categories), len(all_entries))
         return combined
+
+    def _filter_isa_entries(self, entries: list[ISAEntry]) -> list[ISAEntry]:
+        """Use the LLM to filter ISA entries down to those directly used in kernel code."""
+        seen: dict[str, str] = {}
+        for entry in entries:
+            if entry.name not in seen:
+                seen[entry.name] = entry.description
+
+        index_lines = [f"{name}: {desc}" for name, desc in seen.items()]
+        index_text = "\n".join(index_lines)
+
+        prompt = f"""{self._context_prefix}Below are API entries extracted from the SDK. Each line is "name: description".
+
+Keep ONLY entries the agent would directly call or reference when writing optimized kernel code. Remove runtime, deployment, framework integration, profiling, distributed training, error catalogs, and other non-kernel APIs.
+
+Return ONLY a JSON array of entry names to keep.
+
+=== ENTRIES ({len(seen)} total) ===
+{index_text}
+=== END ===
+
+JSON array:"""
+
+        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        raw = responses[0].strip() if responses else "[]"
+
+        try:
+            arr_match = re.search(r"\[[\s\S]*\]", raw)
+            if arr_match:
+                keep_names = set(json.loads(arr_match.group()))
+                filtered = [e for e in entries if e.name in keep_names]
+                logger.info("  ISA filtering: %d -> %d entries (%d removed)",
+                            len(entries), len(filtered), len(entries) - len(filtered))
+                return filtered
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+        logger.warning("  ISA filtering: failed to parse LLM response, keeping all entries")
+        return entries
 
     def _categorize_isa_entries(
         self, entries: list[ISAEntry]

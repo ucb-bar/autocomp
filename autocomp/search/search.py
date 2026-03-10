@@ -718,7 +718,7 @@ def main():
 
     # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
     # Options: "static", "one-shot", "progressive"
-    menu_strategy = "static"
+    menu_strategy = "one-shot"
     built_menu_strategy_enum = {"static": 0, "one-shot": 1, "progressive": 2}
 
     # Planning prompt knobs

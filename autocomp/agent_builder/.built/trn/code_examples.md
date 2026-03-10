@@ -7,8 +7,9 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 import neuronxcc.nki.typing as nt
 from neuronxcc.nki.language import par_dim
+```
 
-# v1: toy example with 128 seqlen and nki.lang APIs
+```python
 @nki.jit
 def attn_fwd_v1(q, k, v):
     """nki.lang APIs"""
@@ -54,9 +55,9 @@ def attn_fwd_v1(q, k, v):
     # store output
     nl.store(dst=kernel_out, value=attn_out)
     return kernel_out
+```
 
-
-# v2: use nki.isa APIs
+```python
 @nki.jit
 def attn_fwd_v2(q, k, v):
     d_head, seqlen_q = q.shape
@@ -107,9 +108,9 @@ def attn_fwd_v2(q, k, v):
     # store output
     nl.store(dst=kernel_out, value=attn_out)
     return kernel_out
+```
 
-
-# v3: large sequence length with tiling
+```python
 @nki.jit
 def attn_fwd_v3(q, k, v):
     d_head, seqlen_q = q.shape
@@ -135,7 +136,6 @@ def attn_fwd_v3(q, k, v):
                      dtype=nl.float32, buffer=nl.psum)
     for i_tile_q in nl.affine_range(seqlen_q // FMAX_STATIONARY):
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_q, i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -222,9 +222,9 @@ def attn_fwd_v3(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:,:])
 
     return kernel_out
+```
 
-
-# v4: Loop fusion
+```python
 @nki.jit
 def attn_fwd_v4(q, k, v):
     d_head, seqlen_q = q.shape
@@ -257,7 +257,6 @@ def attn_fwd_v4(q, k, v):
                         dtype=nl.float32, buffer=nl.psum)
 
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -329,9 +328,9 @@ def attn_fwd_v4(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:, :])
 
     return kernel_out
+```
 
-
-# v5: softmax division delay
+```python
 @nki.jit
 def attn_fwd_v5(q, k, v):
     d_head, seqlen_q = q.shape
@@ -364,7 +363,6 @@ def attn_fwd_v5(q, k, v):
                         dtype=nl.float32, buffer=nl.psum)
 
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -423,7 +421,7 @@ def attn_fwd_v5(q, k, v):
             attn_out_psum += nisa.nc_matmul(stationary=scores_sbuf_t[:, i_tile_kv, :],
                                             moving=v_sbuf_t[:, i_tile_kv, :])
 
-        # division is done on the final attention output
+        # Division delayed to final attention output
         attn_out[...] = nisa.tensor_scalar(data=attn_out_psum, op0=nl.multiply,
                                            operand0=inverse_sum_row, engine=nisa.vector_engine)
 
@@ -431,9 +429,9 @@ def attn_fwd_v5(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:, :])
 
     return kernel_out
+```
 
-
-# v6: instruction combination on ScalarE
+```python
 @nki.jit
 def attn_fwd_v6(q, k, v):
     d_head, seqlen_q = q.shape
@@ -466,7 +464,6 @@ def attn_fwd_v6(q, k, v):
                         dtype=nl.float32, buffer=nl.psum)
 
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -524,9 +521,9 @@ def attn_fwd_v6(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:, :])
 
     return kernel_out
+```
 
-
-# v7: Downcast scores before transpose
+```python
 @nki.jit
 def attn_fwd_v7(q, k, v):
     d_head, seqlen_q = q.shape
@@ -547,7 +544,7 @@ def attn_fwd_v7(q, k, v):
     k_sbuf = nl.load(k)
     v_sbuf = nl.load(v)
 
-    # v has the wrong layout
+    # v has the wrong layout - downcast to bfloat16
     v_sbuf_t = nl.ndarray((nl.par_dim(PMAX), seqlen_kv // PMAX, PMAX), dtype=nl.bfloat16, buffer=nl.sbuf)
     for i_tile_kv in nl.affine_range(seqlen_kv // PMAX):
         v_psum_t = nisa.nc_transpose(v_sbuf[:, nl.ds(i_tile_kv*PMAX, PMAX)])
@@ -559,7 +556,6 @@ def attn_fwd_v7(q, k, v):
                         dtype=nl.float32, buffer=nl.psum)
 
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -617,9 +613,9 @@ def attn_fwd_v7(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:, :])
 
     return kernel_out
+```
 
-
-# v8: Use tensor_scalar_reduce on VectorE
+```python
 @nki.jit
 def attn_fwd_v8(q, k, v):
     d_head, seqlen_q = q.shape
@@ -652,7 +648,6 @@ def attn_fwd_v8(q, k, v):
                         dtype=nl.float32, buffer=nl.psum)
 
         for i_tile_kv in nl.affine_range(seqlen_kv // FMAX_MOVING):
-            # Q @ K, contract along d_head #
             qk[i_tile_kv, :, :] = nisa.nc_matmul(
                 stationary=q_sbuf[0:PMAX, nl.ds(i_tile_q*FMAX_STATIONARY, FMAX_STATIONARY)],
                 moving=k_sbuf[0:PMAX, nl.ds(i_tile_kv*FMAX_MOVING, FMAX_MOVING)])
@@ -712,9 +707,9 @@ def attn_fwd_v8(q, k, v):
         nl.store(dst=kernel_out[nl.ds(i_tile_q*PMAX, PMAX), :], value=attn_out[:, :])
 
     return kernel_out
+```
 
-
-# v8a: refactor v8 to prepare for direct allocation and software pipelining
+```python
 @nki.jit
 def attn_fwd_v8a(q, k, v):
     d_head, seqlen_q = q.shape
@@ -787,528 +782,1348 @@ def attn_fwd_v8a(q, k, v):
     return kernel_out
 ```
 
-## kernel-optimization.rst
+## benchmarking.py
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
+from typing import Any, Callable, Dict, List, Union
+import collections
+import concurrent
+import concurrent.futures
+import copy
+import functools
+import logging
+import multiprocessing
+import os
+import psutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
 
-@nki.jit(platform_target="trn2")
-def matrix_multiply_kernel(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation on a single tile
+import dill
 
-  Args:
-    lhsT: an input tensor of shape [K,M], where both K and M are, at most, 
-      128.  It is the left-hand-side argument of the matrix multiplication,
-      delivered transposed for optimal performance.
-    rhs: an input tensor of shape [K,N], where K is, at most, 128, and N
-      is, at most, 512.  It is the right-hand-side argument of the matrix
-      multiplication.
-  Returns:
-    result: the resulting output tensor of shape [M,N]
-  """
-  # Verify that the lhsT and rhs are the expected sizes.
-  K, M = lhsT.shape
-  K_, N = rhs.shape
+from . import model_index
+from .compile_constants import NEURONCORE_PIPELINE_CORES, FAST_MATH, FAST_MATH_OPTIONS
+from .reporting import get_reports
+from .scripts import run_benchmark_file
+from .timing import Timer
 
-  # Ensure that the contraction dimension matches
-  assert K == K_, \
-    f"Contraction demention {K} does not match {K_}, did you remember to transpose?"
 
-  # Ensure the dimensions will fit within the constrins of matmul.
-  assert K <= nl.tile_size.pmax, \
-    f"Expected partition dimension in lhsT ({K}) to be less than {nl.tile_size.pmax}"
-  assert M <= nl.tile_size.gemm_stationary_fmax, \
-    f"Expected free dimension in lhsT ({M}) to be less than " \
-    f"{nl.tile_size.gemm_stationary_fmax}"
-  assert N <= nl.tile_size.gemm_moving_fmax, \
-    f"Expected free dimension in rhs ({N}) to be less than " \
-    f"{nl.tile_size.gemm_moving_fmax}"
+log = logging.getLogger(__name__)
 
-  # Allocate tiles for lhsT and rhs on sbuf (uninitialized)
-  lhsT_tile = nl.ndarray(shape=lhsT.shape, dtype=lhsT.dtype, buffer=nl.sbuf)
-  rhs_tile = nl.ndarray(shape=rhs.shape, dtype=rhs.dtype, buffer=nl.sbuf)
+BenchmarkerErrorWrapper = collections.namedtuple("BenchmarkerErrorWrapper", "trace")
 
-  # Copy the input matrices from HBM to SBUF
-  nisa.dma_copy(dst=lhsT_tile, src=lhsT)
-  nisa.dma_copy(dst=rhs_tile, src=rhs)
+ERROR = "error"
+SUPPORTED_DEVICE_TYPES = ["neuron", "cpu", "cuda", "gpu"]
+BENCHMARK_SECS = 120
 
-  # Perform matrix multiply, result will be written into PSUM
-  result_tile = nl.ndarray(shape=(M, N), dtype=nl.float32, buffer=nl.psum)
-  nisa.nc_matmul(dst=result_tile, stationary=lhsT_tile, moving=rhs_tile)
 
-  # Copy result to SBUF (we cannot copy directly from PSUM to HBM)
-  result_tmp = nl.ndarray(shape=result_tile.shape,
-                          dtype=result_tile.dtype,
-                          buffer=nl.sbuf)
-  nisa.tensor_copy(dst=result_tmp, src=result_tile)
+class Benchmarker(threading.Thread):
+    r"""
+    :class:`benchmarking:Benchmarker` benchmarks a single model.
 
-  # Copy result to HBM
-  result = nl.ndarray(shape=result_tmp.shape,
-                      dtype=result_tmp.dtype,
-                      buffer=nl.hbm)
-  nisa.dma_copy(dst=result, src=result_tmp)
+    This class is a `threading.Thread`. Call `start` to launch a non-blocking
+    benchmarking thread. Calling `stop` will end the benchmarking and block
+    until all subroutines complete.
 
-  return result
+    An object of this class may be serialized and sent to multiple subprocesses
+    for parallel use. After benchmarking, results can be obtained with
+    `results`.
+    """
+
+    def __init__(
+        self,
+        id: int,
+        device_id: int,
+        load_fn: Callable[[str], Any],
+        model_filename: str,
+        inputs,
+        workers_per_model: int,
+        env_setup_fn: Callable[[int, Dict, Any], None] = None,
+        setup_fn: Callable[[int, Dict, Any], None] = None,
+        preprocess_fn: Callable[[Any], Any] = None,
+        postprocess_fn: Callable[[Any], Any] = None,
+        dataset_loader_fn: Callable[[Any, int], Any] = None,
+        model_class_name: str = None,
+        model_class_file: str = None,
+    ):
+        super().__init__()
+
+        self.id = id
+        self.device_id = device_id
+        self.load_fn = load_fn
+        self.model_filename = model_filename
+        self.inputs = inputs
+        self.input_iter = None
+        self.input_lock = threading.Lock()
+        self.workers_per_model = workers_per_model
+        self.env_setup_fn = env_setup_fn
+        self.setup_fn = setup_fn
+        self.preprocess_fn = preprocess_fn
+        self.postprocess_fn = postprocess_fn
+        self.dataset_loader_fn = dataset_loader_fn
+        self.model_class_name = model_class_name
+        self.model_class_file = model_class_file
+
+        self.model = None
+        self.benchmark_timer = Timer()
+        self.env_setup_timer = Timer()
+        self.setup_timer = Timer()
+        self.load_timer = Timer()
+        self.warmup_timer = Timer()
+        self.input_timer = Timer()
+        self.preprocess_timers = [Timer() for _ in range(workers_per_model)]
+        self.infer_timers = [Timer() for _ in range(workers_per_model)]
+        self.postprocess_timers = [Timer() for _ in range(workers_per_model)]
+        self.e2e_timers = [Timer() for _ in range(workers_per_model)]
+        self.worker_timers = [Timer() for _ in range(workers_per_model)]
+        self.n_infs = [0] * workers_per_model
+        self.process_id = 0
+        self.benchmarking = False
+        self.benchmarking_lock = threading.Lock()
+        self.status_lock = threading.Lock()
+        self.status = "ready"
+        self.error = None
+
+    def _status(self, status, error=None):
+        """Update internal status, unless a previous error has occurred."""
+        with self.status_lock:
+            if self.status == ERROR:
+                return
+            self.status = status
+            if error:
+                self.error = error
+
+    def next_input(self):
+        self.input_lock.acquire()
+        self.input_timer.start()
+        try:
+            return next(self.input_iter)
+        finally:
+            self.input_timer.stop()
+            self.input_lock.release()
+
+    def prepare_inputs(self):
+        """Prepares input iterator; runs an optional custom setup function."""
+        if self.dataset_loader_fn:
+
+            def input_iter():
+                dataset_loader = self.dataset_loader_fn(self.inputs, self.workers_per_model)
+                while True:
+                    inputs = next(dataset_loader)
+                    yield inputs if isinstance(inputs, tuple) else (inputs,)
+
+            self.input_iter = input_iter()
+        else:
+
+            def input_iter():
+                inputs = self.inputs if isinstance(self.inputs, tuple) else (self.inputs,)
+                while True:
+                    yield inputs
+
+            self.input_iter = input_iter()
+
+    def load(self):
+        """Loads the model that will be used for benchmarking."""
+        with self.load_timer:
+            self.model = self.load_fn(self.model_filename, device_id=self.device_id)
+
+    def warmup(self):
+        """Warmup the model with a single e2e inference."""
+        with self.warmup_timer:
+            inputs = self.next_input()
+            if self.preprocess_fn:
+                inputs = self.preprocess_fn(*inputs)
+            outputs = self.model(*inputs if isinstance(inputs, tuple) else inputs)
+            if self.postprocess_fn:
+                self.postprocess_fn(outputs)
+        self.n_infs[0] += 1
+
+    def setup(self):
+        """Perform all setup work prior to benchmarking."""
+        self.prepare_inputs()
+
+        if self.env_setup_fn:
+            with self.env_setup_timer:
+                self.env_setup_fn()
+
+        self.load()
+
+        if self.setup_fn:
+            with self.setup_timer:
+                self.setup_fn(self.model)
+
+        self.warmup()
+
+    def infer(self, worker_id) -> tuple:
+        """Execute a single inference."""
+        with self.e2e_timers[worker_id]:
+            inputs = self.next_input()
+            if self.preprocess_fn:
+                with self.preprocess_timers[worker_id]:
+                    inputs = self.preprocess_fn(*inputs)
+            with self.infer_timers[worker_id]:
+                outputs = self.model(*inputs if isinstance(inputs, tuple) else inputs)
+            if self.postprocess_fn:
+                with self.postprocess_timers[worker_id]:
+                    outputs = self.postprocess_fn(outputs)
+        return outputs
+
+    def worker_thread(self, worker_id):
+        """A single worker thread that runs inference until signalled to stop."""
+        n_infs = 0
+        try:
+            log.debug(f"Benchmarker {self.id}, Worker {worker_id} started.")
+            with self.worker_timers[worker_id]:
+                while self.benchmarking and self.status != ERROR:
+                    self.infer(worker_id)
+                    n_infs += 1
+            if self.status == ERROR:
+                log.debug(
+                    f"Benchmarker {self.id}, Worker {worker_id} stopped early due to an error after {n_infs} inferences."
+                )
+        except StopIteration:
+            pass
+        except:
+            trace = "".join(traceback.format_exception(*sys.exc_info()))
+            log.error(
+                f"Benchmarker {self.id}, Worker {worker_id} encountered an error during benchmarking:\n{trace}"
+            )
+            self._status(ERROR, BenchmarkerErrorWrapper(trace))
+        finally:
+            self.n_infs[worker_id] += n_infs
+            log.debug(
+                f"Benchmarker {self.id}, Worker {worker_id} finished after {self.n_infs[worker_id]} inferences."
+            )
+
+    def run(self):
+        with self.benchmarking_lock:
+            if self.benchmarking:
+                raise RuntimeError(
+                    f"Benchmarker {self.id} can't start because it is already running."
+                )
+            self.benchmarking = True
+            self._status("running")
+
+        self.process_id = os.getpid()
+
+        with self.benchmark_timer:
+            try:
+                self.setup()
+            except:
+                trace = "".join(traceback.format_exception(*sys.exc_info()))
+                log.error(f"Benchmarker {self.id} encountered an error during prep:\n{trace}")
+                self._status(ERROR, BenchmarkerErrorWrapper(trace))
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers_per_model) as exe:
+                    for worker_id in range(self.workers_per_model):
+                        exe.submit(self.worker_thread, worker_id)
+
+        if self.benchmarking_lock.acquire(blocking=False):
+            try:
+                self.benchmarking = False
+                self._status("finished")
+            finally:
+                self.benchmarking_lock.release()
+
+    def stop(self):
+        with self.benchmarking_lock:
+            if not self.benchmarking:
+                return
+            self._status("stopping")
+            self.benchmarking = False
+            self.join()
+            self._status("finished")
+
+    def results(self) -> dict:
+        with self.benchmarking_lock:
+            if self.benchmarking:
+                raise RuntimeError("Cannot produce results until benchmarking has completed.")
+            return {
+                "id": self.id,
+                "device_id": self.device_id,
+                "workers_per_model": self.workers_per_model,
+                "n_infs": sum(self.n_infs),
+                "status": self.status,
+                "process_id": self.process_id,
+                "total_s": self.benchmark_timer.total_duration("s"),
+                "timers": {
+                    "env_setup": [self.env_setup_timer],
+                    "setup": [self.setup_timer],
+                    "load": [self.load_timer],
+                    "input": [self.input_timer],
+                    "warmup": [self.warmup_timer],
+                    "preprocess": self.preprocess_timers,
+                    "infer": self.infer_timers,
+                    "postprocess": self.postprocess_timers,
+                    "e2e": self.e2e_timers,
+                    "worker": self.worker_timers,
+                },
+            }
+
+
+class StatsThread(threading.Thread):
+    """A thread to collect some system metrics during benchmarking."""
+
+    def __init__(self, interval: float):
+        super().__init__()
+        self.interval = interval
+        self.cpu_percents = []
+        self.mem_percents = []
+        self.running = True
+
+    def run(self):
+        while self.running:
+            cpu_percent = psutil.cpu_percent(interval=self.interval, percpu=False)
+            mem_percent = psutil.virtual_memory()[2]
+            self.cpu_percents.append(cpu_percent)
+            self.mem_percents.append(mem_percent)
+
+    def join(self, **kwargs):
+        self.running = False
+        super().join(**kwargs)
+
+
+def _combine_results(results: List[dict]) -> dict:
+    """Combines the results of multiple benchmarkers into a single results structure."""
+    combined_results = {}
+    for result in results:
+        combined_results.setdefault("workers_per_model", result["workers_per_model"])
+        combined_results["status"] = (
+            result["status"] if combined_results.get("status", "") != ERROR else ERROR
+        )
+        combined_results["n_infs"] = combined_results.get("n_infs", 0) + result["n_infs"]
+        combined_results["total_s"] = max(combined_results.get("total_s", 0), result["total_s"])
+        timers = combined_results.get("timers", {})
+        for k, v in result["timers"].items():
+            timer_list = timers.get(k, [])
+            timer_list.extend(v)
+            timers[k] = timer_list
+        combined_results["timers"] = timers
+    return combined_results
+
+
+def _get_num_workers(pipeline_size: int) -> int:
+    """Returns a best-guess number of worker threads for a single benchmarking process."""
+    return 2 if pipeline_size == 1 else pipeline_size - 1
+
+
+def get_instance_type() -> str:
+    """Try to obtain the maximum number of NeuronCores available on this instance."""
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            "http://169.254.169.254/latest/meta-data/instance-type"
+        ) as response:
+            instance_type = response.read().decode("utf-8")
+        log.debug("Automatically determined instance type: {}".format(instance_type))
+        return instance_type
+    except:
+        return None
+
+
+def _get_cost_per_hour(instance_type: str) -> float:
+    instancetype_to_cost = {
+        "inf1.xlarge": 0.228,
+        "inf1.2xlarge": 0.362,
+        "inf1.6xlarge": 1.18,
+        "inf1.24xlarge": 4.721,
+    }
+    try:
+        return instancetype_to_cost[instance_type]
+    except:
+        return None
+
+
+def _get_max_neuroncores(instance_type: str = None) -> int:
+    """Try to obtain the maximum number of NeuronCores available on this instance."""
+    instancetype_to_neuroncores = {
+        "inf1.xlarge": 4,
+        "inf1.2xlarge": 4,
+        "inf1.6xlarge": 16,
+        "inf1.24xlarge": 64,
+    }
+    try:
+        if not instance_type:
+            instance_type = get_instance_type()
+        return instancetype_to_neuroncores[instance_type]
+    except:
+        num_cores = 2
+        log.warning(f"Unknown Neuron device size. Assuming {num_cores} NeuronCores is the maximum.")
+        return num_cores
+
+
+def _get_num_gpus(instance_type: str = None) -> int:
+    """Try to obtain the maximum number of GPUs available on this instance."""
+    instancetype_to_gpus = {
+        "g4dn.xlarge": 1,
+        "g4dn.2xlarge": 1,
+        "g4dn.4xlarge": 1,
+        "g4dn.8xlarge": 1,
+        "g4dn.16xlarge": 1,
+        "g4dn.12xlarge": 4,
+        "g4dn.metal": 8,
+        "g4ad.xlarge": 1,
+        "g4ad.2xlarge": 1,
+        "g4ad.4xlarge": 1,
+        "g4ad.8xlarge": 2,
+        "g4ad.16xlarge": 4,
+        "p4d.24xlarge": 8,
+    }
+    try:
+        if not instance_type:
+            instance_type = get_instance_type()
+        return instancetype_to_gpus[instance_type]
+    except:
+        log.warning("Unknown GPU device size. Assuming 1 GPU is available.")
+        return 1
+
+
+def _get_num_devices(device_type: str, instance_type: str = None) -> int:
+    """This is a stub, to be populated later for other instance types."""
+    if device_type == "neuron":
+        return _get_max_neuroncores(instance_type)
+    elif device_type == "cpu":
+        return multiprocessing.cpu_count()
+    elif device_type == "cuda" or device_type == "gpu":
+        return _get_num_gpus(instance_type)
+    else:
+        log.warning("An unknown device_type was passed: {}".format(device_type))
+        return None
+
+
+def _sanitize_inputs(inputs, batch_sizes: Union[int, List[int]], dataset_inputs=False) -> List[int]:
+    """Return inputs and batch_sizes with matching lengths, or throw an error."""
+    if not isinstance(inputs, list):
+        inputs = [inputs]
+    if isinstance(batch_sizes, int):
+        batch_sizes = [batch_sizes]
+    if not batch_sizes:
+        log.warning(
+            "Batch sizes were not provided, so assuming 1 and only the first input will be benchmarked."
+        )
+        batch_sizes = [1]
+    if not dataset_inputs:
+        if len(batch_sizes) < len(inputs):
+            delta = len(inputs) - len(batch_sizes)
+            log.warning(
+                "Received {} inputs, but only {} batch sizes. Discarding last {} inputs.".format(
+                    len(inputs), len(batch_sizes), delta
+                )
+            )
+            inputs = inputs[: len(batch_sizes)]
+        elif len(inputs) < len(batch_sizes):
+            delta = len(batch_sizes) - len(inputs)
+            log.warning(
+                "Received {} batch sizes, but only {} inputs. Discarding last {} batch sizes.".format(
+                    len(batch_sizes), len(inputs), delta
+                )
+            )
+            batch_sizes = batch_sizes[: len(inputs)]
+    return inputs, batch_sizes
+
+
+def set_verbosity(verbosity: int):
+    r"""
+    Controls the verbosity of NeuronPerf logging.
+
+    :param int verbosity: 0 = error, 1 = info, 2 = debug
+    """
+    if 0 == verbosity:
+        log.setLevel(logging.ERROR)
+    elif 1 == verbosity:
+        log.setLevel(logging.INFO)
+    else:
+        log.setLevel(logging.DEBUG)
+
+
+def compile(
+    compile_fn,
+    model,
+    inputs,
+    batch_sizes: Union[int, List[int]] = None,
+    pipeline_sizes: Union[int, List[int]] = None,
+    performance_levels: Union[str, List[int]] = None,
+    models_dir: str = "models",
+    model_name: str = None,
+    filename: str = None,
+    compiler_args: dict = None,
+    verbosity: int = 1,
+    **kwargs,
+) -> str:
+    r"""
+    Compiles the provided model with each provided example input, pipeline size, and performance level.
+
+    :param model: The model to compile.
+    :param list inputs: A list of example inputs.
+    :param Union[int, List[int]] batch_sizes: A list of batch sizes that correspond to the example inputs.
+    :param Union[int, List[int]] pipeline_sizes: A list of pipeline sizes to use. See :ref:`neuroncore-pipeline`.
+    :param Union[int, List[int]] performance_levels: A list of performance levels to try. Options are: 0 (max accuracy), 1, 2, 3 (max performance, default).  See :ref:`mixed-precision`.
+    :param str models_dir: The directory where compilation artifacts will be stored.
+    :param str model_name: An optional model name tag to apply to compiled artifacts.
+    :param str filename: The name of the model index to write out. If not provided, a name will be generated and returned.
+    :param dict compiler_args: Additional compiler arguments to be forwarded with every compilation.
+    :param int verbosity: 0 = error, 1 = info, 2 = debug
+    :return: A model index filename. If a configuration fails to compile, it will not be included in the index and an error will be logged.
+    :rtype: str
+    """
+    set_verbosity(verbosity)
+
+    if not pipeline_sizes:
+        pipeline_sizes = [1]
+    if not performance_levels:
+        performance_levels = []
+    if not compiler_args:
+        compiler_args = {}
+    if not model_name:
+        if isinstance(model, str):
+            model_name = model
+        else:
+            try:
+                model_name = model.__name__
+            except AttributeError:
+                log.warning("Unable to determine a model name, using 'Model'.")
+                model_name = "Model"
+    if isinstance(pipeline_sizes, int):
+        pipeline_sizes = [pipeline_sizes]
+    if isinstance(performance_levels, int):
+        performance_levels = [performance_levels]
+
+    inputs, batch_sizes = _sanitize_inputs(inputs, batch_sizes)
+
+    if NEURONCORE_PIPELINE_CORES in compiler_args:
+        if pipeline_sizes:
+            log.warning(
+                (
+                    "You provided NeuronCore Pipeline Core sizes using both "
+                    "compiler_args and pipeline_sizes. Ignoring flag in compiler_args."
+                )
+            )
+        else:
+            pipeline_sizes = [compiler_args[NEURONCORE_PIPELINE_CORES]]
+        del compiler_args[NEURONCORE_PIPELINE_CORES]
+
+    if FAST_MATH in compiler_args:
+        if performance_levels:
+            log.warning(
+                (
+                    f"You provided performance_levels and {FAST_MATH}. "
+                    "Ignoring flag in compiler_args."
+                )
+            )
+        del compiler_args[FAST_MATH]
+
+    max_performance = max(FAST_MATH_OPTIONS)
+    performance_levels_invalid = list(
+        filter(
+            lambda level: level < min(FAST_MATH_OPTIONS) or level > max_performance,
+            performance_levels,
+        )
+    )
+    if performance_levels_invalid:
+        log.warning(
+            "You provided some invalid performance_levels. Ignoring: {}".format(
+                performance_levels_invalid
+            )
+        )
+        performance_levels = [
+            level
+            for level in performance_levels
+            if (level in performance_levels) and (level not in performance_levels_invalid)
+        ]
+
+    if not performance_levels:
+        performance_levels.append(max_performance)
+
+    os.makedirs(models_dir, exist_ok=True)
+
+    model_idxs = []
+
+    def make_index():
+        """Create a model index file that contains info about all compiled models."""
+        index = model_index.append(*model_idxs)
+        return model_index.save(index, filename=filename)
+
+    compile_idx = 1
+    n_compiles = len(inputs) * len(pipeline_sizes) * len(performance_levels)
+    for input_idx, example_input in enumerate(inputs):
+        batch_size = batch_sizes[input_idx]
+        for pipeline_size in pipeline_sizes:
+            for performance_level in performance_levels:
+                _compiler_args = copy.copy(compiler_args)
+                _compiler_args[FAST_MATH] = FAST_MATH_OPTIONS[performance_level]
+                if pipeline_size != 1:
+                    _compiler_args[NEURONCORE_PIPELINE_CORES] = str(pipeline_size)
+
+                model_name_ex = "{}_b{}_p{}_{}".format(
+                    model_name,
+                    batch_size,
+                    pipeline_size,
+                    model_index.generate_id(),
+                )
+                log.info(
+                    (
+                        f"Compiling batch size {batch_size} for {pipeline_size} NeuronCore(s) with performance level "
+                        f"{performance_level}/{max_performance}. [{compile_idx}/{n_compiles}]"
+                    )
+                )
+                status = "ready"
+                timer = Timer()
+                with timer:
+                    try:
+                        model_filename = compile_fn(
+                            model,
+                            example_input,
+                            models_dir,
+                            model_name_ex,
+                            compiler_args=_compiler_args,
+                            **kwargs,
+                        )
+                        status = "finished"
+                    except KeyboardInterrupt:
+                        status = "error"
+                        model_filename = None
+                        log.error("Compilation interrupted, terminating.")
+                        return make_index()
+                    except:
+                        status = "error"
+                        model_filename = None
+                        log.exception(
+                            (
+                                f"Failed to compile input={input_idx}, "
+                                f"batch_size={batch_size}, "
+                                f"pipeline_size={pipeline_size}, "
+                                f"performance_level={performance_level}."
+                            )
+                        )
+                    finally:
+                        model_idx = model_index.create(
+                            model_filename,
+                            model_name=model_name,
+                            batch_size=batch_size,
+                            pipeline_size=pipeline_size,
+                            performance_level=performance_level,
+                            compile_s=round(timer.total_duration("s"), 2),
+                            status=status,
+                        )
+                        model_idxs.append(model_idx)
+                        filename = make_index()
+                compile_idx += 1
+    return filename
+
+
+def run_benchmarker(benchmarker, duration, pipe=None):
+    def _send(results):
+        if pipe:
+            pipe.send(results)
+            pipe.close()
+        else:
+            return results
+
+    try:
+        log.debug(f"Benchmarker {benchmarker.id} started.")
+        check_freq = 0.1
+        start_time = time.time()
+        benchmarker.start()
+        elapsed = 0
+        while (elapsed < duration) and benchmarker.benchmarking:
+            elapsed = time.time() - start_time
+            remaining = max(0, duration - elapsed)
+            time.sleep(min(check_freq, remaining))
+        benchmarker.stop()
+    except:
+        trace = "".join(traceback.format_exception(*sys.exc_info()))
+        error = BenchmarkerErrorWrapper(trace)
+        return _send(error)
+    else:
+        results = benchmarker.results() if benchmarker.status != ERROR else benchmarker.error
+        return _send(results)
+    finally:
+        log.debug(f"Benchmarker {benchmarker.id} finished.")
+
+
+def _run_benchmarker_new_interpreter(benchmarker, duration):
+    """
+    This function is a workaround for frameworks that cannot be safely forked.
+    The premise is to launch a new Python interpreter and run benchmarking
+    from within the new interpreter. It works by writing serialized benchmarkers
+    to temporary files, and then launching run_benchmark_file.py. The script
+    writes back serialized results.
+    """
+
+    setattr(benchmarker, "_stderr", None)
+
+    script = run_benchmark_file.__file__
+
+    f = tempfile.NamedTemporaryFile(delete=False)
+    log.debug("Dumping Benchmarker {} to file '{}'.".format(benchmarker.id, f.name))
+    try:
+        dill.dump(benchmarker, f)
+    except dill.PicklingError:
+        raise dill.PicklingError(
+            (
+                "NeuronPerf was unable to serialize the benchmarker. This is probably because your model "
+                "could not be serialized. Make sure to use top-level classes instead of locals. You may "
+                "need to wrap your model and manually load it using Python's importlib."
+            )
+        )
+    f.close()
+
+    command = [
+        sys.executable,
+        script,
+        f.name,
+        str(duration),
+    ]
+
+    if benchmarker.model_class_name and benchmarker.model_class_file:
+        command.append(f"--model_class_name={benchmarker.model_class_name}")
+        command.append(f"--model_class_file={benchmarker.model_class_file}")
+
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8"
+    )
+
+    timeout = 60 + duration
+
+    try:
+        outs, errs = proc.communicate(timeout=timeout)
+        with open(f.name, "rb") as fp:
+            result = dill.load(fp)
+        if isinstance(result, BenchmarkerErrorWrapper):
+            raise ChildProcessError(
+                "Benchmarker {} encountered an error:\n{}".format(benchmarker.id, result.trace)
+            )
+        if isinstance(result, Benchmarker):
+            from pathlib import Path
+
+            path = Path(f.name)
+            logs = os.path.join(path.parent, "neuronperf_error_{}".format(str(path.stem)))
+            if os.path.exists(logs):
+                with open(logs, "rt") as logs_fp:
+                    err_logs = logs_fp.readlines()
+                os.unlink(logs)
+                raise ChildProcessError(
+                    "Benchmarker {} failed. Logs from child process:\n{}".format(
+                        benchmarker.id, "".join(err_logs)
+                    )
+                )
+            else:
+                raise ChildProcessError(
+                    (
+                        "Benchmarker {} failed and no error logs were found. A child process may have "
+                        "aborted. To obtain a stack trace, try running a single configuration inside a "
+                        "single process by passing multiprocess=False, multiinterpreter=False"
+                    )
+                )
+
+        return result
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise ChildProcessError(
+            "Benchmarker {} stopped responding after {} seconds.".format(benchmarker.id, timeout)
+        )
+    finally:
+        os.unlink(f.name)
+
+
+def _run_benchmarkers_multiprocess(
+    benchmarkers: List[Benchmarker], duration: int, benchmark_func=run_benchmarker
+) -> dict:
+    results = []
+    pipes, procs = [], []
+    for benchmarker in benchmarkers:
+        parent_pipe, child_pipe = multiprocessing.Pipe()
+        pipes.append(parent_pipe)
+        proc = multiprocessing.Process(
+            target=benchmark_func, args=(benchmarker, duration, child_pipe)
+        )
+        procs.append(proc)
+    for proc in procs:
+        proc.start()
+    for id, (pipe, proc) in enumerate(zip(pipes, procs)):
+        try:
+            proc_result = pipe.recv()
+            if isinstance(proc_result, BenchmarkerErrorWrapper):
+                log.error("Child process encountered an error:\n{}".format(proc_result.trace))
+                raise ChildProcessError()
+            proc.join()
+            results.append(proc_result)
+        except KeyboardInterrupt:
+            log.error("Benchmarking interrupted, terminating.")
+            for proc in procs:
+                proc.terminate()
+            raise KeyboardInterrupt()
+        except EOFError:
+            log.error(
+                (
+                    f"Child process {id} was killed by the host OS during benchmarking.\n"
+                    "You may have run out of memory.\n"
+                    "Verify that your model can perform inference without NeuronPerf or try n_models=1."
+                )
+            )
+    return _combine_results(results)
+
+
+def _run_benchmarkers_multithreaded(
+    benchmarkers: List[Benchmarker], duration: int, benchmark_func=run_benchmarker
+) -> dict:
+    results = []
+    timeout = 60 + duration
+    try:
+        args = ((benchmarker, duration) for benchmarker in benchmarkers)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(benchmarkers)) as exe:
+            results.extend(exe.map(lambda arg: benchmark_func(*arg), args, timeout=timeout))
+        for result in results:
+            if isinstance(result, BenchmarkerErrorWrapper):
+                raise RuntimeError("Worker thread encountered an error:\n{}".format(result.trace))
+    except concurrent.futures.TimeoutError:
+        log.error("Benchmarking timed out after {} seconds.".format(timeout))
+    except KeyboardInterrupt:
+        raise KeyboardInterrupt("Benchmarking interrupted, terminating.")
+    return _combine_results(results)
+
+
+def run_benchmarkers(
+    benchmarkers: List[Benchmarker],
+    duration: int,
+    stats_interval: float = 0.5,
+    multiprocess: bool = True,
+    multiinterpreter: bool = False,
+) -> dict:
+    results = {}
+
+    stats_thread = StatsThread(stats_interval)
+    stats_thread.start()
+
+    try:
+        if multiinterpreter:
+            if not sys.executable:
+                raise ValueError(
+                    (
+                        "Unable to benchmark in multi-interpreter mode because "
+                        "the Python interpreter cannot be located (sys.executable is empty)."
+                    )
+                )
+            results = _run_benchmarkers_multithreaded(
+                benchmarkers, duration, benchmark_func=_run_benchmarker_new_interpreter
+            )
+        elif multiprocess:
+            results = _run_benchmarkers_multiprocess(benchmarkers, duration)
+        else:
+            results = _run_benchmarkers_multithreaded(benchmarkers, duration)
+    finally:
+        stats_thread.join()
+        results["cpu_percents"] = stats_thread.cpu_percents
+        results["mem_percents"] = stats_thread.mem_percents
+
+    return results
+
+
+def _get_env_setup_fn(benchmarker_id: int, benchmarker_config: dict, env_setup_fn):
+    """Wrap an environment setup function with device-specific requirements."""
+    device_type = str(benchmarker_config["device_type"]).lower().strip()
+    legacy = bool(os.environ.get("NEURONCORE_GROUP_SIZES"))
+    if "neuron" == device_type:
+
+        @functools.wraps(env_setup_fn)
+        def _env_setup_fn():
+            import os
+
+            id = benchmarker_id
+            config = benchmarker_config
+            pipeline_size = config["pipeline_size"]
+            if config["multiprocess"] or config["multiinterpreter"]:
+                min_core = pipeline_size * id
+                max_core = min_core + (pipeline_size - 1)
+                visible_cores = f"{min_core}-{max_core}"
+
+                if legacy:
+                    os.environ["NEURONCORE_GROUP_SIZES"] = str(pipeline_size)
+                else:
+                    os.environ["NEURON_RT_VISIBLE_CORES"] = visible_cores
+            else:
+                n_models = config["n_models"]
+                if legacy:
+                    os.environ["NEURONCORE_GROUP_SIZES"] = ",".join([str(pipeline_size)] * n_models)
+                else:
+                    os.environ["NEURON_RT_VISIBLE_CORES"] = "0-{}".format(
+                        n_models * pipeline_size - 1
+                    )
+
+            if env_setup_fn:
+                env_setup_fn(id, config)
+
+        return _env_setup_fn
+    elif device_type == "cpu":
+        return env_setup_fn
+    elif device_type == "cuda" or device_type == "gpu":
+
+        @functools.wraps(env_setup_fn)
+        def _env_setup_fn():
+            import os
+
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(benchmarker_id)
+
+            if env_setup_fn:
+                env_setup_fn(benchmarker_id, benchmarker_config)
+
+        return _env_setup_fn
+    else:
+        log.warning(
+            (
+                f"NeuronPerf does not implement a proper environment setup for {device_type}. "
+                "You may need to provide your own."
+            )
+        )
+        return env_setup_fn
+
+
+def _get_setup_fn(benchmarker_id: int, benchmarker_config: dict, setup_fn):
+    """Wraps a customer provided setup function with additional info from the benchmarker."""
+    if not setup_fn:
+        return None
+
+    @functools.wraps(setup_fn)
+    def _setup_fn(model):
+        setup_fn(benchmarker_id, benchmarker_config, model)
+
+    return _setup_fn
+
+
+def _get_device_id(benchmarker_id: int, benchmarker_config: dict):
+    """Calculate an appropriate device id for a benchmarker object."""
+    device_id = benchmarker_id
+    device_type = str(benchmarker_config["device_type"]).lower().strip()
+    if device_type in SUPPORTED_DEVICE_TYPES:
+        if not (benchmarker_config["multiprocess"] or benchmarker_config["multiinterpreter"]):
+            device_id = benchmarker_id * benchmarker_config["pipeline_size"]
+        return device_id
+    else:
+        log.warning(
+            "Assuming device_id={} for benchmarker_id={} for unknown device_type={}".format(
+                device_id, benchmarker_id, device_type
+            )
+        )
+    return device_id
+```
+
+## feature-guide.rst
+
+```python
+# Configure, initialize, and compile a model.
+model = NeuronLlamaForCausalLM(model_path, config)
+model.compile(compiled_model_path)
 ```
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
-
-@nki.jit(platform_target="trn2")
-def matrix_multiply_kernel(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation in a tiled manner
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        128.  It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  # Verify that the lhsT and rhs have the same contraction dimension.
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
- 
-  # Lookup the device matrix multiply dimensions.
-  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-  TILE_K = nl.tile_size.pmax  # 128
-  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
- 
-  # Verify that the input matrices are a multiple of the tile dimensions.
-  assert M % TILE_M == 0, \
-    f"Expected M, {M}, to be a multiple of stationary free-dimension max, {TILE_M}"
-  assert N % TILE_N == 0, \
-    f"Expected N, {N}, to be a multiple of moving free-dimension max, {TILE_N}"
-  assert K % TILE_K == 0, \
-    f"Expected K, {K}, to be a multiple of the partition dimension max, {TILE_K}"
- 
-  # Create a space for the result in HBM (uninitialized)
-  result = nl.ndarray(shape=(M, N), dtype=lhsT.dtype, buffer=nl.hbm)
- 
-  # Use affine_range to loop over tiles
-  for m in nl.affine_range(M // TILE_M):
-    for n in nl.affine_range(N // TILE_N):
-      # Allocate a tensor in PSUM (uninitialized)
-      result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                           dtype=nl.float32,
-                           buffer=nl.psum)
- 
-      for k in nl.affine_range(K // TILE_K):
-        # Declare the tiles on SBUF (uninitialized)
-        lhsT_tile = nl.ndarray(shape=(TILE_K, TILE_M),
-                           dtype=lhsT.dtype,
-                           buffer=nl.sbuf)
-        rhs_tile = nl.ndarray(shape=(TILE_K, TILE_N),
-                          dtype=rhs.dtype,
-                          buffer=nl.sbuf)
- 
-        # Load tiles from lhsT and rhs
-        nisa.dma_copy(dst=lhsT_tile, 
-                  src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                           m * TILE_M:(m + 1) * TILE_M])
-        nisa.dma_copy(dst=rhs_tile,
-                  src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                          n * TILE_N:(n + 1) * TILE_N])
- 
-        # Accumulate partial-sums into PSUM
-        nisa.nc_matmul(dst=result_tile, stationary=lhsT_tile, moving=rhs_tile)
- 
-      # Copy the result from PSUM back to SBUF, and cast to expected
-      # output data-type
-      result_tmp = nl.ndarray(shape=(TILE_M, TILE_N),
-                          dtype=nl.float32,
-                          buffer=nl.sbuf)
-      nisa.tensor_copy(dst=result_tmp, src=result_tile)
-
-      # Copy the result from SBUF to HBM.
-      nisa.dma_copy(dst=result[m * TILE_M:(m + 1) * TILE_M,
-                           n * TILE_N:(n + 1) * TILE_N],
-                src=result_tmp)
- 
-  return result
+neuron_config = NeuronConfig(logical_nc_config=2)
 ```
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
-
-@nki.jit(platform_target="trn2")
-def matrix_multiply_kernel(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation in a tiled manner
-     while hoisting the load of the lhsT and rhs to outer loops.
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        128.  It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  # Verify that the lhsT and rhs are the expected sizes.
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-  result = nl.ndarray(shape=(M, N), dtype=nl.float32, buffer=nl.hbm)
-
-  # Lookup the device matrix multiply dimensions.
-  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-  TILE_K = nl.tile_size.pmax  # 128
-  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
-
-  # Verify that the input matrices are a multiple of the tile dimensions.
-  assert M % TILE_M == 0, \
-    f"Expected M, {M}, to be a multiple of stationary free-dimension max, {TILE_M}"
-  assert N % TILE_N == 0, \
-    f"Expected N, {N}, to be a multiple of moving free-dimension max, {TILE_N}"
-  assert K % TILE_K == 0, \
-    f"Expected K, {K}, to be a multiple of the partition dimension max, {TILE_K}"
-
-  # Use affine_range to loop over tiles
-  for m in nl.affine_range(M // TILE_M):
-    # Load a whole column tiles from lhsT (with K * TILE_M numbers)
-    # This corresponds to the whole row in the original lhs
-    lhsT_tiles = []
-    for k in nl.affine_range(K // TILE_K):
-      # Allocate space in SBUF for the tile (uninitialized)
-      lhsT_tile = nl.ndarray(shape=(TILE_K, TILE_M),
-                           dtype=lhsT.dtype,
-                           buffer=nl.sbuf)
-      # Copy the tile from HBM to SBUF
-      nisa.dma_copy(dst=lhsT_tile, 
-                  src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                         m * TILE_M:(m + 1) * TILE_M])
-      # Append the tile to the list of tiles.
-      lhsT_tiles.append(lhsT_tile)
-
-    for n in nl.affine_range(N // TILE_N):
-      # Load a whole column tiles from rhs (with K * TILE_N numbers)
-      rhs_tiles = []
-      for k in nl.affine_range(K // TILE_K):
-        # Allocate space in SBUF for the tile (uninitialized)
-        rhs_tile = nl.ndarray(shape=(TILE_K, TILE_N),
-                          dtype=rhs.dtype,
-                          buffer=nl.sbuf)
-        # Copy the tile from HBM to SBUF
-        nisa.dma_copy(dst=rhs_tile,
-                  src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                          n * TILE_N:(n + 1) * TILE_N])
-        # Append the tile to the list of tiles.
-        rhs_tiles.append(rhs_tile)
-
-      # Allocate a tile in PSUM for the result
-      result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                           dtype=nl.float32,
-                           buffer=nl.psum)
-      for k in nl.affine_range(K // TILE_K):
-        # Accumulate partial-sums into PSUM
-        nisa.nc_matmul(dst=result_tile,
-                   stationary=lhsT_tiles[k],
-                   moving=rhs_tiles[k])
-
-      # Copy the result from PSUM back to SBUF, and cast to expected
-      # output data-type
-      result_tmp = nl.ndarray(shape=(TILE_M, TILE_N),
-                          dtype=nl.float32,
-                          buffer=nl.sbuf)
-      nisa.tensor_copy(dst=result_tmp, src=result_tile)
-
-      # Copy the result from SBUF to HBM.
-      nisa.dma_copy(dst=result[m * TILE_M:(m + 1) * TILE_M,
-                           n * TILE_N:(n + 1) * TILE_N],
-                src=result_tmp)
-
-  return result
+neuron_config = NeuronConfig(sequence_parallel_enabled=True)
 ```
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
+from neuronx_distributed_inference.utils.hf_adapter import HuggingFaceGenerationAdapter
 
-@nki.jit(platform_target="trn2")
-def matrix_multiply_kernel(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation while blocking the
-     free dimensions of the LHS and RHS to improve memory access pattern.
-  
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        1.    It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-  
-  # Verify that the lhsT and rhs have the same contraction dimension.
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-  
-  # Lookup the device matrix multiply dimensions.
-  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-  TILE_K = nl.tile_size.pmax  # 128
-  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
-  
-  # Configuring the blocking size for the free dimensions
-  TILES_IN_BLOCK_M = 2
-  TILES_IN_BLOCK_N = 2
-  
-  BLOCK_M = TILE_M * TILES_IN_BLOCK_M  # 256
-  BLOCK_N = TILE_N * TILES_IN_BLOCK_N  # 1024
-  
-  # the size has to be multiple of block size
-  assert M % BLOCK_M == 0, f"Expected M ({M}) to be divisible by BLOCK_M ({BLOCK_M})"
-  assert N % BLOCK_N == 0, f"Expected N ({N}) to be divisible by BLOCK_N ({BLOCK_N})"
+# Init Neuron model, HuggingFace tokenizer, HuggingFace and generation config.
 
-  # Create a space for the result in HBM (not initialized)
-  result = nl.ndarray(shape=(M, N), dtype=lhsT.dtype, buffer=nl.hbm)
-  
-  # Loop over blocks over the M dimension
-  for m in nl.affine_range(M // BLOCK_M):
-    # Load TILES_IN_BLOCK_M columns tiles from lhsT
-    lhsT_tiles = []
-    for bm in nl.affine_range(TILES_IN_BLOCK_M):
-      # Inner tile array.
-      lhsT_tiles_internal = []
-      for k in nl.affine_range(K // TILE_K):
-        # Allocate space in SBUF for the tile (uninitialized)
-        lhsT_tile = nl.ndarray(shape=(TILE_K, TILE_M),
-                               dtype=lhsT.dtype,
-                               buffer=nl.sbuf)
-        # Copy the tile from HBM to SBUF
-        nisa.dma_copy(dst=lhsT_tile,
-                src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                     (m * TILES_IN_BLOCK_M + bm) *
-                     TILE_M:((m * TILES_IN_BLOCK_M + bm) + 1) *
-                     TILE_M])
-        # Append the tile to the inner list of tiles.
-        lhsT_tiles_internal.append(lhsT_tile)
-      # Append the inner list of tiles into the outer list of tiles.
-      lhsT_tiles.append(lhsT_tiles_internal)
-  
-    for n in nl.affine_range(N // BLOCK_N):
-      # Load TILES_IN_BLOCK_N columns from rhs
-      rhs_tiles = []
-      for bn in nl.affine_range(TILES_IN_BLOCK_N):
-        # Inner tile array.
-        rhs_tiles_internal = []
-        for k in nl.affine_range(K // TILE_K):
-          # Allocate space in SBUF for the tile (uninitialized)
-          rhs_tile = nl.ndarray(shape=(TILE_K, TILE_N),
-                                dtype=rhs.dtype,
-                                buffer=nl.sbuf)
-          # Copy the tile from HBM to SBUF
-          nisa.dma_copy(dst=rhs_tile,
-                src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                    (n * TILES_IN_BLOCK_N + bn) *
-                    TILE_N:((n * TILES_IN_BLOCK_N + bn) + 1) *
-                    TILE_N])
-          # Append the tile to the inner list of tiles.
-          rhs_tiles_internal.append(rhs_tile)
-        # Append the inner list of tiles into the outer list of tiles.
-        rhs_tiles.append(rhs_tiles_internal)
-  
-      for bm in nl.affine_range(TILES_IN_BLOCK_M):
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          # Allocate a tensor in PSUM
-          result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                                   dtype=nl.float32,
-                                   buffer=nl.psum)
-          for k in nl.affine_range(K // TILE_K):
-            # Accumulate partial-sums into PSUM
-            nisa.nc_matmul(dst=result_tile,
-                           stationary=lhsT_tiles[bm][k],
-                           moving=rhs_tiles[bn][k])
-  
-          # Copy the result from PSUM back to SBUF, and cast to expected
-          # output data-type
-          result_tmp = nl.ndarray(shape=result_tile.shape,
-                                  dtype=result.dtype,
-                                  buffer=nl.sbuf)
-          nisa.tensor_copy(dst=result_tmp, src=result_tile)
+# Run generation with HuggingFaceGenerationAdapter.
+generation_model = HuggingFaceGenerationAdapter(model)
+inputs = tokenizer(prompts, padding=True, return_tensors="pt")
+outputs = generation_model.generate(
+    inputs.input_ids,
+    generation_config=generation_config,
+    attention_mask=inputs.attention_mask,
+    max_length=model.neuron_config.max_length,
+    **kwargs,
+)
 
-          # Copy the result from SBUF to HBM.
-          nisa.dma_copy(dst=result[(m * TILES_IN_BLOCK_M + bm) *
-                                   TILE_M:((m * TILES_IN_BLOCK_M + bm) + 1) *
-                                   TILE_M,
-                                   (n * TILES_IN_BLOCK_N + bn) *
-                                   TILE_N:((n * TILES_IN_BLOCK_N + bn) + 1) *
-                                   TILE_N],
-                        src=result_tmp)
-  
-  return result
+output_tokens = tokenizer.batch_decode(
+    outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False
+)
+
+print("Generated outputs:")
+for i, output_token in enumerate(output_tokens):
+    print(f"Output {i}: {output_token}")
 ```
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
+on_device_sampling_config = OnDeviceSamplingConfig(global_topk=256)
+neuron_config = NeuronConfig(on_device_sampling_config=on_device_sampling_config)
+```
 
-@nki.jit(platform_target="trn2")
-def matrix_multiply_kernel(
-    lhsT,
-    rhs,
-    # Meta-parameters
-    TILES_IN_BLOCK_M=16,
-    TILES_IN_BLOCK_N=2,
-    TILES_IN_BLOCK_K=8,
-):
-  """NKI kernel to compute a large matrix multiplication efficiently by
-     blocking all dimensions and doing layout optimization.
-  
-  Args:
-      lhsT: an input tensor of shape [K,M], where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and M is a multiple of 128 * TILES_IN_BLOCK_M.  It is the
-        left-hand-side argument of the matrix multiplication, delivered transposed
-        for optimal performance.
-      rhs: an input tensor of shape [K,N],  where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and N is a multiple of 512 * TILES_IN_BLOCK_N.  It is
-        the right-hand-side argument of the matrix multiplication.
-      TILES_IN_BLOCK_*: meta parameters to control blocking dimensions
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
+```python
+on_device_sampling_config = OnDeviceSamplingConfig(dynamic=True)
+neuron_config = NeuronConfig(on_device_sampling_config=on_device_sampling_config)
+```
 
-  # Verify that the lhsT and rhs have the same contraction dimension.
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+```python
+sampling_params = torch.tensor([[50, 0.5, 0.75], [5, 1.0, 1.0]])
+```
 
-  # Lookup the device matrix multiply dimensions.
-  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-  TILE_K = nl.tile_size.pmax  # 128
-  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
+```python
+on_device_sampling_config = OnDeviceSamplingConfig(top_k=5)
+```
 
-  # Compute the block dimensions.
-  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
-  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
-  BLOCK_K = TILE_K * TILES_IN_BLOCK_K
+```python
+neuron_config = NeuronConfig(fused_qkv=True)
+```
 
-  # the size has to be multiple of block size
-  assert M % BLOCK_M == 0, \
-    f"Expected M {M} to be divisble by {BLOCK_M} when there are {TILES_IN_BLOCK_M}"
-  assert N % BLOCK_N == 0, \
-    f"Expected N {N} to be divisble by {BLOCK_N} when there are {TILES_IN_BLOCK_N}"
-  assert K % BLOCK_K == 0, \
-    f"Expected K {K} to be divisble by {BLOCK_K} when there are {TILES_IN_BLOCK_K}"
+```python
+neuron_config = NeuronConfig(enable_bucketing=True)
+```
 
-  # Create a space for the result in HBM (not initialized)
-  result = nl.ndarray(shape=(M,N), dtype=nl.float32, buffer=nl.hbm)
+```python
+neuron_config = NeuronConfig(
+    enable_bucketing=True,
+    context_encoding_buckets=[1024, 2048, 4096],
+    token_generation_buckets=[8192]
+)
+```
 
-  # Compute the number of blocks in each dimension
-  NUM_BLOCK_M = M // BLOCK_M
-  NUM_BLOCK_N = N // BLOCK_N
-  NUM_BLOCK_K = K // BLOCK_K
+```python
+from neuronx_distributed_inference.models.config import NeuronConfig
+from neuronx_distributed_inference.models.llama.modeling_llama import (
+    LlamaInferenceConfig,
+    NeuronLlamaForCausalLM
+)
+from neuronx_distributed_inference.utils.hf_adapter import load_pretrained_config
 
-  # Blocking N dimension (the RHS free dimension)
-  for n in nl.affine_range(NUM_BLOCK_N):
-    # Create the initial result tiles in SBUF and initialize each tile to
-    # 0.0, since the final results will be accumulated here.
-    result_tmps = []
-    for m_idx in range(NUM_BLOCK_M):
-      block_m = []
-      for bm_idx in range(TILES_IN_BLOCK_M):
-        block_n = []
-        for bn_idx in range(TILES_IN_BLOCK_N):
-          # Create the result tile (uninitialized)
-          tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                            dtype=lhsT.dtype,
-                            buffer=nl.sbuf)
-          # Initialize the tile 0.0
-          nisa.memset(dst=tile, value=0.0)
-          # Append the tile to block_n array.
-          block_n.append(tile)
-        # Append block_n array to block_m array.
-        block_m.append(block_n)
-      # Append block_m array into result_tmps.
-      result_tmps.append(block_m)
+model_path = "/home/ubuntu/models/Llama-3.1-8B"
+quantized_model_path = "/home/ubuntu/models/Llama-3.1-8B-quantized"
 
-    # Blocking K dimension (the contraction dimension)
-    # Use `sequential_range` because we do not want the compiler to
-    # change this loop by, for example, vectorizing it
-    for k in nl.sequential_range(NUM_BLOCK_K):
-      # Loading tiles from rhs setting the load tile to
-      # `TILE_K x BLOCK_SIZE_N` to optimize DMA performance
-      rhs_tiles = []
-      for bk_r in range(TILES_IN_BLOCK_K):
-        # Allocate rhs_tile tensor, TILE_K x BLOCK_N
-        rhs_tile = nl.ndarray(shape=(TILE_K, BLOCK_N),
-                              dtype=rhs.dtype,
-                              buffer=nl.sbuf)
-        # Copy block tile from rhs, to rhs_tile.
-        nisa.dma_copy(dst=rhs_tile[0:TILE_K, 0:BLOCK_N],
-                      src=rhs[(TILES_IN_BLOCK_K * k + bk_r) *
-                              TILE_K:(TILES_IN_BLOCK_K * k + bk_r + 1) * TILE_K,
-                              BLOCK_N * n:BLOCK_N * (n + 1)])
-        # Append rhs_tile to rhs_tiles.
-        rhs_tiles.append(rhs_tile)
+neuron_config = NeuronConfig(
+    quantized=True,
+    quantized_checkpoints_path=quantized_model_path,
+    quantization_dtype="int8",
+    quantization_type="per_tensor_symmetric"
+)
 
-      # Blocking M dimension (the LHS free dimension)
-      for m in nl.affine_range(NUM_BLOCK_M):
-        # Loading tiles from lhsT
-        lhsT_tiles = []
-        for bk_l in nl.affine_range(TILES_IN_BLOCK_K):
-          # Allocate lhsT_tile tensor, BLOCK_M x TILE_K
-          lhsT_tile = nl.ndarray(shape=(TILE_K, BLOCK_M),
-                                 dtype=lhsT.dtype,
-                                 buffer=nl.sbuf)
-          # Copy block tile from lhsT, to lhsT_tile.
-          nisa.dma_copy(dst=lhsT_tile[0:TILE_K, 0:BLOCK_M],
-                        src=lhsT[(TILES_IN_BLOCK_K * k + bk_l) *
-                                 TILE_K:(TILES_IN_BLOCK_K * k + bk_l + 1) * TILE_K,
-                                 BLOCK_M * m:BLOCK_M * (m + 1)])
-          # Append lhsT_tile to lhsT_tiles.
-          lhsT_tiles.append(lhsT_tile)
+config = LlamaInferenceConfig(
+    neuron_config,
+    load_config=load_pretrained_config(model_path)
+)
 
-        # Compute the result tiles
-        for bm in nl.affine_range(TILES_IN_BLOCK_M):
-          for bn in nl.affine_range(TILES_IN_BLOCK_N):
-            for bk in nl.affine_range(TILES_IN_BLOCK_K):
-              # Allocate a tensor in PSUM
-              result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                                       dtype=nl.float32,
-                                       buffer=nl.psum)
-              # Perform matrix multiply
-              nisa.nc_matmul(dst=result_tile,
-                             stationary=lhsT_tiles[bk][0:TILE_K,
-                                                       bm * TILE_M:(bm + 1) * TILE_M],
-                             moving=rhs_tiles[bk][0:TILE_K,
-                                                  bn * TILE_N:(bn + 1) * TILE_N])
+# Quantize the model and save it to `quantized_checkpoints_path`.
+NeuronLlamaForCausalLM.save_quantized_state_dict(model_path, config)
 
-              # Add result to accumulated result
-              nisa.tensor_tensor_add(dst=result_tmps[m][bm][bn],
-                                     src0=result_tmps[m][bm][bn],
-                                     src1=result_tile)
+# Compile, load, and use the model.
+model = NeuronLlamaForCausalLM(model_path, config)
+```
 
-    # Write results to HBM
-    for m_idx in nl.affine_range(NUM_BLOCK_M):
-      for bm_idx in nl.affine_range(TILES_IN_BLOCK_M):
-        for bn_idx in nl.affine_range(TILES_IN_BLOCK_N):
-          nisa.dma_copy(dst=result[(m_idx * TILES_IN_BLOCK_M + bm_idx) *
-                                   TILE_M:((m_idx * TILES_IN_BLOCK_M + bm_idx) + 1) *
-                                   TILE_M,
-                                   (n * TILES_IN_BLOCK_N + bn_idx) *
-                                   TILE_N:((n * TILES_IN_BLOCK_N + bn_idx) + 1) *
-                                   TILE_N],
-                        src=result_tmps[m_idx][bm_idx][bn_idx])
+```python
+neuron_config = NeuronConfig(kv_cache_quant=True)
+```
 
-  return result
+```python
+import copy
+
+from transformers import AutoTokenizer, GenerationConfig
+
+from neuronx_distributed_inference.models.config import NeuronConfig
+from neuronx_distributed_inference.models.llama.modeling_llama import (
+    LlamaInferenceConfig,
+    NeuronLlamaForCausalLM
+)
+from neuronx_distributed_inference.utils.accuracy import get_generate_outputs
+from neuronx_distributed_inference.utils.hf_adapter import load_pretrained_config
+
+prompts = ["I believe the meaning of life is"]
+
+model_path = "/home/ubuntu/models/Llama-3.1-70B"
+draft_model_path = "/home/ubuntu/models/Llama-3.2-3B"
+compiled_model_path = "/home/ubuntu/neuron_models/Llama-3.1-70B"
+compiled_draft_model_path = "/home/ubuntu/neuron_models/Llama-3.2-3B"
+
+# Initialize target model.
+neuron_config = NeuronConfig(
+    speculation_length=5,
+    trace_tokengen_model=False
+)
+config = LlamaInferenceConfig(
+    neuron_config,
+    load_config=load_pretrained_config(model_path)
+)
+model = NeuronLlamaForCausalLM(model_path, config)
+
+# Initialize draft model.
+draft_neuron_config = copy.deepcopy(neuron_config)
+draft_neuron_config.speculation_length = 0
+draft_neuron_config.trace_tokengen_model = True
+draft_config = LlamaInferenceConfig(
+    draft_neuron_config,
+    load_config=load_pretrained_config(draft_model_path)
+)
+draft_model = NeuronLlamaForCausalLM(draft_model_path, draft_config)
+
+# Compile and save models.
+model.compile(compiled_model_path)
+draft_model.compile(compiled_draft_model_path)
+
+# Load models to the Neuron device.
+model.load(compiled_model_path)
+draft_model.load(compiled_draft_model_path)
+
+# Load tokenizer and generation config.
+tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=neuron_config.padding_side)
+generation_config = GenerationConfig.from_pretrained(model_path)
+
+# Run generation.
+_, output_tokens = get_generate_outputs(
+    model,
+    prompts,
+    tokenizer,
+    is_hf=False,
+    draft_model=draft_model,
+    generation_config=generation_config
+)
+
+print("Generated outputs:")
+for i, output_token in enumerate(output_tokens):
+    print(f"Output {i}: {output_token}")
+```
+
+```python
+def load_json_file(json_path):
+    with open(json_path, "r") as f:
+        return json.load(f)
+
+medusa_tree = load_json_file("medusa_mc_sim_7b_63.json")
+
+neuron_config = NeuronConfig(
+    is_medusa=True,
+    medusa_speculation_length=64,
+    num_medusa_heads=4,
+    medusa_tree=medusa_tree
+)
+```
+
+```python
+import copy
+
+from neuronx_distributed_inference.models.config import (
+    FusedSpecNeuronConfig,
+    NeuronConfig,
+    OnDeviceSamplingConfig
+)
+from neuronx_distributed_inference.models.llama.modeling_llama import (
+    NeuronLlamaForCausalLM,
+    NeuronLlamaModel
+)
+from neuronx_distributed_inference.utils.accuracy import get_generate_outputs
+from neuronx_distributed_inference.utils.hf_adapter import load_pretrained_config
+from transformers import AutoTokenizer, GenerationConfig
+
+prompt = "The future of AI is"
+
+model_path = "/home/ubuntu/models/Llama-3.1-70B-Instruct"
+draft_model_path = "/home/ubuntu/models/Llama-3.1-70B-Instruct-EAGLE-Draft"
+compiled_model_path = "/home/ubuntu/neuron_models/Llama-3.1-70B-Instruct-EAGLE"
+max_sequence_length = 1024
+
+# Initialize on-device sampling configuration.
+on_device_sampling_config = OnDeviceSamplingConfig(
+    temperature=0.7,
+    top_k=50,
+    top_p=1.0,
+)
+
+# Initialize model configuration.
+neuron_config = NeuronConfig(
+    batch_size = 1,
+    enable_eagle_speculation=True,
+    enable_fused_speculation=True,
+    max_context_length=max_sequence_length,
+    max_length=max_sequence_length,
+    on_device_sampling_config=on_device_sampling_config,
+    seq_len=max_sequence_length,
+    speculation_length=5,
+    tp_degree=32,
+    trace_tokengen_model=False
+)
+
+config = NeuronLlamaForCausalLM.get_config_cls()(
+    neuron_config, load_config=load_pretrained_config(model_path)
+)
+
+# Initialize draft model configuration and set EAGLE-specific values.
+draft_neuron_config = copy.deepcopy(neuron_config)
+draft_neuron_config.trace_tokengen_model = True
+draft_neuron_config.enable_fused_speculation = False
+draft_neuron_config.is_eagle_draft = True
+draft_neuron_config.sequence_parallel_enabled = False
+
+draft_config = NeuronLlamaForCausalLM.get_config_cls()(
+    draft_neuron_config, load_config=load_pretrained_config(draft_model_path))
+
+# Initialize fused speculation configuration.
+fused_spec_config = FusedSpecNeuronConfig(
+    NeuronLlamaForCausalLM._model_cls,
+    draft_config=draft_config,
+    draft_model_path=draft_model_path,
+)
+config.fused_spec_config = fused_spec_config
+
+# Initialize model from configuration.
+model = NeuronLlamaForCausalLM(model_path, config)
+
+# Compile and save model.
+model.compile(compiled_model_path)
+
+# Load model to the Neuron device.
+model.load(compiled_model_path)
+
+# Load tokenizer and generation config.
+tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side=neuron_config.padding_side)
+generation_config = GenerationConfig.from_pretrained(model_path)
+generation_config.max_length = 1024
+generation_config.pad_token_id = tokenizer.eos_token_id
+
+# Run generation and print outputs.
+_, output_tokens = get_generate_outputs(
+    model,
+    [prompt],
+    tokenizer,
+    is_hf=False,
+    draft_model=None,
+    generation_config=generation_config
+)
+
+print("Generated output:")
+for _, output in enumerate(output_tokens):
+    print(output)
+```
+
+```python
+import json
+import os
+
+import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+target_model_path = "Meta-Llama-3.1-70B-Instruct"
+draft_model_path = "Llama-3.1-70B-Instruct-EAGLE-Draft"
+
+DRAFT_MODEL_SAFETENSORS_NAME = "model.safetensors"
+LM_HEAD_WEIGHT_TENSOR_NAME = "lm_head.weight"
+TARGET_MODEL_SAFETENSORS_INDEX_NAME = "model.safetensors.index.json"
+
+def find_lm_head_safetensors_location(model_dir):
+    model_index_location_path = os.path.join(model_dir, TARGET_MODEL_SAFETENSORS_INDEX_NAME)
+
+    with open(model_index_location_path, 'r') as f:
+        model_index_locations = json.load(f)
+
+    lm_head_safetensors_name = model_index_locations["weight_map"][LM_HEAD_WEIGHT_TENSOR_NAME]
+
+    return lm_head_safetensors_name
+
+# Find the target model `lm_head.weight` location in safetensors
+target_lm_head_safetensors_name = find_lm_head_safetensors_location(target_model_path)
+target_lm_head_safetensors_path = os.path.join(target_model_path, target_lm_head_safetensors_name)
+
+# Open the target model.safetensor containing `lm_head.weight`
+with safe_open(target_lm_head_safetensors_path, framework="pt") as f:
+    target_lm_head = f.get_tensor(LM_HEAD_WEIGHT_TENSOR_NAME)
+
+# Collect all tensors in the draft model
+draft_model_safetensors_path = os.path.join(draft_model_path, DRAFT_MODEL_SAFETENSORS_NAME)
+tensors = {}
+with safe_open(draft_model_safetensors_path, framework="pt") as f:
+    for key in f.keys():
+        tensors[key] = f.get_tensor(key)
+
+# Add the LM head weights and save out the new draft model.safetensors file
+tensors[LM_HEAD_WEIGHT_TENSOR_NAME] = target_lm_head.type(torch.float16)
+save_file(tensors, draft_model_safetensors_path)
+```
+
+```python
+neuron_config = NeuronConfig(
+    is_prefix_caching=True,
+    is_block_kv_layout=True,
+    pa_num_blocks=1024,
+    pa_block_size=32,
+)
+```
+
+```python
+neuron_config = NeuronConfig(
+    enable_bucketing=True,
+    context_encoding_buckets=[512, 1024, 2048],
+    prefix_buckets=[512, 1024],
+    token_generation_buckets=[2048]
+)
+```
+
+## neuronsetuphelper.py
+
+```python
+import json
+import argparse
+from packaging.version import Version, parse
+
+
+class neuron_release_info:
+    def __init__(self):
+        self.release_frameworks_all = {}
+        self.release_frameworks_main = {}
+        self.release_packages_all ={}
+        self.release_package_main={}
+        self.release_frameworks_list=[]
+        self.release_components_list = []
+        self.release_tf_package_to_model_server_package={}
+        self.release_os_install_list =[]
+        self.python_ver=""
+
+
+def cli_parse_arguments():
+    __name__='neuron-install-helper.py'
+    parser = argparse.ArgumentParser(prog=__name__
+    ,usage='\npython3 %(prog)s --list {neuron_versions,packages,components,frameworks} [--neuron-version=X.Y.Z]  [--file FILE] \n'
+    +'python3 %(prog)s --install {pytorch,tensorflow,mxnet} [--neuron-version=X.Y.Z] [--framework-version=FRAMEWORK-X.Y.Z] [options]\n'
+    +'python3 %(prog)s --install {driver,runtime,tools} [--neuron-version=X.Y.Z] [options]\n'
+    +'python3 %(prog)s --update {pytorch,tensorflow,mxnet} [--framework-version=framework-X.Y.Z]  [options]\n'
+    +'python3 %(prog)s --update {driver,runtime,tools} [options]\n'
+    +'options= [--file FILE] [--ami {dlami,non-dlami}] [--os {ubuntu,amazonlinux}]\n'
+    ,description='Installer helper for Neuron SDK')
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--neuron-version",metavar='X.Y.Z')
+    group.add_argument("--list",choices=['neuron_versions','packages','components','frameworks'])
+    group.add_argument("--install",choices=['pytorch','tensorflow','mxnet'])
+    group.add_argument("--update",choices=['pytorch','tensorflow','mxnet'])
+    parser.add_argument("--mode",choices=['develop','compile','deploy'],default='develop')
+    parser.add_argument("--framework-version",metavar='framework-X.Y.Z')
+    parser.add_argument("--os",choices=['ubuntu','amazonlinux'],default='ubuntu',help='default=ubuntu')
+    parser.add_argument("--ami",choices=['dlami','non-dlami'],default='non-dlami',help='default=non-dlami')
+    parser.add_argument("--file",default='neuron-releases-manifest.json',help='default=neuron-releases-manifest.json')
+
+    return parser.parse_args()
+
+
+def versiontuple(v):
+   filled = []
+   for point in v.split("."):
+      filled.append(point.zfill(8))
+   return tuple(filled)
+
+
+def cli_validate(update,neuron_version,framework_version,is_latest_neuron,ami):
+    if (update!=None) & (is_latest_neuron == False):
+        print (__name__,": error: ","--update always update to latest Neuron versions, can't specify Neuron version")
+        exit(-1)
+
+    if (framework_version != None):
+        if (framework_version not in  nr_setup.releases_info[neuron_version].release_frameworks_list):
+            print (__name__,": error: "," " + framework_version + " is not a supported framework")
+            exit(-1)
 ```
 
 ## rcnn-app-note.rst
@@ -1606,65 +2421,261 @@ def compile(
 ## fused_mamba.rst
 
 ```python
-# Step 1: Element-wise multiplication of delta_i and A_i
-deltaA_i = nisa.tensor_scalar(delta_i, op0=nl.multiply, operand0=A_i)
+import torch
+import numpy as np
+import neuron.nki as nki
+import neuron.nki.language as nl
+import neuron.nki.isa as nisa
+import neuron.nki.isa.math as ml
 ```
 
 ```python
-# Step 1&2: nisa.activation
-deltaA_i = nisa.activation(op=nl.exp, data=delta_i, scale=A_i)
+@nki.jit
+def mamba_v1(delta, u, A, B, C):
+    """
+    Initial NKI kernel implementation for Mamba layer.
+    
+    Args:
+        delta: [batch_size, channels, seq_len]
+        u: [batch_size, channels, seq_len]
+        A: [channels, state_size]
+        B: [batch_size, state_size, seq_len]
+        C: [batch_size, state_size, seq_len]
+    
+    Returns:
+        output: [batch_size, channels, seq_len]
+    """
+    batch_size = delta.shape[0]
+    channels = delta.shape[1]
+    seq_len = delta.shape[2]
+    state_size = A.shape[1]
+    
+    channel_psize = nl.tile_size.pmax
+    n_channel_tile = channels // channel_psize
+    
+    output = nl.ndarray((batch_size, channels, seq_len), dtype=delta.dtype, buffer=nl.hbm)
+    
+    for i_batch in nl.affine_range(batch_size):
+        scanC_accum = nl.zeros((n_channel_tile, nl.par_dim(channel_psize), seq_len), dtype=delta.dtype, buffer=nl.sbuf)
+        
+        for i_state in nl.affine_range(state_size):
+            for i_channel_tile in nl.affine_range(n_channel_tile):
+                channel_start = i_channel_tile * channel_psize
+                
+                # Load inputs
+                delta_i = nl.load(delta[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+                u_i = nl.load(u[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+                A_i = nl.load(A[channel_start:channel_start+channel_psize, i_state:i_state+1])
+                B_i = nl.load(B[i_batch, i_state:i_state+1, 0:seq_len])
+                C_i = nl.load(C[i_batch, i_state:i_state+1, 0:seq_len])
+                
+                # Step 1&2: deltaA = exp(delta * A)
+                deltaA = nisa.activation(op=nl.exp, data=delta_i, scale=A_i)
+                
+                # Step 3: deltaBu = delta * B * u
+                deltaU = nisa.tensor_tensor(delta_i, u_i, op=ml.multiply)
+                B_i_bcast = B_i.broadcast_to((nl.tile_size.pmax, seq_len))
+                deltaBu = nisa.tensor_tensor(deltaU, B_i_bcast, op=ml.multiply)
+                
+                # Step 4: Associative scan
+                scan_i = nisa.tensor_tensor_scan(deltaA, deltaBu, initial=0,
+                                                 op0=np.multiply, op1=np.add)
+                
+                # Step 5: scanC = C * scan
+                C_i_bcast = C_i.broadcast_to((nl.tile_size.pmax, seq_len))
+                scanC_i = nisa.tensor_tensor(scan_i, C_i_bcast, op=ml.multiply)
+                
+                # Step 6: Accumulate across states
+                scanC_accum[i_channel_tile, 0:channel_psize, 0:seq_len] += scanC_i
+        
+        # Store results
+        for i_channel_tile in nl.affine_range(n_channel_tile):
+            channel_start = i_channel_tile * channel_psize
+            nl.store(output[i_batch, channel_start:channel_start+channel_psize, 0:seq_len],
+                    scanC_accum[i_channel_tile, 0:channel_psize, 0:seq_len])
+    
+    return output
 ```
 
 ```python
-# Step 3: Element-wise multiplication of delta_i, B_i and u_i
-deltaU_i = nisa.tensor_tensor(delta_i, u_i, op=ml.multiply)
-B_i_bcast = B_i.broadcast_to((nl.tile_size.pmax, seq_len))
-deltaBu_i = nisa.tensor_tensor(deltaU_i, B_i_bcast, op=ml.multiply)
+@nki.jit
+def mamba_v2(delta, u, A, B, C):
+    """
+    Optimized NKI kernel with loop reordering to minimize data reloading.
+    
+    Args:
+        delta: [batch_size, channels, seq_len]
+        u: [batch_size, channels, seq_len]
+        A: [channels, state_size]
+        B: [batch_size, state_size, seq_len]
+        C: [batch_size, state_size, seq_len]
+    
+    Returns:
+        output: [batch_size, channels, seq_len]
+    """
+    batch_size = delta.shape[0]
+    channels = delta.shape[1]
+    seq_len = delta.shape[2]
+    state_size = A.shape[1]
+    
+    channel_psize = nl.tile_size.pmax
+    n_channel_tile = channels // channel_psize
+    
+    output = nl.ndarray((batch_size, channels, seq_len), dtype=delta.dtype, buffer=nl.hbm)
+    
+    for i_batch in nl.affine_range(batch_size):
+        for i_channel_tile in nl.affine_range(n_channel_tile):
+            channel_start = i_channel_tile * channel_psize
+            
+            # Load delta and u once, reuse across states
+            delta_i = nl.load(delta[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+            u_i = nl.load(u[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+            
+            scanC_accum = nl.zeros((nl.par_dim(channel_psize), seq_len), dtype=delta.dtype, buffer=nl.sbuf)
+            
+            for i_state in nl.affine_range(state_size):
+                # Load state-specific inputs
+                A_i = nl.load(A[channel_start:channel_start+channel_psize, i_state:i_state+1])
+                B_i = nl.load(B[i_batch, i_state:i_state+1, 0:seq_len])
+                C_i = nl.load(C[i_batch, i_state:i_state+1, 0:seq_len])
+                
+                # Step 1&2: deltaA = exp(delta * A)
+                deltaA = nisa.activation(op=nl.exp, data=delta_i, scale=A_i)
+                
+                # Step 3: deltaBu = delta * B * u
+                deltaU = nisa.tensor_tensor(delta_i, u_i, op=ml.multiply)
+                B_i_bcast = B_i.broadcast_to((nl.tile_size.pmax, seq_len))
+                deltaBu = nisa.tensor_tensor(deltaU, B_i_bcast, op=ml.multiply)
+                
+                # Step 4: Associative scan
+                scan_i = nisa.tensor_tensor_scan(deltaA, deltaBu, initial=0,
+                                                 op0=np.multiply, op1=np.add)
+                
+                # Step 5: scanC = C * scan
+                C_i_bcast = C_i.broadcast_to((nl.tile_size.pmax, seq_len))
+                scanC_i = nisa.tensor_tensor(scan_i, C_i_bcast, op=ml.multiply)
+                
+                # Step 6: Accumulate across states
+                scanC_accum[0:channel_psize, 0:seq_len] += scanC_i
+            
+            # Store results
+            nl.store(output[i_batch, channel_start:channel_start+channel_psize, 0:seq_len],
+                    scanC_accum[0:channel_psize, 0:seq_len])
+    
+    return output
 ```
 
 ```python
-# Step 4: Associative scan between deltaA_i and deltaBu_i
-scan_i = nl.ndarray((channels_tiled, seq_len), dtype=deltaA.dtype, buffer=nl.sbuf)
-scan_i[0:channels_tiled, 0] = deltaBu[0:channels_tiled, 0]
+@nki.jit
+def mamba_v3(delta, u, A, B, C):
+    """
+    Further optimized NKI kernel with seq_len tiling to mitigate spilling.
+    
+    Args:
+        delta: [batch_size, channels, seq_len]
+        u: [batch_size, channels, seq_len]
+        A: [channels, state_size]
+        B: [batch_size, state_size, seq_len]
+        C: [batch_size, state_size, seq_len]
+    
+    Returns:
+        output: [batch_size, channels, seq_len]
+    """
+    batch_size = delta.shape[0]
+    channels = delta.shape[1]
+    seq_len = delta.shape[2]
+    state_size = A.shape[1]
+    
+    channel_psize = nl.tile_size.pmax
+    n_channel_tile = channels // channel_psize
+    seq_len_fsize = 512
+    n_seq_len_tile = (seq_len + seq_len_fsize - 1) // seq_len_fsize
+    
+    output = nl.ndarray((batch_size, channels, seq_len), dtype=delta.dtype, buffer=nl.hbm)
+    
+    for i_batch in nl.affine_range(batch_size):
+        for i_channel_tile in nl.affine_range(n_channel_tile):
+            channel_start = i_channel_tile * channel_psize
+            
+            # Load delta and u once, reuse across states and seq_len tiles
+            delta_i = nl.load(delta[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+            u_i = nl.load(u[i_batch, channel_start:channel_start+channel_psize, 0:seq_len])
+            
+            for i_state in nl.affine_range(state_size):
+                # Load state-specific inputs
+                A_i = nl.load(A[channel_start:channel_start+channel_psize, i_state:i_state+1])
+                B_i = nl.load(B[i_batch, i_state:i_state+1, 0:seq_len])
+                C_i = nl.load(C[i_batch, i_state:i_state+1, 0:seq_len])
+                
+                scan_init = nl.zeros((nl.par_dim(channel_psize), 1), dtype=delta.dtype, buffer=nl.sbuf)
+                
+                for i_seq_len_tile in nl.static_range(n_seq_len_tile):
+                    seq_start = i_seq_len_tile * seq_len_fsize
+                    seq_end = min(seq_start + seq_len_fsize, seq_len)
+                    seq_tile_len = seq_end - seq_start
+                    
+                    # Extract tile slices
+                    delta_tile = delta_i[0:channel_psize, seq_start:seq_end]
+                    u_tile = u_i[0:channel_psize, seq_start:seq_end]
+                    B_tile = B_i[0:1, seq_start:seq_end]
+                    C_tile = C_i[0:1, seq_start:seq_end]
+                    
+                    # Step 1&2: deltaA = exp(delta * A)
+                    deltaA = nisa.activation(op=nl.exp, data=delta_tile, scale=A_i)
+                    
+                    # Step 3: deltaBu = delta * B * u
+                    deltaU = nisa.tensor_tensor(delta_tile, u_tile, op=ml.multiply)
+                    B_tile_bcast = B_tile.broadcast_to((nl.tile_size.pmax, seq_tile_len))
+                    deltaBu = nisa.tensor_tensor(deltaU, B_tile_bcast, op=ml.multiply)
+                    
+                    # Step 4: Associative scan with loop-carried dependency
+                    scan_tile = nisa.tensor_tensor_scan(deltaA, deltaBu, initial=scan_init,
+                                                        op0=np.multiply, op1=np.add)
+                    
+                    # Update scan_init for next iteration
+                    scan_init = scan_tile[0:channel_psize, seq_tile_len-1:seq_tile_len]
+                    
+                    # Step 5: scanC = C * scan
+                    C_tile_bcast = C_tile.broadcast_to((nl.tile_size.pmax, seq_tile_len))
+                    scanC_tile = nisa.tensor_tensor(scan_tile, C_tile_bcast, op=ml.multiply)
+                    
+                    # Store partial results
+                    nl.store(output[i_batch, channel_start:channel_start+channel_psize, seq_start:seq_end],
+                            scanC_tile)
+    
+    return output
+```
 
-for i in nl.sequential_range(seq_len - 1):
-    scan_i[0:channels_tiled, i+1] = nisa.tensor_scalar(
-        deltaA[0:channels_tiled, i+1],
-        op0=nl.multiply,
-        operand0=scan_i[0:channels_tiled, i],
-        op1=nl.add,
-        operand1=deltaBu[0:channels_tiled, i+1])
+## bert.rst
+
+```python
+import torch
+import torch.autocast
+
+with torch.autocast(enabled=flags.enable_pt_autocast, dtype=torch.bfloat16, device_type='xla'):
+    outputs = model(input_ids=input_ids,
+                    attention_mask=input_mask,
+                    token_type_ids=segment_ids,
+                    labels=masked_lm_labels,
+                    next_sentence_label=next_sentence_labels)
+    loss = outputs.loss / flags.grad_accum_usteps
+loss.backward()
+running_loss += loss.detach()
 ```
 
 ```python
-# Step 4: Optimized associative scan using tensor_tensor_scan
-scan_i = nisa.tensor_tensor_scan(deltaA_i, deltaBu_i, initial=0,
-                                 op0=np.multiply, op1=np.add)
+import torch_xla.core.xla_model as xm
+
+cpu_data = xm._maybe_convert_to_cpu(data)
 ```
 
 ```python
-# Step 5: Element-wise multiplication of C_i and scan_i
-C_i_bcast = C_i.broadcast((nl.tile_size.pmax, seq_len))
-scanC_i = nisa.tensor_tensor(scan_i, C_i_bcast, op=ml.multiply)
-```
+import torch_xla.core.xla_model as xm
 
-```python
-# Step 6: Accumulation of scanC_i along state_size dimension
-scanC_accum = nl.zeros(...)
-
-for i_state in nl.affine_range(state_size):
-    scanC_i = ...
-    scanC_accum += scanC_i
-```
-
-```python
-# Loop-carried dependency handling for seq_len tiling
-scan_init = nl.zeros((channel_psize, 1), ...)
-
-for i_seq_len_tile in static_range(seq_len // seq_len_fsize):
-    scan_i = nisa.tensor_tensor_scan(deltaA, deltaBu, initial=scan_init,
-                                     op0=np.multiply, op1=np.add)
-    scan_init = scan_i[0:channel_psize, seq_len_fsize-1]
+def _mp_fn(index, flags):
+    torch.set_default_tensor_type('torch.FloatTensor')
+    train_bert_hdf5(flags)
+    xm.rendezvous("_mp_fn finished")
 ```
 
 ## wrapper.py
@@ -1752,6 +2763,8 @@ class T5Wrapper(T5ForConditionalGeneration, NeuronGenerationMixin):
     ) -> Dict[str, Any]:
 
         def _update_attention(model_kwargs, is_encoder_decoder):
+            """Updates the appropriate attention mask -- encoder-decoder models use `decoder_attention_mask`"""
+
             attention_mask_name = "decoder_attention_mask" if is_encoder_decoder else "attention_mask"
             attention_mask = model_kwargs.pop(attention_mask_name)
             attention_mask_update_slice = torch.ones(
@@ -1763,6 +2776,7 @@ class T5Wrapper(T5ForConditionalGeneration, NeuronGenerationMixin):
 
         mask = _update_attention(model_kwargs, is_encoder_decoder)
         model_kwargs.update(mask)
+
         model_kwargs["past_key_values"] = torch.tensor([])
 
         return model_kwargs
@@ -1849,6 +2863,7 @@ class EncoderWrapper(torch.nn.Module):
             attention = cross_attention.EncDecAttention
 
             def shape(states):
+                """projection"""
                 return states.view(self.batch_size, -1, self.num_attention_heads_per_partition, attention.key_value_proj_dim).transpose(1, 2)
 
             key_states = shape(attention.k(encoder_hidden_states))
@@ -1994,640 +3009,327 @@ class DecoderWrapper(torch.nn.Module):
             return [next_tokens] + past_key_values_sa + past_key_values_ca
 ```
 
-## nki-language-guide.rst
+## nki.errors.rst
 
 ```python
-@nki.jit
-def my_function(x : tensor, y : tensor) -> tensor:
-  assert x.shape == y.shape, "expecting tensors of the same shape"
-  assert x.dtype == y.dtype, "expecting tensors with the same element type"
-  
-  # allocate an output tensor for the result
-  output = nki.language.ndarray(x.shape, x.dtype, buffer=sbuf)
-  
-  print(f"adding tensors of type {x.dtype} and {x.shape}")
-  nki.isa.tensor_tensor(output, x, y, op=nki.langauge.add)
-  return output
-```
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
 
-```python
-l = [1,2,3]    # create a list with 3 elements 
-l.append(4.1)  # append a value to the list
-l.extend(("Hello", "List")) # extend list with multiple values
-size = l.count() # return number of elements in list
-third = l[2]  # get third element of list (index 2)
+# err_1d_arange_not_supported - Error case
+tmp = nl.zeros((128, 1), dtype=nl.float32, buffer=nl.sbuf)
+i = nl.arange(64)
+c = nl.exp(tmp[i, 0])  # Error: indexing tensor `tmp` with 1d arange is not supported
 
-# search list for a specific value
-if l.index(2):
-  print("list contains 2")
-   
-# remove a specific value from a list (if present)
-l.remove(1)
+# err_1d_arange_not_supported - Workaround 1
+tmp = nl.zeros((128, 1), dtype=nl.float32, buffer=nl.sbuf)
+i = nl.arange(64)[:, None]
+c = nl.exp(tmp[i, 0])
 
-# print out list in reverse order
-for x in l.reverse():
-  print(x)
-```
+# err_1d_arange_not_supported - Workaround 2
+tmp = nl.zeros((128, 1), dtype=nl.float32, buffer=nl.sbuf)
+c = nl.exp(tmp[0:64, 0])
 
-```python
-d = dict() # create an empty dictionary
-d['a'] = 1 # set a value in the dictionary
+# err_activation_bias_invalid_type
+data = nl.zeros((128, 1), dtype=nl.float32, buffer=nl.sbuf)
+nisa.activation(op=nl.exp, data=data[...], bias=nisa.memset((128, 1), 1.2, dtype=np.float32))  # ok
+nisa.activation(op=nl.exp, data=data[...], bias=nisa.memset((128, 1), 1.2, dtype=nl.bfloat16))  # ok
+nisa.activation(op=nl.exp, data=data[...], bias=nisa.memset((128, 1), 1.2, dtype=np.int8))  # not supported
 
-print(d.keys())  # print out keys in dictionary
-print(d.items())  # print out values in dictionary
+# err_activation_scale_invalid_type
+nisa.activation(op=nl.exp, data=data[...], scale=1.2)  # ok
+nisa.activation(op=nl.exp, data=data[...], scale=nisa.memset((128, 1), 1.2, dtype=np.float32))  # ok
+nisa.activation(op=nl.exp, data=data[...], scale=nisa.memset((128, 1), 1.2, dtype=np.float16))  # not supported
 
-# print out dictionary
-for k,v in d.values():
-  print(k, v)
+# err_activation_scale_scalar_or_vector
+nisa.activation(op=nl.exp, data=data[...], scale=1.2)  # ok
+nisa.activation(op=nl.exp, data=data[...], scale=nisa.memset((128, 1), 1.2, dtype=np.float32))  # ok
+nisa.activation(op=nl.exp, data=data[...], scale=nisa.memset((1, 128), 1.2, dtype=np.float32))  # not supported
+nisa.activation(op=nl.exp, data=data[...], scale=nisa.memset((128, 128), 1.2, dtype=np.float32))  # not supported
 
-# remove value from dictionary if present
-if d.pop('a'):
-  print("removed 'a' from dictionary")
+# err_ambiguous_tensor_truth_value - Error case
+from typing import Optional
+from neuronxcc.nki.typing import tensor
 
-# fetch value of a, set to 1 if not present
-a = d.setdefault('a', default=1)
-```
+def func_error(a, b: Optional[tensor]):
+    ix, iy = nl.mgrid[0:128, 0:128]
+    a_tile: tensor[128, 128] = nl.load(a[ix, iy])
+    not_a_tile = not (a_tile > 0)  # Error
+    if b:  # Error
+        pass
 
-```python
-# assume t is a 3-dimensional tensor, we can iterate over the
-# 2-D subtensors
-for i in range(t.shape[0]):
-  my_function(t[i])
-```
+# err_ambiguous_tensor_truth_value - Correct usage
+def func_correct(a, b: Optional[tensor]):
+    ix, iy = nl.mgrid[0:128, 0:128]
+    a_tile: tensor[128, 128] = nl.load(a[ix, iy])
+    not_a_tile = ~(a_tile > 0)  # Element-wise negation
+    if b is not None:  # Explicit None check
+        pass
 
-```python
-# A matrix of 128x128 16-bit float values in the SBUF memory
-t = nl.ndarray((128,128), nl.float16, nl.sbuf)
-assert t.shape = (128,128)
-assert t.dtype == nl.float16
-assert t.buffer == nl.sbuf
-```
+# err_annotation_shape_mismatch
+import neuronxcc.nki.typing as nt
+data: nt.tensor[128, 512] = nl.zeros((nl.par_dim(128), 128), dtype=np.float32)  # Error: shape mismatch
 
-```python
-# create an alternate view of t with shape 128x2x64
-u = t.reshape((128,2,64))
+# err_cannot_assign_to_index
+_, x = nl.mgrid[0:1, 0:8]
+x[0, 5] = 1024  # Error: 'index' tensor does not support item assignment
+y = nisa.iota(x, dtype=nl.uint32)
+y[0, 5] = 1024  # works
 
-# create an alternate view of t with shape 128x32
-v = t.reshape((128,32))
-```
+# err_cannot_update_immutable_parameter - Error case
+def kernel_error(in_tensor):
+    x = nl.load(in_tensor)
+    y = x + 1
+    nl.store(in_tensor, value=y)  # Error: Cannot update immutable parameter
+    return in_tensor
 
-```python
-# create a memory region in the SBUF of size 128x64 bytes
-region = sbuf.ptr(size=(128, 64))
+# err_cannot_update_immutable_parameter - Correct usage with mutable annotation
+def kernel_mutable(in_tensor: nt.mutable_tensor):
+    x = nl.load(in_tensor)
+    y = x + 1
+    nl.store(in_tensor, value=y)  # ok
+    return in_tensor
 
-# create a tensor of size 128x32 with float16 elementes
-t = region.view(nl.float16, (128, 32))
-```
+# err_cannot_update_immutable_parameter - Correct usage with copy
+def kernel_copy(in_tensor):
+    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+    nisa.dma_copy(dst=out_tensor, src=in_tensor)
+    x = nl.load(out_tensor)
+    y = x + 1
+    nl.store(out_tensor, value=y)  # ok
+    return out_tensor
 
-```python
-# equivalent to region.view above
-t = nl.ndarray((128,32), nl.float16, buffer=region)
-```
+# err_control_flow_condition_depending_on_arange - Error case
+x = nl.zeros((128, 512), dtype=nl.float32, buffer=nl.sbuf)
+for j0 in nl.affine_range(4096):
+    i1 = nl.arange(512)[None, :]
+    j = j0 * 512 + i1
+    if j > 2048:  # Error
+        y = nl.add(x[0, j], x[0, j - 2048])
 
-```python
-# create a tensor at offset 128 bytes from the beginning of the SBUF memory.
-region = sbuf.ptr(size=(128,64), offset=(0,128))
-t = region.view(nl.float16, (128,32))
-```
+# err_control_flow_condition_depending_on_arange - Workaround with mask
+for j0 in nl.affine_range(4096):
+    i1 = nl.arange(512)[None, :]
+    j = j0 * 512 + i1
+    y = nl.add(x[0, j], x[0, j - 2048], mask=j > 2048)
 
-```python
-region1 = sbuf.ptr(size=(128,64), offset=(0,0))
-region2 = sbuf.ptr(size=(128,64), offset=(0,64))
+# err_copy_dynamic_indirect_indices_not_natively_supported - Error case
+data_tensor = nl.zeros((128, 8, 4), dtype=nl.float32, buffer=nl.sbuf)
+idx_tensor = nl.zeros((8, 1), dtype=nl.uint32, buffer=nl.sbuf)
+out_sbuf = nl.ndarray([8, 4], dtype=data_tensor.dtype, buffer=nl.sbuf)
+iy, iz = nl.mgrid[0:8, 0:4]
+idx_tile = nl.load(idx_tensor)
+out_sbuf[iy, iz] = data_tensor[0, idx_tile, iz]  # Error
 
-t1 = region1.view(nl.float16, (128,32))
-t2 = region2.view(nl.float16, (128,32))
-```
+# err_copy_dynamic_indirect_indices_not_natively_supported - Workaround
+out_sbuf[iy, iz] = nisa.tensor_copy_dynamic_src(data_tensor[0, idx_tile, iz])
 
-```python
-region = sbuf.ptr(size=(128,128))
+# err_exceed_max_supported_dimension
+x = nl.zeros(shape=[64, 32, 2], dtype=np.float32, buffer=nl.sbuf)
+b = nl.transpose(x)  # Error: exceed max supported number of dimensions
 
-region1 = region.ptr(size=(128,64), offset=(0,0))
-region2 = region.ptr(size=(128,64), offset=(0,64))
+x = nl.zeros(shape=[64, 64], dtype=np.float32, buffer=nl.sbuf)
+b = nl.transpose(x)  # Works
 
-t1 = region1.view(nl.float16, (128,32))
-t2 = region2.view(nl.float16, (128,32))
-```
+# err_failed_to_infer_tile_from_local_tensor - Error case
+a = nl.zeros((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
+c = nl.add(a, 32)  # Error
 
-```python
-region2 = region.ptr(size=(128,64))
+# err_failed_to_infer_tile_from_local_tensor - Workaround 1
+c = nl.ndarray((4, nl.par_dim(8), 8), dtype=nl.float32, buffer=nl.sbuf)
+for i in range(4):
+    c[i] = nl.add(a[i], 32)  # works
 
-# t1 and t2 use the same underlying memory
-t1 = region.view(nl.float16, (128,32))
-t2 = region.view(nl.float16, (128,2,16))
-```
+# err_failed_to_infer_tile_from_local_tensor - Workaround 2
+for i in range(4):
+    ix = nl.arange(8)[:, None]
+    iy = nl.arange(8)[None, :]
+    c[i, ix, iy] = nl.add(a[i, ix, iy], 32)  # also works
 
-```python
-# this is just a short-hand
-u = t.reshape(shape)
+# err_hbm_tensor_with_init_value_not_supported - Error case
+t = nl.full((3, 128, 512), fill_value=1.0, buffer=nl.shared_hbm)  # Error
 
-# for this
-u = t.address.reshape(t.dtype, shape)
-```
+# err_hbm_tensor_with_init_value_not_supported - Workaround
+t = nl.ndarray((3, 128, 512), buffer=nl.shared_hbm)
+for i in range(3):
+    nl.store(dst=t[i, :, :], value=1.0)
 
-```python
-# 10th element in partition 0
-u = t[0,0,10]
+# err_indirect_indices_free_dim - Error case
+i_p, i_f = nl.mgrid[0:64, 0:512]  # this won't work for dynamic access
 
-# 65th element in partition 0
-u = t[0,1,0]
+# err_indirect_indices_free_dim - Correct usage
+i_p = nl.arange(64)[:, None]  # this works for dynamic access
+i_f = nl.arange(512)[None, :]
+data_tensor = nl.zeros((128, 64, 512), dtype=nl.float32, buffer=nl.hbm)
+idx_tile = nl.zeros((64, 1), dtype=nl.uint32, buffer=nl.sbuf)
+data_tile = nl.load(data_tensor[idx_tile[i_p, 0], i_f])
 
-# last element of the tensor
-u = t[63,63,63]
-```
-
-```python
-# All first 64 elements of every partition
-u = t[0:64, 0, 0:64]
-
-# Same as above, but using defaults
-u = t[:, 0, :]
-
-# Only the even elements of the third dimension
-u = t[:, :, ::2]
-```
-
-```python
-# the whole tensor t
-u = t[...]
-
-# same as above
-u = t[:,...]
-
-# use defaults for second dimension
-# equivalent to t[0,0:64,0:64]
-u = t[0,...,:]
-```
-
-```python
-u = t[0,...]
-assert u.shape = (64,64)
-
-v = u[0:32, :]
-assert v.shape = (32, 64)
-```
-
-```python
-u = t[0,...]
-
-# check hardware access pattern
-print(u.offset)
-print(u.pattern)
-```
-
-```python
-# Specify HW access pattern directly
-u = t.ap(offset = 0, pattern = [...])
-```
-
-```python
-def kernel(outputs, inputs):
-  for i in range(len(inputs)):
-    if i % 2 == 0:
-      nki.isa.nc_transpose(dst=outputs[i], data=inputs[i])
+# err_local_variable_used_out_of_scope - Error case
+a = nl.zeros((128, 128), dtype=nl.float32, buffer=nl.sbuf)
+b = nl.zeros((128, 128), dtype=nl.float32, buffer=nl.sbuf)
+c = nl.zeros((128, 128), dtype=nl.float32, buffer=nl.sbuf)
+for i in range(4):
+    if i < 2:
+        tmp = nl.load(a)
     else:
-      nki.isa.reciprocal(dst=outputs[i], data=inputs[i])
-```
-
-```python
-for i in sequential_range(...): ...
-for i in static_range(...): ...
-for i in affine_range(...): ...
-```
-
-```python
-l = [1,2,3]
-for x in l:
-  print(x)
-
-t = (1,2,3)
-for x in t:
-  print(x)
-```
-
-```python
-# print the numbers 0-9
-x = 0
-while x < 10:
-  print(x)
-  x += 1
-```
-
-```python
-# create a dynamic loop that runs "on chip"
-for i in dynamic_range(10):
-  process_tensor(t[i])
-```
-
-```python
-count = nki.isa.register_alloc(count_tensor)
-for i in dynamic_range(count):
-  process_tensor(t[i])
-```
-
-```python
-# allocate a new register with initial value
-# either from constant integer, or a SBUF tensor
-def register_alloc(x: int | tensor) -> register: ...
-
-# store a constant integer into a register
-def register_move(dst: imm: int): ...
-
-# load a value from an SBUF tensor into a register
-def register_load(dst: register, src: tensor): ...
-
-# store the value of a register into an SBUF tensor
-def register_store(dst: tensor, src: register): ...
-```
-
-```python
-# suppose cond is an SBUF tensor, perhaps declared as
-cond = nl.ndarray((1, 1), buffer=nl.shared_hbm, dtype=np.int32)
-
-# allocate a register with initial value 1
-reg = register_alloc(1)
-
-# This while loop is dynamic because the condition is a register
-while reg:
-  # perform a calculation that updates cond
-  ...
-  nl.store(dst=cond[0], ...)
-  # update register used in while-loop condition
-  register_load(reg, cond)
-```
-
-```python
-@dataclass 
-class C(NKIObject):
-  x : int
-  y : bool = False
-  
-  def toggle(self):
-    self.y = not self.y
-    
-c = C(1)
-c.toggle()
-
-# prints 1, True
-print(c.x, c.y)
-```
-
-```python
-# default if not provided by the user
-def __init__(self, x = None, y = False):
-  self.x = x
-  self.y = y
-  self.post_init()
-
-# default if not provided by the user
-def __post_init__(self):
-  pass
-```
-
-```python
-class A(NKIObject):
-  x : int = 1
-  def __init__(self, x):
-    self.x = x
-
-@nki.jit
-def kernel(a : A): ...
-
-kernel(A(1))
-```
-
-```python
-# pseudo-code "copy constuct" A on NKI side
-def kernel(python_a : A):
-  # make a NKI instance of class A
-  nki_a = new A
-  # populate NKI instance from Python instance
-  nki_a.__dict__ = python_a.__dict__
-```
-
-```python
-class E(Enum):
-  x = 1
-  y = 2
-  z = 3
-
-def f(e : E):
-  if e == E.x: ...
-  else if e == E.y: ...
-  else if e == E.z: ...
-  
-f(E.x)
-```
-
-```python
-class E(NKIObject):
-  x = E("x", 1)
-  y = E("y", 2)
-  z = E("z", 3)
-  
-  def __init__(self, name, value):
-    self.name = name
-    self.value = value
-```
-
-## onboarding-models.rst
-
-```python
-from neuronx_distributed_inference.models.config import NeuronConfig
-
-class NeuronLlamaConfig(NeuronConfig):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Set any args/defaults
-```
-
-```python
-from typing import List, Type
-from neuronx_distributed_inference.models.config import InferenceConfig, NeuronConfig
-
-class LlamaInferenceConfig(InferenceConfig):
-    def get_required_attributes(self) -> List[str]:
-        return [
-            "hidden_size",
-            "num_attention_heads",
-            "num_hidden_layers",
-            "num_key_value_heads",
-            "pad_token_id",
-            "vocab_size",
-            "max_position_embeddings",
-            "rope_theta",
-            "rms_norm_eps",
-            "hidden_act",
-        ]
-        
-    @classmethod
-    def get_neuron_config_cls(cls) -> Type[NeuronConfig]:
-        return NeuronLlamaConfig
-```
-
-```python
-import torch
-from typing import Optional, Tuple
-from torch import nn
-from transformers.activations import ACT2FN
-
-from neuronx_distributed.parallel_layers import parallel_state
-from neuronx_distributed.parallel_layers.layers import ColumnParallelLinear, RowParallelLinear, ParallelEmbedding
-
-from neuronx_distributed_inference.models.model_base import NeuronBaseModel
-from neuronx_distributed_inference.modules.attention.attention_base import NeuronAttentionBase
-from neuronx_distributed_inference.modules.attention.utils import RotaryEmbedding
-from neuronx_distributed_inference.modules.custom_calls import CustomRMSNorm
-
-class NeuronLlamaMLP(nn.Module):
-    """
-    This class just replace the linear layers (gate_proj, up_proj and down_proj) with column and row parallel layers
-    """
-
-    def __init__(self, config: InferenceConfig):
-        super().__init__()
-        self.config = config
-        self.neuron_config = config.neuron_config
-        self.tp_degree = config.neuron_config.tp_degree
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.act_fn = ACT2FN[config.hidden_act]
-
-        self.gate_proj = ColumnParallelLinear(
-            self.hidden_size,
-            self.intermediate_size,
-            bias=False,
-            gather_output=False,
-            dtype=config.neuron_config.torch_dtype,
-            pad=True,
-        )
-        self.up_proj = ColumnParallelLinear(
-            self.hidden_size,
-            self.intermediate_size,
-            bias=False,
-            gather_output=False,
-            dtype=config.neuron_config.torch_dtype,
-            pad=True,
-        )
-        self.down_proj = RowParallelLinear(
-            self.intermediate_size,
-            self.hidden_size,
-            bias=False,
-            input_is_parallel=True,
-            dtype=config.neuron_config.torch_dtype,
-            pad=True,
-        )
-
-    def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
-class NeuronLlamaAttention(NeuronAttentionBase):
-    """
-    Compared with LlamaAttention, this class just
-    1. replaces the q_proj, k_proj, v_proj with column parallel layer
-    2. replaces the o_proj with row parallel layer
-    3. update self.num_head to be self.num_head / tp_degree
-    4. update self.num_key_value_heads to be self.num_key_value_heads / tp_degree
-    5. update forward() method to adjust to changes from self.num_head
-    """
-
-    def __init__(self, config: InferenceConfig):
-        super().__init__()
-
-        self.config = config
-        self.neuron_config = config.neuron_config
-        self.hidden_size = config.hidden_size
-        self.num_attention_heads = config.num_attention_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.head_dim = self.hidden_size // self.num_attention_heads
-        self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
-        self.padding_side = config.neuron_config.padding_side
-        self.torch_dtype = config.neuron_config.torch_dtype
-
-        self.tp_degree = parallel_state.get_tensor_model_parallel_size()
-
-        self.fused_qkv = config.neuron_config.fused_qkv
-        self.clip_qkv = None
-
-        self.init_gqa_properties()
-        self.init_rope()
-
-    def init_rope(self):
-        self.rotary_emb = RotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            base=self.rope_theta,
-        )
-
-
-class NeuronLlamaDecoderLayer(nn.Module):
-    """
-    Just replace the attention with the NXD version, and MLP with the NXD version
-    """
-
-    def __init__(self, config: InferenceConfig):
-        super().__init__()
-        self.hidden_size = config.hidden_size
-        self.self_attn = NeuronLlamaAttention(config)
-        self.mlp = NeuronLlamaMLP(config)
-        self.input_layernorm = CustomRMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
-        )
-        self.post_attention_layernorm = CustomRMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
-        )
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
-        **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-
-        # Self Attention
-        attn_outs = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            **kwargs,
-        )
-
-        hidden_states, present_key_value = attn_outs
-        hidden_states = residual + hidden_states
-
-        # Fully Connected
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states
-
-        return (hidden_states, present_key_value)
-
-
-class NeuronLlamaModel(NeuronBaseModel):
-    """
-    The neuron version of the LlamaModel
-    """
-
-    def setup_attr_for_model(self, config: InferenceConfig):
-        # Needed for init_inference_optimization()
-        self.on_device_sampling = config.neuron_config.on_device_sampling_config is not None
-        self.tp_degree = config.neuron_config.tp_degree
-        self.hidden_size = config.hidden_size
-        self.num_attention_heads = config.num_attention_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.max_batch_size = config.neuron_config.max_batch_size
-        self.buckets = config.neuron_config.buckets
-
-    def init_model(self, config: InferenceConfig):
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
-
-        self.embed_tokens = ParallelEmbedding(
-            config.vocab_size,
-            config.hidden_size,
-            self.padding_idx,
-            dtype=config.neuron_config.torch_dtype,
-            shard_across_embedding=True,
-            pad=True,
-        )
-        self.lm_head = ColumnParallelLinear(
-            config.hidden_size,
-            config.vocab_size,
-            bias=False,
-            pad=True,
-        )
-
-        self.layers = nn.ModuleList(
-            [NeuronLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
-        )
-        self.norm = CustomRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-```
-
-```python
-from neuronx_distributed_inference.models.llama import NeuronBaseForCausalLM
-
-class NeuronLlamaForCausalLM(NeuronBaseForCausalLM):
-    _model_cls = NeuronLlamaModel
-        
-    @classmethod
-    def get_config_cls(cls):
-        return LlamaInferenceConfig
-```
-
-```python
-from neuronx_distributed_inference.utils.accuracy import generate_expected_logits, check_accuracy_logits_v2
-
-# Init Neuron model, test inputs and HuggingFace generation config.
-
-# Generating HuggingFace model outputs on CPU.
-expected_logits = generate_expected_logits(
-    neuron_model,
-    inputs.input_ids,
-    inputs.attention_mask,
-    generation_config
-)
-# Alternatively, you can load the expected_logits from disk to save time.
-# expected_logits = ...
-
-check_accuracy_logits_v2(
-    neuron_model,
-    expected_logits,
-    inputs.input_ids,
-    inputs.attention_mask,
-    generation_config=generation_config
-)
-```
-
-```python
-from neuronx_distributed_inference.utils.accuracy import check_accuracy_logits
-
-# Init Neuron model, HuggingFace tokenizer, and HuggingFace generation config.
-
-check_accuracy_logits(
-    model,
-    tokenizer,
-    generation_config,
-)
-```
-
-```python
-from neuronx_distributed_inference.utils.accuracy import check_accuracy
-
-# Init Neuron model, HuggingFace tokenizer, and HuggingFace generation config.
-
-check_accuracy(
-    model,
-    tokenizer,
-    generation_config,
-)
-```
-
-```python
-from neuronx_distributed_inference.utils.benchmark import benchmark_sampling
-
-# Init Neuron model and HuggingFace generation config.
-
-benchmark_sampling(model, generation_config)
-```
-
-```python
-import logging
-
-logging.getLogger().setLevel(logging.DEBUG)
+        tmp = nl.load(b)
+    nl.store(c, tmp)  # Error
+
+# err_local_variable_used_out_of_scope - Correct usage
+for i in range(4):
+    tmp = nl.ndarray(shape=a.shape, dtype=a.dtype, buffer=nl.sbuf)
+    if i < 2:
+        tmp[...] = nl.load(a)
+    else:
+        tmp[...] = nl.load(b)
+    nl.store(c, tmp)
+
+# err_local_variable_used_out_of_scope - Shadowing example error
+data = nl.zeros((nl.par_dim(128), 128), dtype=np.float32, buffer=nl.sbuf)
+for i in nl.sequential_range(4):
+    i_tile = nisa.iota(i, dtype=nl.uint32).broadcast_to(data.shape)
+    data = data + i_tile  # Warning: shadowing
+ptr = nl.zeros((nl.par_dim(128), 128), dtype=np.float32, buffer=nl.sbuf)
+nl.store(ptr, value=data)  # Error
+
+# err_local_variable_used_out_of_scope - Shadowing fix
+data = nl.zeros((nl.par_dim(128), 128), dtype=np.float32, buffer=nl.sbuf)
+for i in nl.sequential_range(4):
+    i_tile = nisa.iota(i, dtype=nl.uint32).broadcast_to(data.shape)
+    data[...] = data + i_tile
+nl.store(ptr, value=data)
+
+# err_mutable_parameter_not_returned - Error case
+def kernel_error_mutable(in_tensor: nt.mutable_tensor):
+    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+    x = nl.load(in_tensor)
+    y = x + 1
+    nl.store(out_tensor, value=y)
+    nl.store(in_tensor, value=y)
+    return out_tensor  # Error: mutable parameter not returned
+
+# err_mutable_parameter_not_returned - Correct usage
+def kernel_correct_mutable(in_tensor: nt.mutable_tensor):
+    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+    x = nl.load(in_tensor)
+    y = x + 1
+    nl.store(out_tensor, value=y)
+    nl.store(in_tensor, value=y)
+    return out_tensor, in_tensor  # ok
+
+# err_num_partition_exceed_arch_limit
+x = nl.zeros(shape=[256, 1024], dtype=np.float32, buffer=nl.sbuf)  # Error
+x = nl.zeros(shape=[128, 1024], dtype=np.float32, buffer=nl.sbuf)  # Works
+
+# err_num_partition_mismatch
+x = nl.zeros(shape=[128, 512], dtype=np.float32, buffer=nl.sbuf)
+y0 = nl.zeros(shape=[1, 512], dtype=np.float32, buffer=nl.sbuf)
+z = nisa.tensor_tensor(x, y0, op=nl.add)  # Error
+
+y1 = y0.broadcast_to([128, 512])
+z = nisa.tensor_tensor(x, y1, op=nl.add)  # works
+
+# err_size_of_dimension_exceed_arch_limit
+x = nl.zeros(shape=[128, 512], dtype=np.float32, buffer=nl.sbuf)
+b = nl.transpose(x)  # Error
+
+x = nl.zeros(shape=[128, 128], dtype=np.float32, buffer=nl.sbuf)
+b = nl.transpose(x)  # Works
+
+# err_store_dst_shape_smaller_than_other_shape
+x = nl.zeros(shape=(128, 512), dtype=nl.float32, buffer=nl.sbuf)
+y = nl.zeros(shape=(128, 1), dtype=nl.float32, buffer=nl.sbuf)
+y[...] = x  # Error
+x[...] = y  # ok
+
+# err_tensor_access_out_of_bound - Error case
+x = nl.ndarray([128, 4000], dtype=np.float32, buffer=nl.hbm)
+for i in nl.affine_range((4000 + 512 - 1) // 512):
+    tile_p, tile_x = nl.mgrid[0:128, 0:512]
+    nl.store(x[tile_p, i * 512 + tile_x], value=0)  # Error
+
+# err_tensor_access_out_of_bound - Workaround with mask
+for i in nl.affine_range((4000 + 512 - 1) // 512):
+    tile_p, tile_x = nl.mgrid[0:128, 0:512]
+    nl.store(x[tile_p, i * 512 + tile_x], value=0, mask=i * 512 + tile_x < 4000)  # Ok
+
+# err_tensor_output_not_written_to - Error case
+def incorrect(tensor_in, tensor_out):
+    M = 128
+    N = M + 1
+    for i in nl.affine_range(M // N):  # This evaluates to 0
+        a = nl.load(tensor_in)
+        nl.store(tensor_out, value=a)  # Never called
+
+# err_tensor_output_not_written_to - Workaround
+def memset_output(tensor_in, tensor_out, cnd):
+    nl.store(tensor_out, value=0)  # Initialize output
+    while cnd:
+        a = nl.load(tensor_in)
+        nl.store(tensor_out, value=a)
+
+# err_unsupported_expression_in_mask - Error case
+def test_mask_error(n):
+    out = nl.ndarray([8], dtype=nl.int32, buffer=nl.shared_hbm)
+    nl.store(out, 0, mask=n > 2)  # Error: n is a runtime value
+
+# err_unsupported_expression_in_mask - Error case 2
+def test_mask_error2():
+    out = nl.ndarray([8], dtype=nl.int32, buffer=nl.shared_hbm)
+    for i in range(8):
+        nl.store(out, i, mask=(i % 4) < 2)  # Error: i % 4 is not affine
+
+# err_unsupported_expression_in_mask - Correct usage
+def test_mask_correct():
+    out = nl.ndarray([8], dtype=nl.int32, buffer=nl.shared_hbm)
+    for i in range(8):
+        nl.store(out, i, mask=i < 4)  # Ok: i < 4 is affine
+    for i in range(8):
+        for j in range(8):
+            nl.store(out, i, mask=(2*i + 3*j + 1) < 20)  # Ok: affine
+    return out
+
+# err_unsupported_memory - Error case
+tmp = nl.ndarray((4, 4), dtype=nl.float32, buffer=nl.sbuf)
+x = nl.load(tmp)  # Error: Expected 'src' to be in 'hbm'
+
+tmp = nl.ndarray((4, 4), dtype=nl.float32, buffer=nl.hbm)
+x = nl.exp(tmp)  # Error: Expected 'x' to be in 'psum|sbuf'
+
+# err_unsupported_mixing_basic_advanced_tensor_indexing - Error case
+a = nl.zeros((4, 4), dtype=nl.float32, buffer=nl.sbuf)
+i = nl.arange(4)[:, None]
+c = nl.exp(a[i, :])  # Error
+
+# err_unsupported_mixing_basic_advanced_tensor_indexing - Correct usage
+c = nl.exp(a[:, :])  # ok
+i = nl.arange(4)[:, None]
+j = nl.arange(4)[None, :]
+c = nl.exp(a[i, j])  # also ok
+
+# err_while_loop_requires_unconditional_entry - Error case
+def func_while_error(a):
+    a_tile = nl.load(a[0, 0])
+    a_scalar = nl.scalar(a_tile)
+    while a_scalar < 10:  # Error: traditional while loop
+        a_tile = a_tile + 1
+        a_scalar = nl.scalar(a_tile)
+
+# err_while_loop_requires_unconditional_entry - Correct usage (do-while)
+def func_while_correct(a):
+    a_tile = nl.load(a[0, 0])
+    a_scalar = nl.scalar(a_tile)
+    cond = nl.scalar(True)  # Unconditional entry
+    while cond:
+        a_tile = a_tile + 1
+        a_scalar = nl.scalar(a_tile)
+        cond = a_scalar < 10  # Condition evaluated at end
 ```
 
 ## pytorch-neuron-debug.rst
 
 ```python
+import os
 import torch
 import torch_xla
 import torch_xla.core.xla_model as xm
@@ -2646,6 +3348,7 @@ print(output2)
 ```
 
 ```python
+import os
 import torch
 import torch_xla
 import torch_xla.core.xla_model as xm
@@ -2740,12 +3443,10 @@ for epoch in range(total_epochs):
 ```
 
 ```python
-import os
 os.environ["XLA_FLAGS"] = "--xla_dump_hlo_snapshots --xla_dump_to=./dump"
 ```
 
 ```python
-import os
 if os.environ.get("RANK", "0") == "0":
     os.environ["XLA_FLAGS"]="--xla_dump_hlo_snapshots --xla_dump_to=./dump"
 ```
@@ -2758,20 +3459,22 @@ if xm.is_master_ordinal():
 ```
 
 ```python
-import libneuronxla
+def _dump_hlo_snapshot_callback(name: str, addressable_device_index: int, execution_count: int) -> str:
+    return 'inputs'
+```
 
+```python
 def callback(name, addressable_device_index, execution_count):
     if execution_count == 2:
         return 'outputs'
     else:
         return ''
 
+import libneuronxla
 old_callback = libneuronxla.register_hlo_snapshot_callback(callback)
 ```
 
 ```python
-import libneuronxla
-
 step = 0
 def callback(name, addressable_device_index, execution_count):
     if step == 5:
@@ -2779,6 +3482,7 @@ def callback(name, addressable_device_index, execution_count):
     else:
         return ''
 
+import libneuronxla
 old_callback = libneuronxla.register_hlo_snapshot_callback(callback)
 
 for epoch in range(EPOCHS):
@@ -2786,12 +3490,326 @@ for epoch in range(EPOCHS):
         step += 1
 ```
 
-## trn2-llama3.1-405b-speculative-tutorial.rst
+## neuron-gatherinfo.py
+
+```python
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+
+def get_os_version():
+    ''' function to obtain the Linux version
+        Args:
+
+        Output:
+
+        Returns:
+            string with value 'Ubuntu' or 'RedHat'
+    '''
+
+    try:
+        with open("/proc/version") as fdin:
+            data = fdin.read()
+            if data.find('Ubuntu') == -1:
+                osver = 'RedHat'
+            else:
+                osver = 'Ubuntu'
+    except FileNotFoundError:
+        osver = 'Ubuntu'
+
+    return osver
+
+
+def get_files(*, basedir, matchfiles, verbose):
+    ''' function to get the files based on a base directory and file extension
+
+        Args:
+            basedir     : base directory where files reside
+            matchfiles  : set of files to match
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output:
+
+        Returns:
+            list of files found
+
+    '''
+
+    myfiles = list()
+    for dpath, _, files in os.walk(basedir):
+        for mfile in files:
+            if mfile in matchfiles:
+                mfile = os.path.realpath(os.path.join(dpath, mfile))
+                if os.path.isfile(mfile):
+                    myfiles.append(mfile)
+                else:
+                    if verbose:
+                        print("Warning: {} is not a file".format(mfile))
+
+    return myfiles
+
+
+def dump_compiler_info(*, outdir, location, allowmodel=False, addfldir=None, verbose=False):
+    ''' function to gather the following information:
+            Framework:
+                - TensorFlow
+                - MXNet
+                - PyTorch
+            Compiler:
+        Args:
+            outdir      : output directory
+            location    : location of compiler-generated files
+            allowmodel  : if True, allow gathering of additional files
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output: compiler-generated files copied to outdir
+
+        Returns:
+    '''
+
+    if location is not None:
+        if allowmodel:  # copy the entire directory
+            try:
+                shutil.copytree(location, os.path.join(outdir, os.path.basename(location)),
+                                ignore_dangling_symlinks=True)
+            except shutil.Error:
+                pass
+        else:
+            fileset = set(['graph_def.neuron-cc.log', 'all_metrics.csv', 'hh-tr-operand-tensortensor.json'])
+            l1data = get_files(basedir=location, matchfiles=fileset, verbose=verbose)
+            copy_files(outdir=outdir, basedir=location, filelist=l1data, verbose=verbose)
+
+        if addfldir is not None:
+            if os.path.isfile(addfldir):
+                shutil.copy(addfldir, outdir)
+            else:  # directory copy
+                try:
+                    shutil.copytree(addfldir, os.path.join(outdir, os.path.basename(addfldir)),
+                                    ignore_dangling_symlinks=True)
+                except shutil.Error:
+                    pass
+
+
+def copy_syslog(*, outdir, include_flag=False, verbose):
+    '''
+        function to copy contents of the syslog to the output directory
+
+        Args:
+            outdir          : output directory location where the syslog's contents
+                              are to be copied
+            include_flag    : if True, include lines that do not match
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output:
+            copy of syslog's contents with just "Neuron-specific" lines
+
+        Returns:
+    '''
+
+    regex1 = re.compile(r'^(\S+)\s.*?({})'.format(r"nrtd|neuron|kernel:"))
+    regex2 = re.compile(r'^(\S+)\s')
+
+    osver = get_os_version()
+    if osver == 'Ubuntu':
+        syslog = '/var/log/syslog'
+    else:
+        syslog = '/var/log/messages'
+
+    try:
+        with open(syslog) as fdin,\
+            open(os.path.join(outdir, 'copy-of-syslog'), 'w') as fdout:
+            for line in fdin:
+                match = regex1.search(line)
+                if match is not None:
+                    fdout.write(line)
+                else:
+                    if include_flag:
+                        match = regex2.match(line)
+                        if match is not None:
+                            # exclude the rest of the line
+                            fdout.write(match.group(1) + ' XXX contents elided XXX\n')
+                        else:
+                            print("Error in parsing this line: {}".format(line))
+    except FileNotFoundError:
+        print("Error, /var/log/syslog not found")
+
+
+def dump_miscinfo(*, outdir, verbose):
+    ''' function to dump miscellaneous information, including:
+            - system info (uname -a)
+            - package info (??? list of packages installed)
+            - neuron-ls
+            - neuron-top
+
+        Args:
+            outdir  : output directory
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output:
+            Creates various reports in the outdir location
+
+        Returns:
+
+    '''
+
+    osver = get_os_version()
+    if osver == 'Ubuntu':
+        pkgcmds = ["apt list | egrep '^aws'",
+                   "pip list | egrep '^neuron|^numpy|^tensor|^scipy'"]
+    else:
+        pkgcmds = ["rpm -qa | egrep '^aws|^neuron|^numpy|^tensor|^scipy'"]
+
+    cmds = ["lscpu", "lshw",
+            "lspci | grep -i Amazon",
+            "neuron-cc --version",
+            "neuron-ls",
+            "top -b -n 1",
+            "uname -a", "uptime"] + pkgcmds
+
+    for cmd in cmds:
+        cmdname = cmd.split(' ')[0]  # get just the command name for creating the file
+        cmdfile = os.path.join(outdir, "report-{}.txt".format(cmdname))
+
+        with open(cmdfile, "w") as fdout:
+
+            if verbose:
+                print("Running cmd: {} and capturing output in file: {}".format(cmd, cmdfile))
+
+            try:
+                res = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, universal_newlines=True,
+                                       shell=True)
+                stdout, stderr = res.communicate()
+                if stderr is not None:
+                    fdout.write("Error in executing cmd: {}\nError: {}\n".format(cmd, str(stderr)))
+                else:
+                    fdout.write("Output from executing cmd: {}\n\n{}\n".format(cmd, str(stdout)))
+            except (OSError, ValueError) as err:
+                fdout.write("Error in executing cmd: {}\nError: {}\n".format(cmd, err))
+
+
+def dump_proc_info(*, outdir, verbose):
+    '''
+        function to dump information related to "/proc"
+
+        Args:
+            outdir  : output directory
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output:
+            Creates various reports in the outdir location
+
+        Returns:
+
+    '''
+
+    proc_files = ["/proc/cmdline",
+                  "/proc/cpuinfo",
+                  "/proc/filesystems",
+                  "/proc/interrupts",
+                  "/proc/iomem",
+                  "/proc/loadavg",
+                  "/proc/meminfo",
+                  "/proc/modules",
+                  "/proc/mtrr",
+                  "/proc/version"]
+
+    for procfile in proc_files:
+        fname = procfile.split('/')  # use the 2nd and 3rd items from this (canonical form)
+        pfile = os.path.join(outdir, "report-{}-{}.txt".format(fname[1], fname[2]))
+        if verbose:
+            print("Copying contents of: {} to: {}".format(procfile, pfile))
+
+        try:
+            with open(pfile, "w") as fdout, open(procfile) as fdin:
+                fdout.write("Contents of {}\n\n".format(procfile))
+                fdout.write(fdin.read())
+        except FileNotFoundError:
+            print("Error: file {} not found\n".format(procfile))
+
+
+def copy_files(*, outdir, basedir, filelist, verbose):
+    '''
+        function to copy files from the original source area
+        into the destination. This is also the place for any
+        massaging or eliding of file contents
+
+        Args:
+            outdir  : destination location
+            basedir : base directory from where the files are to be copied
+            filelist: list of files to be copied
+            verbose : flag to indicate if verbose messages need to be displayed
+
+        Output:
+            Copy of files (possibly altered) from the source
+
+        Returns:
+
+    '''
+
+    for thisfile in filelist:
+        myfile = '.' + thisfile[len(basedir):]
+        mydir = os.path.dirname(os.path.join(outdir, myfile))
+        if not os.path.isdir(mydir):
+            os.makedirs(mydir)
+        shutil.copy(thisfile, mydir, follow_symlinks=True)
+
+
+def write_miscinfo(*, outdir, data):
+    '''
+        function to write out the contents of the miscellaneous commands
+
+        Args:
+            outdir  : destination location
+            data    : list of strings to be stored in a file
+
+        Output:
+            MISCINFO_FILE created with the contents of the output of the various
+            commands
+    '''
+
+    flname = os.path.join(outdir, 'miscinfo.txt')
+
+    with open(flname, "w") as fdout:
+        fdout.write("\n".join(data))
+
+
+def package_tarball(*, outdir, allowmodel, ccdir, verbose):
+    '''
+        function to package everything into a tarball
+
+        Args:
+            outdir      : output directory
+            allowmodel  : flag to indicate whether the user has allowed
+                          gathering of model data
+
+        Output:
+            A tar ball created in directory one level above outdir
+            this would be the directory provided by the user
+
+        Returns:
+    '''
+
+    mytarball = os.path.join(os.path.split(outdir)[0], 'neuron-gatherinfo')
+
+    if verbose:
+        print("Creating archive: {}".format(mytarball))
+
+    archivefile = shutil.make_archive(mytarball, 'gztar', outdir)
+    print("\n\n\t******\n\tArchive created at:\n\t\t{}\n\tFrom directory:\n\t\t{}\n\t******\n\n".format(archivefile, outdir))
+```
+
+## trn2-llama3.3-70b-tutorial.rst
 
 ```bash
-# Compile model and run generation - Scenario 1 (bf16 weights)
-MODEL_PATH="/home/ubuntu/models/Llama-3.1-405B-Instruct/"
-COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.1-405B-Instruct/"
+# Replace this with the path where you downloaded and saved the model files.
+MODEL_PATH="/home/ubuntu/models/Llama-3.3-70B-Instruct/"
+# This is where the compiled model will be saved. The same path
+# should be used when launching vLLM server for inference.
+COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.3-70B-Instruct/"
 
 NUM_CORES=128
 TP_DEGREE=64
@@ -2800,60 +3818,68 @@ LNC=2
 export NEURON_RT_VIRTUAL_CORE_SIZE=$LNC
 export NEURON_RT_NUM_CORES=$((NUM_CORES/NEURON_RT_VIRTUAL_CORE_SIZE))
 export NEURON_RT_EXEC_TIMEOUT=600 
+export XLA_DENSE_GATHER_FACTOR=0 
+export NEURON_RT_INSPECT_ENABLE=0
 
 inference_demo \
     --model-type llama \
     --task-type causal-lm \
-    run \
-    --model-path $MODEL_PATH \
-    --compiled-model-path $COMPILED_MODEL_PATH \
-    --torch-dtype bfloat16 \
-    --start_rank_id 0 \
-    --local_ranks_size $TP_DEGREE \
-    --tp-degree $TP_DEGREE \
-    --batch-size 1 \
-    --max-context-length 12288 \
-    --seq-len 12800 \
-    --on-device-sampling \
-    --top-k 1 \
-    --fused-qkv \
-    --sequence-parallel-enabled \
-    --qkv-kernel-enabled \
-    --attn-kernel-enabled \
-    --mlp-kernel-enabled \
-    --cc-pipeline-tiling-factor 1 \
-    --pad-token-id 2 \
-    --enable-bucketing \
-    --context-encoding-buckets 2048 4096 10240 12288 \
-    --token-generation-buckets 12800 \
-    --prompt "What is annapurna labs?"
+        run \
+        --model-path $MODEL_PATH \
+        --compiled-model-path $COMPILED_MODEL_PATH \
+        --torch-dtype bfloat16 \
+        --start_rank_id 0 \
+        --local_ranks_size $TP_DEGREE \
+        --tp-degree $TP_DEGREE \
+        --batch-size 1 \
+        --max-context-length 12288 \
+        --seq-len 12800 \
+        --on-device-sampling \
+        --top-k 1 \
+        --do-sample \
+        --fused-qkv \
+        --sequence-parallel-enabled \
+        --qkv-kernel-enabled \
+        --attn-kernel-enabled \
+        --mlp-kernel-enabled \
+        --cc-pipeline-tiling-factor 1 \
+        --pad-token-id 2 \
+        --enable-bucketing \
+        --context-encoding-buckets 2048 4096 8192 12288 \
+        --token-generation-buckets 2048 4096 8192 12800 \
+        --prompt "What is annapurna labs?" 2>&1 | tee log
 ```
 
 ```bash
-# Start vLLM server - Scenario 1 (bf16 weights)
+export NEURON_RT_INSPECT_ENABLE=0 
 export NEURON_RT_VIRTUAL_CORE_SIZE=2
 
-MODEL_PATH="/home/ubuntu/models/Llama-3.1-405B-Instruct/"
-COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.1-405B-Instruct/"
+# These should be the same paths used when compiling the model.
+MODEL_PATH="/home/ubuntu/models/Llama-3.3-70B-Instruct/"
+COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.3-70B-Instruct/"
 
 export VLLM_NEURON_FRAMEWORK="neuronx-distributed-inference"
 export NEURON_COMPILED_ARTIFACTS=$COMPILED_MODEL_PATH
-
 VLLM_RPC_TIMEOUT=100000 python -m vllm.entrypoints.openai.api_server \
-    --model "$MODEL_PATH" \
+    --model $MODEL_PATH \
     --max-num-seqs 1 \
     --max-model-len 12800 \
     --tensor-parallel-size 64 \
-    --no-enable-prefix-caching \
-    --port 8000
+    --device neuron \
+    --use-v2-block-manager \
+    --override-neuron-config "{\"on_device_sampling_config\": {\"do_sample\": true}, \"skip_warmup\": true}" \
+    --port 8000 &
+PID=$!
+echo "vLLM server started with PID $PID"
 ```
 
 ```bash
-# Compile model with fp8 quantization and fused speculation - Scenario 2
-MODEL_PATH="/home/ubuntu/models/Llama-3.1-405B-Instruct-FP8-rescaled/"
-DRAFT_MODEL_PATH="/home/ubuntu/models/Llama-3.2-1b-instruct/"    
-COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.1-405B-Instruct/"
-MTNC_FILE_PATH="/home/ubuntu/models/Llama-3.1-405B-Instruct-FP8-rescaled/modules_to_not_convert.json"
+# This is the same path as in the previous scenario.
+MODEL_PATH="/home/ubuntu/models/Llama-3.3-70B-Instruct/"
+# This is the path where the draft model is downaloded and saved.
+DRAFT_MODEL_PATH="/home/ubuntu/models/Llama-3.2-1B-Instruct/"
+# As in the previous scenario, this is where the compiled model will be saved.
+COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.3-70B-Instruct/"
 
 NUM_CORES=128
 TP_DEGREE=64
@@ -2862,58 +3888,51 @@ LNC=2
 export NEURON_RT_VIRTUAL_CORE_SIZE=$LNC
 export NEURON_RT_NUM_CORES=$((NUM_CORES/NEURON_RT_VIRTUAL_CORE_SIZE))
 export NEURON_RT_EXEC_TIMEOUT=600 
-export XLA_HANDLE_SPECIAL_SCALAR=1
-export UNSAFE_FP8FNCAST=1
+export XLA_DENSE_GATHER_FACTOR=0 
+export NEURON_RT_INSPECT_ENABLE=0
 
 inference_demo \
     --model-type llama \
     --task-type causal-lm \
-    run \
-    --model-path $MODEL_PATH \
-    --compiled-model-path $COMPILED_MODEL_PATH \
-    --torch-dtype bfloat16 \
-    --start_rank_id 0 \
-    --local_ranks_size $TP_DEGREE \
-    --tp-degree $TP_DEGREE \
-    --batch-size 1 \
-    --max-context-length 12288 \
-    --seq-len 12800 \
-    --on-device-sampling \
-    --top-k 1 \
-    --fused-qkv \
-    --sequence-parallel-enabled \
-    --qkv-kernel-enabled \
-    --attn-kernel-enabled \
-    --mlp-kernel-enabled \
-    --cc-pipeline-tiling-factor 1 \
-    --draft-model-path $DRAFT_MODEL_PATH \
-    --enable-fused-speculation \
-    --speculation-length 7 \
-    --pad-token-id 2 \
-    --quantized-mlp-kernel-enabled \
-    --quantization-type per_channel_symmetric \
-    --rmsnorm-quantize-kernel-enabled \
-    --enable-bucketing \
-    --prompt "What is annapurna labs?" \
-    --modules-to-not-convert-file $MTNC_FILE_PATH \
-    --context-encoding-buckets 2048 4096 10240 12288 \
-    --token-generation-buckets 12800
+        run \
+        --model-path $MODEL_PATH \
+        --compiled-model-path $COMPILED_MODEL_PATH \
+        --torch-dtype bfloat16 \
+        --start_rank_id 0 \
+        --local_ranks_size $TP_DEGREE \
+        --tp-degree $TP_DEGREE \
+        --batch-size 1 \
+        --max-context-length 12288 \
+        --seq-len 12800 \
+        --on-device-sampling \
+        --top-k 1 \
+        --fused-qkv \
+        --sequence-parallel-enabled \
+        --qkv-kernel-enabled \
+        --attn-kernel-enabled \
+        --mlp-kernel-enabled \
+        --cc-pipeline-tiling-factor 1 \
+        --draft-model-path $DRAFT_MODEL_PATH \
+        --enable-fused-speculation \
+        --speculation-length 7 \
+        --pad-token-id 2 \
+        --enable-bucketing \
+        --context-encoding-buckets 2048 4096 8192 12288 \
+        --token-generation-buckets 2048 4096 8192 12800 \
+        --prompt "What is annapurna labs?" 2>&1 | tee log
 ```
 
 ```bash
-# Start vLLM server with fp8 quantization and fused speculation - Scenario 2
-export NEURON_RT_INSPECT_ENABLE=0
+export NEURON_RT_INSPECT_ENABLE=0 
 export NEURON_RT_VIRTUAL_CORE_SIZE=2
-export XLA_HANDLE_SPECIAL_SCALAR=1
-export UNSAFE_FP8FNCAST=1
 
-MODEL_PATH="/home/ubuntu/models/Llama-3.1-405B-Instruct-FP8-rescaled"
-DRAFT_MODEL_PATH="/home/ubuntu/models/Llama-3.2-1b-instruct"
-COMPILED_MODEL_PATH="/home/ubuntu/traced_models/Llama-3.1-405B-Instruct_fp8"
+# These should be the same paths used when compiling the model.
+MODEL_PATH="/home/ubuntu/models/Llama-3.3-70B-Instruct/"
+DRAFT_MODEL_PATH="/home/ubuntu/models/Llama-3.2-1B-Instruct/"
+COMPILED_MODEL_PATH="/home/ubuntu/traced_model/Llama-3.3-70B-Instruct/"
 
 export VLLM_NEURON_FRAMEWORK="neuronx-distributed-inference"
 export NEURON_COMPILED_ARTIFACTS=$COMPILED_MODEL_PATH
-
 VLLM_RPC_TIMEOUT=100000 python -m vllm.entrypoints.openai.api_server \
     --model $MODEL_PATH \
     --max-num-seqs 1 \
@@ -2924,537 +3943,11 @@ VLLM_RPC_TIMEOUT=100000 python -m vllm.entrypoints.openai.api_server \
     --speculative-model $DRAFT_MODEL_PATH \
     --num-speculative-tokens 7 \
     --use-v2-block-manager \
-    --override-neuron-config "{\"enable_fused_speculation\":true, \"quantized-mlp-kernel-enabled\":true, \"quantization-type\":\"per_channel_symmetric\", \"skip_warmup\": true}" \
-    --port 8000
-```
-
-## nki_direct_allocation_guide.rst
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 1: Automatic allocation
-nki_tensor = nl.ndarray((16, nl.par_dim(128), 512), dtype=nl.bfloat16, buffer=ncc.sbuf.auto_alloc())
-nki_tensor = nl.ndarray((16, nl.par_dim(128), 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-
-# Example 2: Direct allocation with ncc.sbuf.alloc()
-nki_tensor = nl.ndarray((16, nl.par_dim(128), 512), dtype=nl.bfloat16, buffer=ncc.sbuf.alloc(...))
-
-# Example 3: Direct allocation with ncc.sbuf.mod_alloc()
-nki_tensor = nl.ndarray((16, nl.par_dim(128), 512), dtype=nl.bfloat16, buffer=ncc.sbuf.mod_alloc(...))
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 4: Simple 1D allocation function
-def simple_1d_alloc_func(idx, pdim_size, fdim_size):
-    idx, = idx  # unpack the tuple
-    return (0, idx * fdim_size)
-
-t = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-               buffer=ncc.sbuf.alloc(simple_1d_alloc_func))
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 5: Allocation factory with closure
-next_addr = 0
-
-def simple_1d_alloc_factory(total_fdim_size):
-    global next_addr
-    base_addr = next_addr
-    next_addr += total_fdim_size
-
-    def simple_1d_alloc_func(idx, pdim_size, fdim_size):
-        idx, = idx
-        start_partition = 0
-        return (start_partition, base_addr + idx * fdim_size)
-
-    return simple_1d_alloc_func
-
-t0 = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                buffer=ncc.sbuf.alloc(simple_1d_alloc_factory(512*2*4)))
-t1 = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                buffer=ncc.sbuf.alloc(simple_1d_alloc_factory(512*2*4)))
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 6: Modulo allocation
-nki_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                        buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 7: Hoisting allocation outside loop (INCORRECT - serialized)
-for i in nl.affine_range(8):
-    t = nl.ndarray((128, 512), dtype=nl.bfloat16, buffer=ncc.sbuf.mod_alloc(base_addr=0))
-    t[i] = ...
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 8: Hoisting allocation outside loop (CORRECT - parallelized)
-t = nl.ndarray((8, 128, 512), dtype=nl.bfloat16,
-               buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(8,)))
-for i in nl.affine_range(8):
-    t[i] = ...
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 9: Mixing direct allocation with automatic allocation (INCORRECT)
-t = nl.load(input)  # t is a new tensor, this will fail
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 10: Correct way to use direct allocation with load
-t = nl.ndarray(shape=..., dtype=..., buffer=ncc.sbuf.alloc(...))
-t[...] = nl.load(input)
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 11: Lifetime conflict - overlapping memory addresses
-t0 = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-
-t1 = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                buffer=ncc.sbuf.mod_alloc(base_addr=1024, num_free_tiles=(2, )))
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 12: Lifetime conflict - insufficient physical tiles (INCORRECT)
-t1 = nl.ndarray((8, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-
-for i in nl.affine_range(8):
-    t1[i] = nl.load(...)
-
-for i in nl.affine_range(8):
-    result[i] = nl.exp(t1[i])
-```
-
-```python
-import nki.language as nl
-import nki.compiler as ncc
-
-# Example 13: Correct way to avoid lifetime conflict
-for i in nl.affine_range(4):
-    t1 = nl.ndarray((2, nl.par_dim(128), 512), dtype=nl.bfloat16,
-                    buffer=ncc.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-    for j in nl.affine_range(2):
-        t1[j] = nl.load(...)
-        result[i*2 + j] = nl.exp(t1[j])
-```
-
-## matrix_multiplication_nki_kernels.py
-
-```python
-import nki as nki
-import nki.isa as nisa
-import nki.language as nl
-import numpy as np
-
-
-@nki.jit
-def nki_matmul_basic_(lhsT, rhs):
-  """NKI kernel to compute a 64x128x512 matrix multiplication operation
-
-  Args:
-      lhsT: an input tensor of shape [128,64], a left hand side argument of the
-        matrix multiplication, delivered transposed for optimal performance
-      rhs: an input tensor of shape [128,512], a right hand side argument of the
-        matrix multiplication
-  Returns:
-      result: the resulting output tensor of shape [64,512]
-  """
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-
-  assert K == K_, \
-    f"Expected contraction dimension to match on both lhsT ({K}) and rhs ({K})"
-  assert K == 128, f"Expected contraction dimension to be 128, but got {K}"
-  assert M == 64, f"Expected lhsT matrix to have dimension M of 64, but got {M}"
-  assert N == 512, f"Expected rhs matrix to have dimension N of 512, but got {N}"
-
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  lhs_tile = nl.ndarray(lhsT.shape, dtype=lhsT.dtype, buffer=nl.sbuf)
-  rhs_tile = nl.ndarray(rhs.shape, dtype=rhs.dtype, buffer=nl.sbuf)
-
-  nisa.dma_copy(dst=lhs_tile, src=lhsT)
-  nisa.dma_copy(dst=rhs_tile, src=rhs)
-
-  result_psum = nl.ndarray(result.shape, dtype=nl.float32, buffer=nl.psum)
-
-  nisa.nc_matmul(result_psum, lhs_tile, rhs_tile)
-
-  result_sbuf = nl.ndarray(result_psum.shape, dtype=result.dtype, buffer=nl.sbuf)
-  nisa.tensor_copy(dst=result_sbuf, src=result_psum, dtype=result.dtype)
-
-  nisa.dma_copy(dst=result, src=result_sbuf)
-
-  return result
-
-
-@nki.jit
-def nki_matmul_tiled_(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation in a tiled manner
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        128.  It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-
-  TILE_M = nl.tile_size.gemm_stationary_fmax
-  TILE_K = nl.tile_size.pmax
-  TILE_N = nl.tile_size.gemm_moving_fmax
-
-  assert M % TILE_M == 0, \
-    f"Expected M, {M}, to be a multiple of stationary free-dimension max, {TILE_M}"
-  assert N % TILE_N == 0, \
-    f"Expected N, {N}, to be a multiple of moving free-dimension max, {TILE_N}"
-  assert K % TILE_K == 0, \
-    f"Expected K, {K}, to be a multiple of the partition dimension max, {TILE_K}"
-
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  for m in nl.affine_range(M // TILE_M):
-    for n in nl.affine_range(N // TILE_N):
-      res_psum = nl.ndarray((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
-
-      for k in nl.affine_range(K // TILE_K):
-        lhsT_tile = nl.ndarray((TILE_K, TILE_M), dtype=lhsT.dtype, buffer=nl.sbuf)
-        rhs_tile = nl.ndarray((TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
-
-        nisa.dma_copy(dst=lhsT_tile,
-                      src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                               m * TILE_M:(m + 1) * TILE_M])
-        nisa.dma_copy(dst=rhs_tile, 
-                      src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                              n * TILE_N:(n + 1) * TILE_N])
-
-        nisa.nc_matmul(dst=res_psum, stationary=lhsT_tile, moving=rhs_tile)
-
-      res_sb = nl.ndarray(res_psum.shape, dtype=result.dtype, buffer=nl.sbuf)
-      nisa.tensor_copy(dst=res_sb, src=res_psum, dtype=result.dtype)
-
-      nisa.dma_copy(dst=result[m * TILE_M:(m + 1) * TILE_M,
-                               n * TILE_N:(n + 1) * TILE_N],
-                    src=res_sb)
-
-  return result
-
-
-@nki.jit
-def nki_matmul_hoist_load_(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation in a tiled manner
-     while hoisting the load of the lhsT and rhs to outer loops.
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        128.  It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-
-  TILE_M = nl.tile_size.gemm_stationary_fmax
-  TILE_K = nl.tile_size.pmax
-  TILE_N = nl.tile_size.gemm_moving_fmax
-
-  assert M % TILE_M == 0, \
-    f"Expected M, {M}, to be a multiple of stationary free-dimension max, {TILE_M}"
-  assert N % TILE_N == 0, \
-    f"Expected N, {N}, to be a multiple of moving free-dimension max, {TILE_N}"
-  assert K % TILE_K == 0, \
-    f"Expected K, {K}, to be a multiple of the partition dimension max, {TILE_K}"
-
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  for m in nl.affine_range(M // TILE_M):
-    lhsT_tiles = []
-    for k in nl.affine_range(K // TILE_K):
-      lhsT_tile = nl.ndarray(shape=(TILE_K, TILE_M), dtype=lhsT.dtype, buffer=nl.sbuf)
-      nisa.dma_copy(dst=lhsT_tile, 
-                    src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                             m * TILE_M:(m + 1) * TILE_M])
-      lhsT_tiles.append(lhsT_tile)
-
-    for n in nl.affine_range(N // TILE_N):
-      rhs_tiles = []
-      for k in nl.affine_range(K // TILE_K):
-        rhs_tile = nl.ndarray(shape=(TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
-        nisa.dma_copy(dst=rhs_tile,
-                      src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                              n * TILE_N:(n + 1) * TILE_N])
-        rhs_tiles.append(rhs_tile)
-
-      res_psum = nl.ndarray(shape=(TILE_M, TILE_N), dtype=nl.float32, buffer=nl.psum)
-      for k in nl.affine_range(K // TILE_K):
-        nisa.nc_matmul(dst=res_psum, stationary=lhsT_tiles[k], moving=rhs_tiles[k])
-
-      res_sb = nl.ndarray(shape=(TILE_M, TILE_N), dtype=nl.float32, buffer=nl.sbuf)
-      nisa.tensor_copy(dst=res_sb, src=res_psum, dtype=result.dtype)
-
-      nisa.dma_copy(dst=result[m * TILE_M:(m + 1) * TILE_M,
-                               n * TILE_N:(n + 1) * TILE_N],
-                    src=res_sb)
-
-  return result
-
-
-@nki.jit
-def nki_matmul_block_free_dimension_(lhsT, rhs):
-  """NKI kernel to compute a matrix multiplication operation while blocking the
-     free dimensions of the LHS and RHS to improve memory access pattern.
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
-        128.  It is the left-hand-side argument of the matrix multiplication,
-        delivered transposed for optimal performance.
-      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
-        is a multiple of 512.  It is the right-hand-side argument of the matrix
-        multiplication.
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-
-  TILE_M = nl.tile_size.gemm_stationary_fmax
-  TILE_K = nl.tile_size.pmax
-  TILE_N = nl.tile_size.gemm_moving_fmax
-
-  TILES_IN_BLOCK_M = 2
-  TILES_IN_BLOCK_N = 2
-
-  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
-  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
-
-  assert M % BLOCK_M == 0
-  assert N % BLOCK_N == 0
-
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  for m in nl.affine_range(M // BLOCK_M):
-    lhsT_tiles = []
-    for bm in nl.affine_range(TILES_IN_BLOCK_M):
-      lhsT_tiles_internal = []
-      for k in nl.affine_range(K // TILE_K):
-        lhsT_tile = nl.ndarray(shape=(TILE_K, TILE_M),
-                               dtype=lhsT.dtype,
-                               buffer=nl.sbuf)
-        nisa.dma_copy(dst=lhsT_tile,
-                      src=lhsT[k * TILE_K:(k + 1) * TILE_K,
-                               (m * TILES_IN_BLOCK_M + bm) *
-                               TILE_M:((m * TILES_IN_BLOCK_M + bm) + 1) *
-                               TILE_M])
-        lhsT_tiles_internal.append(lhsT_tile)
-      lhsT_tiles.append(lhsT_tiles_internal)
-
-    for n in nl.affine_range(N // BLOCK_N):
-      rhs_tiles = []
-      for bn in nl.affine_range(TILES_IN_BLOCK_N):
-        rhs_tiles_internal = []
-        for k in nl.affine_range(K // TILE_K):
-          rhs_tile = nl.ndarray(shape=(TILE_K, TILE_N),
-                                dtype=rhs.dtype,
-                                buffer=nl.sbuf)
-          nisa.dma_copy(dst=rhs_tile,
-                        src=rhs[k * TILE_K:(k + 1) * TILE_K,
-                                (n * TILES_IN_BLOCK_N + bn) *
-                                TILE_N:((n * TILES_IN_BLOCK_N + bn) + 1) *
-                                TILE_N])
-          rhs_tiles_internal.append(rhs_tile)
-        rhs_tiles.append(rhs_tiles_internal)
-
-      for bm in nl.affine_range(TILES_IN_BLOCK_M):
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                                   dtype=nl.float32,
-                                   buffer=nl.psum)
-          for k in nl.affine_range(K // TILE_K):
-            nisa.nc_matmul(dst=result_tile,
-                           stationary=lhsT_tiles[bm][k],
-                           moving=rhs_tiles[bn][k])
-  
-          result_tmp = nl.ndarray(shape=result_tile.shape,
-                                  dtype=result.dtype,
-                                  buffer=nl.sbuf)
-          nisa.tensor_copy(dst=result_tmp, src=result_tile)
-
-          nisa.dma_copy(dst=result[(m * TILES_IN_BLOCK_M + bm) *
-                                   TILE_M:((m * TILES_IN_BLOCK_M + bm) + 1) *
-                                   TILE_M,
-                                   (n * TILES_IN_BLOCK_N + bn) *
-                                   TILE_N:((n * TILES_IN_BLOCK_N + bn) + 1) *
-                                   TILE_N],
-                        src=result_tmp)
-
-  return result
-
-
-@nki.jit
-def nki_matmul_fully_optimized_(
-    lhsT,
-    rhs,
-    TILES_IN_BLOCK_M=16,
-    TILES_IN_BLOCK_N=2,
-    TILES_IN_BLOCK_K=8,
-):
-  """NKI kernel to compute a large matrix multiplication efficiently by
-     blocking all dimensions and doing layout optimization.
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and M is a multiple of 128 * TILES_IN_BLOCK_M.  It is the
-        left-hand-side argument of the matrix multiplication, delivered transposed
-        for optimal performance.
-      rhs: an input tensor of shape [K,N],  where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and N is a multiple of 512 * TILES_IN_BLOCK_N.  It is
-        the right-hand-side argument of the matrix multiplication.
-      TILES_IN_BLOCK_*: meta parameters to control blocking dimensions
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-
-  TILE_M = nl.tile_size.gemm_stationary_fmax
-  TILE_K = nl.tile_size.pmax
-  TILE_N = nl.tile_size.gemm_moving_fmax
-
-  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
-  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
-  BLOCK_K = TILE_K * TILES_IN_BLOCK_K
-
-  assert M % BLOCK_M == 0, \
-    f"Expected M {M} to be divisble by {BLOCK_M} when there are {TILES_IN_BLOCK_M}"
-  assert N % BLOCK_N == 0, \
-    f"Expected N {N} to be divisble by {BLOCK_N} when there are {TILES_IN_BLOCK_N}"
-  assert K % BLOCK_K == 0, \
-    f"Expected K {K} to be divisble by {BLOCK_K} when there are {TILES_IN_BLOCK_K}"
-
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  NUM_BLOCK_M = M // BLOCK_M
-  NUM_BLOCK_N = N // BLOCK_N
-  NUM_BLOCK_K = K // BLOCK_K
-
-  for n in nl.affine_range(NUM_BLOCK_N):
-    result_tmps = []
-    for m_idx in range(NUM_BLOCK_M):
-      block_m = []
-      for bm_idx in range(TILES_IN_BLOCK_M):
-        block_n = []
-        for bn_idx in range(TILES_IN_BLOCK_N):
-          tile = nl.ndarray(shape=(TILE_M, TILE_N), dtype=lhsT.dtype, buffer=nl.sbuf)
-          nisa.memset(dst=tile, value=0.0)
-          block_n.append(tile)
-        block_m.append(block_n)
-      result_tmps.append(block_m)
-
-    for k in nl.sequential_range(NUM_BLOCK_K):
-      rhs_tiles = []
-      for bk_r in range(TILES_IN_BLOCK_K):
-        rhs_tile = nl.ndarray(shape=(TILE_K, BLOCK_N),
-                              dtype=rhs.dtype,
-                              buffer=nl.sbuf)
-        nisa.dma_copy(dst=rhs_tile[0:TILE_K, 0:BLOCK_N],
-                      src=rhs[(TILES_IN_BLOCK_K * k + bk_r) *
-                              TILE_K:(TILES_IN_BLOCK_K * k + bk_r + 1) * TILE_K,
-                              BLOCK_N * n:BLOCK_N * (n + 1)])
-        rhs_tiles.append(rhs_tile)
-
-      for m in nl.affine_range(NUM_BLOCK_M):
-        lhsT_tiles = []
-        for bk_l in nl.affine_range(TILES_IN_BLOCK_K):
-          lhsT_tile = nl.ndarray(shape=(TILE_K, BLOCK_M),
-                                 dtype=lhsT.dtype,
-                                 buffer=nl.sbuf)
-          nisa.dma_copy(dst=lhsT_tile[0:TILE_K, 0:BLOCK_M],
-                        src=lhsT[(TILES_IN_BLOCK_K * k + bk_l) *
-                                 TILE_K:(TILES_IN_BLOCK_K * k + bk_l + 1) * TILE_K,
-                                 BLOCK_M * m:BLOCK_M * (m + 1)])
-          lhsT_tiles.append(lhsT_tile)
-
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          for bm in nl.affine_range(TILES_IN_BLOCK_M):
-            result_tile = nl.ndarray(shape=(TILE_M, TILE_N),
-                                     dtype=nl.float32,
-                                     buffer=nl.psum)
-            for bk in nl.affine_range(TILES_IN_BLOCK_K):
-              nisa.nc_matmul(
-                dst=result_tile,
-                stationary=lhsT_tiles[bk][0:TILE_K, bm * TILE_M:(bm + 1) * TILE_M],
-                moving=rhs_tiles[bk][0:TILE_K, bn * TILE_N:(bn + 1) * TILE_N]
-              )
-            nisa.tensor_tensor(dst=result_tmps[m][bm][bn],
-                               data1=result_tmps[m][bm][bn],
-                               data2=result_tile,
-                               op=nl.add)
-
-    for m in nl.affine_range(NUM_BLOCK_M):
-      for bm in nl.affine_range(TILES_IN_BLOCK_M):
-        result_packed = nl.ndarray(shape=(TILE_M, BLOCK_N),
-                                   dtype=nl.float32,
-                                   buffer=nl.sbuf)
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          nisa.tensor_copy(
-            dst=result_packed[0:TILE_M, bn * TILE_N:(bn + 1) * TILE_N],
-            src=result_tmps[m][bm][bn][0:TILE_M, 0:TILE_N])
-
-        nisa.dma_copy(dst=result[(TILES_IN_BLOCK_M * m + bm) *
-                                 TILE_M:(TILES_IN_BLOCK_M * m + bm + 1) * TILE_M,
-                                 BLOCK_N * n:BLOCK_N * (n + 1)],
-                      src=result_packed[0:TILE_M, 0:BLOCK_N])
-
-  return result
+    --override-neuron-config "{\"enable_fused_speculation\":true}" \
+    --port 8000 &
+PID=$!
+echo PID=$PID
+echo "vLLM server started with PID $PID"
 ```
 
 ## pp_developer_guide.rst
@@ -3549,7 +4042,11 @@ from typing import Any, Dict, Iterator, Tuple
 import torch.nn as nn
 import torch
 from torch_xla.utils.checkpoint import checkpoint as torch_checkpoint
+from neuronx_distributed.parallel_layers.parallel_state import rmsg
+from neuronx_distributed.utils.logger import get_logger
 from torch.distributed.utils import _replace_by_prefix
+
+logger = get_logger()
 
 _CHECKPOINT_WRAPPED_MODULE = "mod"
 _CHECKPOINT_PREFIX = _CHECKPOINT_WRAPPED_MODULE + "."
@@ -3558,7 +4055,11 @@ class CheckPointWrapper(torch.nn.Module):
     def __init__(self, mod) -> None:
         super().__init__()
         self.mod = mod
+        # state_dict post hook to remove prefix to allow loading into a
+        # non-checkpoint wrapped module.
         self._register_state_dict_hook(self._post_state_dict_hook)
+        # load_state_dict pre-hook to allow loading back into
+        # checkpoint-wrapped module.
         self._register_load_state_dict_pre_hook(
             self._pre_load_state_dict_hook, with_module=True
         )
@@ -3567,6 +4068,8 @@ class CheckPointWrapper(torch.nn.Module):
         ordered_args = list(args)
         for value in kwargs.values():
             ordered_args += [value]
+
+        # Note: checkpoint cannot accept kwargs
         return torch_checkpoint(self.mod, *ordered_args, use_reentrant=True)
     
     def named_parameters(
@@ -3574,6 +4077,10 @@ class CheckPointWrapper(torch.nn.Module):
         *args,
         **kwargs,
     ) -> Iterator[Tuple[str, torch.nn.Parameter]]:
+        """
+        Overrides :meth:`named_parameters()` to intercept parameter names and
+        remove all occurrences of ``_CHECKPOINT_PREFIX``.
+        """
         for param_name, param in super().named_parameters(*args, **kwargs):
             updated_name = param_name.replace(_CHECKPOINT_PREFIX, "")
             yield updated_name, param
@@ -3590,6 +4097,14 @@ class CheckPointWrapper(torch.nn.Module):
         prefix: str,
         *args: Any,
     ) -> Dict[str, Any]:
+        """
+        _post_state_dict_hook() is called after the state_dict() of this
+        FSDP module is executed. For ``checkpoint_wrapper``, it will strip
+        checkpoint-wrapped module prefix so that this module can be loaded into
+        non-checkpointed modules. It would still be able to be loaded into
+        checkpoint-wrapped modules as this class adds the prefix back before
+        loading the state_dict.
+        """
         _replace_by_prefix(state_dict, f"{prefix}{_CHECKPOINT_PREFIX}", prefix)
         return state_dict
     
@@ -3600,26 +4115,43 @@ class CheckPointWrapper(torch.nn.Module):
         prefix: str,
         *args: Any,
     ) -> None:
+        """
+        ``_pre_state_dict_hook` is called before ``self._load_from_state_dict()``
+        is called. For ``checkpoint_wrapper``, it will add back the module
+        prefix so that non-checkpointed modules can be loaded into
+        checkpoint_wrapper modules properly.
+        """
         _replace_by_prefix(state_dict, prefix, prefix + f"{_CHECKPOINT_PREFIX}")
 
 def apply_checkpoint(dist_model, layers_to_checkpoint=None):
     checkpoint_wrapper_added = False
     if layers_to_checkpoint is not None and len(layers_to_checkpoint) == 0:
         raise RuntimeError(
-            f"invalid input layers_to_checkpoint {layers_to_checkpoint}, can't be empty"
+            rmsg(f"invalid input layers_to_checkpoint {layers_to_checkpoint}, can't be empty")
         )
     for name, module in dist_model.local_module.named_children():
+        # checkpoint layers that are provided in input
+        # if layers not provide in input, then checkpoint if it is transformer layer
         if (layers_to_checkpoint and name in layers_to_checkpoint) or (
             not layers_to_checkpoint and type(module) == dist_model.transformer_layer_cls
         ):
+            # add_module replaces old module with our own custom module.
+            # https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.add_module
             dist_model.local_module.add_module(name, CheckPointWrapper(module))
             checkpoint_wrapper_added = True
     if layers_to_checkpoint is not None and not checkpoint_wrapper_added:
-        pass
+        logger.warning(
+            rmsg(f"layers_to_checkpoint {layers_to_checkpoint} do not exist in the graph")
+        )
     elif layers_to_checkpoint is None and not checkpoint_wrapper_added:
-        pass
+        logger.warning(
+            rmsg(
+                f"During applying activation checkpointing, transformer_layer_cls {dist_model.transformer_layer_cls.__name__} can not be found in stage {dist_model.pipeline_parallel_rank}, skipping..."
+            )
+        )
 
 model = NxDPPModel(...)
+# Will checkpoint every transformer layer
 apply_checkpoint(model)
 ```
 
@@ -3628,132 +4160,670 @@ from transformers.models.llama.modeling_llama import LlamaForCausalLM as LlamaFo
 
 # Keep the same class name as original one
 class LlamaForCausalLM(LlamaForCausalLMHF):
-    pass
+    ...
 ```
 
-## vllm-user-guide.rst
+## yolo_v3_coco_saved_model.py
 
 ```python
-import os
-os.environ['VLLM_NEURON_FRAMEWORK'] = "neuronx-distributed-inference"
+import tensorflow as tf
+from functools import partial
+import numpy as np
 
-from vllm import LLM, SamplingParams
+STRIDES = [8, 16, 32]
+ANCHORS = np.array([1.25,1.625, 2.0,3.75, 4.125,2.875, 1.875,3.8125, 3.875,2.8125, 3.6875,7.4375, 3.625,2.8125, 4.875,6.1875, 11.65625,10.1875]).astype(np.float32).reshape([3, 3, 2])
+ANCHOR_PER_SCALE = 3
+BOX_SCORE_THRESH = 0.3
+UPSAMPLE_METHOD = "resize"
+NUM_CLASSES = 80
 
-llm = LLM(
-    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    max_num_seqs=8,
-    max_model_len=128,
-    device="neuron",
-    tensor_parallel_size=2)
 
-prompts = [
-    "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
-sampling_params = SamplingParams(top_k=10, temperature=0.8, top_p=0.95)
+class YOLOV3(object):
+    """Implement tensoflow yolov3 here"""
+    def __init__(self, input_data, input_size, trainable):
 
-outputs = llm.generate(prompts, sampling_params)
+        self.trainable        = trainable
+        self.num_class        = NUM_CLASSES
+        self.strides          = STRIDES
+        self.anchors          = ANCHORS
+        self.anchor_per_scale = ANCHOR_PER_SCALE
+        self.box_score_thresh = BOX_SCORE_THRESH
+        self.upsample_method  = UPSAMPLE_METHOD
 
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.outputs[0].text
-    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
+        input_data, decoded_shape = preprocessor(input_data, [input_size, input_size])
+        self.conv_lbbox, self.conv_mbbox, self.conv_sbbox = self.__build_nework(input_data)
+
+        def decode_boxes(bboxes_and_decoded_shape):
+            conv_lbbox, conv_mbbox, conv_sbbox, decoded_shape = bboxes_and_decoded_shape
+            conv_lbbox = tf.cast(conv_lbbox, tf.float32)
+            conv_mbbox = tf.cast(conv_mbbox, tf.float32)
+            conv_sbbox = tf.cast(conv_sbbox, tf.float32)
+            conv_lbbox = conv_lbbox[tf.newaxis, ...]
+            conv_mbbox = conv_mbbox[tf.newaxis, ...]
+            conv_sbbox = conv_sbbox[tf.newaxis, ...]
+            decoded_shape = decoded_shape[tf.newaxis, ...]
+            with tf.variable_scope('pred_sbbox'):
+                pred_sbbox_coors, pred_sbbox_class_scores = self.decode(conv_sbbox, self.anchors[0], self.strides[0], decoded_shape, input_size)
+
+            with tf.variable_scope('pred_mbbox'):
+                pred_mbbox_coors, pred_mbbox_class_scores = self.decode(conv_mbbox, self.anchors[1], self.strides[1], decoded_shape, input_size)
+
+            with tf.variable_scope('pred_lbbox'):
+                pred_lbbox_coors, pred_lbbox_class_scores = self.decode(conv_lbbox, self.anchors[2], self.strides[2], decoded_shape, input_size)
+
+            with tf.variable_scope('pred_bbox_filter'):
+                pred_bbox_coors = tf.concat([pred_sbbox_coors, pred_mbbox_coors, pred_lbbox_coors], axis=1)
+                pred_bbox_class_scores = tf.concat([pred_sbbox_class_scores, pred_mbbox_class_scores, pred_lbbox_class_scores], axis=1)
+                nms_top_k = 100
+                nms_thresh= 0.45
+                coors, scores, classes, valid_detections = tf.image.combined_non_max_suppression(
+                    pred_bbox_coors,
+                    pred_bbox_class_scores,
+                    max_output_size_per_class=nms_top_k,
+                    max_total_size=nms_top_k,
+                    iou_threshold=nms_thresh,
+                    score_threshold=self.box_score_thresh,
+                    pad_per_class=False,
+                    clip_boxes=False,
+                    name='CombinedNonMaxSuppression',
+                )
+                scores = scores[..., tf.newaxis]
+                classes = classes[..., tf.newaxis]
+            return coors[0], scores[0], classes[0]
+
+        with tf.name_scope('Postprocessor'):
+            coors, scores, classes = tf.map_fn(
+                decode_boxes, [self.conv_lbbox, self.conv_mbbox, self.conv_sbbox, decoded_shape],
+                dtype=(tf.float32, tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
+
+        with tf.variable_scope('pred_bbox'):
+            self.pred_bbox_boxes = tf.identity(coors, name='boxes')
+            self.pred_bbox_scores = tf.identity(scores[..., 0], name='scores')
+            self.pred_bbox_classes = tf.identity(classes[..., 0], name='classes')
+
+    def __build_nework(self, input_data):
+        route_1, route_2, input_data = darknet53(input_data, self.trainable)
+
+        input_data = convolutional(input_data, (1, 1, 1024,  512), self.trainable, 'conv52')
+        input_data = convolutional(input_data, (3, 3,  512, 1024), self.trainable, 'conv53')
+        input_data = convolutional(input_data, (1, 1, 1024,  512), self.trainable, 'conv54')
+        input_data = convolutional(input_data, (3, 3,  512, 1024), self.trainable, 'conv55')
+        input_data = convolutional(input_data, (1, 1, 1024,  512), self.trainable, 'conv56')
+
+        conv_lobj_branch = convolutional(input_data, (3, 3, 512, 1024), self.trainable, name='conv_lobj_branch')
+        conv_lbbox = convolutional(conv_lobj_branch, (1, 1, 1024, 3*(self.num_class + 5)),
+                                   trainable=self.trainable, name='conv_lbbox', activate=False, bn=False)
+
+        input_data = convolutional(input_data, (1, 1,  512,  256), self.trainable, 'conv57')
+        input_data = upsample(input_data, name='upsample0', method=self.upsample_method)
+
+        with tf.variable_scope('route_1'):
+            input_data = tf.concat([input_data, route_2], axis=-1)
+
+        input_data = convolutional(input_data, (1, 1, 768, 256), self.trainable, 'conv58')
+        input_data = convolutional(input_data, (3, 3, 256, 512), self.trainable, 'conv59')
+        input_data = convolutional(input_data, (1, 1, 512, 256), self.trainable, 'conv60')
+        input_data = convolutional(input_data, (3, 3, 256, 512), self.trainable, 'conv61')
+        input_data = convolutional(input_data, (1, 1, 512, 256), self.trainable, 'conv62')
+
+        conv_mobj_branch = convolutional(input_data, (3, 3, 256, 512),  self.trainable, name='conv_mobj_branch' )
+        conv_mbbox = convolutional(conv_mobj_branch, (1, 1, 512, 3*(self.num_class + 5)),
+                                   trainable=self.trainable, name='conv_mbbox', activate=False, bn=False)
+
+        input_data = convolutional(input_data, (1, 1, 256, 128), self.trainable, 'conv63')
+        input_data = upsample(input_data, name='upsample1', method=self.upsample_method)
+
+        with tf.variable_scope('route_2'):
+            input_data = tf.concat([input_data, route_1], axis=-1)
+
+        input_data = convolutional(input_data, (1, 1, 384, 128), self.trainable, 'conv64')
+        input_data = convolutional(input_data, (3, 3, 128, 256), self.trainable, 'conv65')
+        input_data = convolutional(input_data, (1, 1, 256, 128), self.trainable, 'conv66')
+        input_data = convolutional(input_data, (3, 3, 128, 256), self.trainable, 'conv67')
+        input_data = convolutional(input_data, (1, 1, 256, 128), self.trainable, 'conv68')
+
+        conv_sobj_branch = convolutional(input_data, (3, 3, 128, 256), self.trainable, name='conv_sobj_branch')
+        conv_sbbox = convolutional(conv_sobj_branch, (1, 1, 256, 3*(self.num_class + 5)),
+                                   trainable=self.trainable, name='conv_sbbox', activate=False, bn=False)
+
+        return conv_lbbox, conv_mbbox, conv_sbbox
+
+    def decode(self, conv_output, anchors, stride, decoded_shape, input_size):
+        conv_output = tf.cast(conv_output, tf.float32)
+        """
+        return tensor of shape [batch_size, output_size, output_size, anchor_per_scale, 5 + num_classes]
+               contains (x, y, w, h, score, probability)
+        """
+
+        conv_shape       = tf.shape(conv_output)
+        batch_size       = conv_shape[0]
+        output_size      = conv_shape[1]
+        anchor_per_scale = len(anchors)
+
+        conv_output = tf.reshape(conv_output, (batch_size, output_size, output_size, anchor_per_scale, 5 + self.num_class))
+
+        conv_raw_dxdy = conv_output[:, :, :, :, 0:2]
+        conv_raw_dwdh = conv_output[:, :, :, :, 2:4]
+        conv_raw_conf = conv_output[:, :, :, :, 4:5]
+        conv_raw_prob = conv_output[:, :, :, :, 5: ]
+
+        y = tf.tile(tf.range(output_size, dtype=tf.int32)[:, tf.newaxis], [1, output_size])
+        x = tf.tile(tf.range(output_size, dtype=tf.int32)[tf.newaxis, :], [output_size, 1])
+
+        xy_grid = tf.concat([x[:, :, tf.newaxis], y[:, :, tf.newaxis]], axis=-1)
+        xy_grid = tf.tile(xy_grid[tf.newaxis, :, :, tf.newaxis, :], [batch_size, 1, 1, anchor_per_scale, 1])
+        xy_grid = tf.cast(xy_grid, tf.float32)
+
+        pred_xy = (tf.sigmoid(conv_raw_dxdy) + xy_grid) * stride
+        pred_wh = (tf.exp(conv_raw_dwdh) * anchors) * stride
+        pred_xywh = tf.concat([pred_xy, pred_wh], axis=-1)
+
+        pred_conf = tf.sigmoid(conv_raw_conf)
+        pred_prob = tf.sigmoid(conv_raw_prob)
+
+        pred_xywh = tf.reshape(pred_xywh, (-1, output_size*output_size*3, pred_xywh.shape[-1]))
+        pred_conf = tf.reshape(pred_conf, (-1, output_size*output_size*3))
+        pred_prob = tf.reshape(pred_prob, (-1, output_size*output_size*3, pred_prob.shape[-1]))
+
+        return tf_postprocess_boxes(pred_xywh, pred_conf, pred_prob, decoded_shape, input_size, self.box_score_thresh)
+
+
+def darknet53(input_data, trainable):
+
+    with tf.variable_scope('darknet'):
+
+        input_data = convolutional(input_data, filters_shape=(3, 3,  3,  32), trainable=trainable, name='conv0')
+        input_data = convolutional(input_data, filters_shape=(3, 3, 32,  64), trainable=trainable, name='conv1', downsample=True)
+
+        for i in range(1):
+            input_data = residual_block(input_data,  64,  32, 64, trainable=trainable, name='residual%d' %(i+0))
+
+        input_data = convolutional(input_data, filters_shape=(3, 3,  64, 128), trainable=trainable, name='conv4', downsample=True)
+
+        for i in range(2):
+            input_data = residual_block(input_data, 128,  64, 128, trainable=trainable, name='residual%d' %(i+1))
+
+        input_data = convolutional(input_data, filters_shape=(3, 3, 128, 256), trainable=trainable, name='conv9', downsample=True)
+
+        for i in range(8):
+            input_data = residual_block(input_data, 256, 128, 256, trainable=trainable, name='residual%d' %(i+3))
+
+        route_1 = input_data
+        input_data = convolutional(input_data, filters_shape=(3, 3, 256, 512), trainable=trainable, name='conv26', downsample=True)
+
+        for i in range(8):
+            input_data = residual_block(input_data, 512, 256, 512, trainable=trainable, name='residual%d' %(i+11))
+
+        route_2 = input_data
+        input_data = convolutional(input_data, filters_shape=(3, 3, 512, 1024), trainable=trainable, name='conv43', downsample=True)
+
+        for i in range(4):
+            input_data = residual_block(input_data, 1024, 512, 1024, trainable=trainable, name='residual%d' %(i+19))
+
+        return route_1, route_2, input_data
+
+
+def convolutional(input_data, filters_shape, trainable, name, downsample=False, activate=True, bn=True):
+
+    with tf.variable_scope(name):
+        if downsample:
+            pad_h, pad_w = (filters_shape[0] - 2) // 2 + 1, (filters_shape[1] - 2) // 2 + 1
+            paddings = tf.constant([[0, 0], [pad_h, pad_h], [pad_w, pad_w], [0, 0]])
+            input_data = tf.pad(input_data, paddings, 'CONSTANT')
+            strides = (1, 2, 2, 1)
+            padding = 'VALID'
+        else:
+            strides = (1, 1, 1, 1)
+            padding = "SAME"
+
+        weight = tf.get_variable(name='weight', dtype=tf.float32, trainable=True,
+                                 shape=filters_shape, initializer=tf.random_normal_initializer(stddev=0.01))
+        weight = tf.cast(weight, tf.float16)
+        conv = tf.nn.conv2d(input=input_data, filter=weight, strides=strides, padding=padding)
+
+        if bn:
+            conv = tf.layers.batch_normalization(conv, beta_initializer=tf.zeros_initializer(),
+                                                 gamma_initializer=tf.ones_initializer(),
+                                                 moving_mean_initializer=tf.zeros_initializer(),
+                                                 moving_variance_initializer=tf.ones_initializer(), training=trainable,
+                                                 fused=False)
+        else:
+            bias = tf.get_variable(name='bias', shape=filters_shape[-1], trainable=True,
+                                   dtype=tf.float32, initializer=tf.constant_initializer(0.0))
+            bias = tf.cast(bias, tf.float16)
+            conv = tf.nn.bias_add(conv, bias)
+
+        if activate == True: conv = tf.nn.leaky_relu(conv, alpha=0.1)
+
+    return conv
+
+
+def residual_block(input_data, input_channel, filter_num1, filter_num2, trainable, name):
+    short_cut = input_data
+    with tf.variable_scope(name):
+        input_data = convolutional(input_data, filters_shape=(1, 1, input_channel, filter_num1),
+                                   trainable=trainable, name='conv1')
+        input_data = convolutional(input_data, filters_shape=(3, 3, filter_num1,   filter_num2),
+                                   trainable=trainable, name='conv2')
+        residual_output = input_data + short_cut
+    return residual_output
+
+
+def upsample(input_data, name, method="deconv"):
+    assert method in ["resize", "deconv"]
+
+    if method == "resize":
+        with tf.variable_scope(name):
+            input_shape = tf.shape(input_data)
+            output = tf.image.resize_nearest_neighbor(input_data, (input_shape[1] * 2, input_shape[2] * 2))
+
+    if method == "deconv":
+        numm_filter = input_data.shape.as_list()[-1]
+        output = tf.layers.conv2d_transpose(input_data, numm_filter, kernel_size=2, padding='same',
+                                            strides=(2,2), kernel_initializer=tf.random_normal_initializer())
+
+    return output
+
+
+def decode_jpeg_resize(input_tensor, image_size):
+    tensor = tf.image.decode_png(input_tensor, channels=3)
+    shape = tf.shape(tensor)
+    tensor = tf.cast(tensor, tf.float32)
+    tensor = tf.image.resize_image_with_pad(tensor, image_size[0], image_size[1])
+    tensor /= 255.0
+    return tf.cast(tensor, tf.float16), shape
+
+
+def preprocessor(input_tensor, image_size):
+    with tf.name_scope('Preprocessor'):
+        batch_tensor, batch_shape = tf.map_fn(
+            partial(decode_jpeg_resize, image_size=image_size), input_tensor,
+            dtype=(tf.float16, tf.int32), back_prop=False, parallel_iterations=16)
+    return batch_tensor, batch_shape
+
+
+def tf_postprocess_boxes(pred_xywh, pred_conf, pred_prob, org_img_shape, input_size, score_threshold):
+    batch_size = tf.shape(pred_xywh)[0]
+
+    pred_coor = tf.concat([pred_xywh[:, :, :2] - pred_xywh[:, :, 2:] * 0.5,
+                           pred_xywh[:, :, :2] + pred_xywh[:, :, 2:] * 0.5], axis=-1)
+    org_wh = org_img_shape[:, tf.newaxis, 1::-1]
+    org_whwh = tf.concat([org_wh, org_wh], axis=-1)
+    org_whwh = tf.cast(org_whwh, tf.float32)
+    input_size = np.float32(input_size)
+    resize_ratio = input_size / tf.reduce_max(org_whwh, axis=-1)
+    dwhwh = (input_size - resize_ratio * org_whwh) / 2
+    pred_coor = (pred_coor - dwhwh) / resize_ratio
+
+    scores = pred_conf * tf.reduce_max(pred_prob, axis=-1)
+    score_mask = scores > score_threshold
+    coors = pred_coor[score_mask]
+    pred_conf = pred_conf[score_mask]
+    pred_conf = tf.reshape(pred_conf, [batch_size, -1, 1])
+    pred_prob = pred_prob[score_mask]
+    pred_prob = tf.reshape(pred_prob, [batch_size, -1, pred_prob.shape[-1]])
+    class_scores = pred_conf * pred_prob
+    coors = tf.reshape(coors, [batch_size, -1, 1, coors.shape[-1]])
+    class_scores = tf.reshape(class_scores, [batch_size, -1, class_scores.shape[-1]])
+    return coors, class_scores
+```
+
+## disaggregated-inference-tutorial-1p1d.rst
+
+```bash
+#!/bin/bash
+# compile.sh
+
+while [[ $# -gt 0 ]]; do
+   case $1 in
+      --tp-degree)
+            TP_DEGREE="$2"
+            shift 2
+            ;;
+      --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+      --model-path)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+      *)
+            echo "Unknown parameter: $1"
+            echo "Usage: $0 --tp-degree <value> --batch-size <value> --model-path <path>"
+            exit 1
+            ;;
+   esac
+done
+
+export COMPILED_MODEL_PATH="di_traced_model_tp${TP_DEGREE}_b${BATCH_SIZE}/"
+
+inference_demo \
+   --model-type llama \
+   --task-type causal-lm \
+   run \
+   --model-path $MODEL_PATH \
+   --compiled-model-path $COMPILED_MODEL_PATH \
+   --torch-dtype bfloat16 \
+   --tp-degree $TP_DEGREE \
+   --batch-size $BATCH_SIZE \
+   --ctx-batch-size 1 \
+   --tkg-batch-size $BATCH_SIZE \
+   --is-continuous-batching \
+   --max-context-length 8192 \
+   --seq-len 8192 \
+   --on-device-sampling \
+   --fused-qkv \
+   --global-topk 256 --dynamic \
+   --top-k 50 --top-p 0.9 --temperature 0.7 \
+   --do-sample \
+   --sequence-parallel-enabled \
+   --qkv-kernel-enabled \
+   --attn-kernel-enabled \
+   --mlp-kernel-enabled \
+   --cc-pipeline-tiling-factor 1 \
+   --pad-token-id 2 \
+   --logical-neuron-cores 2 \
+   --context-encoding-buckets 256 512 1024 2048 4096 8192 \
+   --token-generation-buckets 512 1024 2048 4096 8192 \
+   --apply-seq-ids-mask \
+   --enable-bucketing \
+   --prompt "test prompt" \
+   --save-sharded-checkpoint \
+   --attn-block-tkg-nki-kernel-enabled \
+   --attn-block-tkg-nki-kernel-cache-update \
+   --k-cache-transposed \
+   --async-mode \
+   --compile-only
+```
+
+```bash
+#!/bin/bash
+# server.sh
+
+while [[ $# -gt 0 ]]; do
+   case $1 in
+      --tp-degree)
+            TP_DEGREE="$2"
+            shift 2
+            ;;
+      --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+      --model-path)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+      --compiled-model-path)
+            COMPILED_MODEL_PATH="$2"
+            shift 2
+            ;;
+      --neuron-send-ip)
+            SEND_IP="$2"
+            shift 2
+            ;;
+      --neuron-recv-ip)
+            RECV_IP="$2"
+            shift 2
+            ;;
+      *)
+            echo "Unknown parameter: $1"
+            echo "Usage: $0 --tp-degree <value> --batch-size <value> --model-path <path> \
+                           --compiled-model-path <path> --send-ip <ip> --recv-ip <ip>"
+            exit 1
+            ;;
+   esac
+done
+
+export NEURON_RT_ASYNC_SENDRECV_BOOTSTRAP_PORT=45645
+export NEURON_RT_ASYNC_SENDRECV_EXPERIMENTAL_ENABLED=1
+export NEURON_COMPILED_ARTIFACTS="$COMPILED_MODEL_PATH"
+export NEURON_SEND_IP="$SEND_IP"
+export NEURON_RECV_IP="$RECV_IP"
+export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=2
+
+if [ "$SEND" = "1" ]; then
+   PORT=8100
+   if [ "$SINGLE_INSTANCE" = "1" ]; then
+      export NEURON_RT_VISIBLE_CORES=0-31
+   fi
+   TRANSFER_CONFIG='{
+            "kv_connector":"NeuronConnector",
+            "kv_buffer_device":"cpu",
+            "kv_role":"kv_producer",
+            "kv_rank":0,
+            "kv_parallel_size":2,
+            "kv_buffer_size":2e11,
+            "kv_ip":"'"$NEURON_SEND_IP"'",
+            "neuron_core_offset": 0
+      }'
+   
+else
+   PORT=8200
+   if [ "$SINGLE_INSTANCE" = "1" ]; then
+      NC_OFFSET=32
+      export NEURON_RT_VISIBLE_CORES=32-63
+   else   
+      NC_OFFSET=0
+   fi
+   TRANSFER_CONFIG='{
+            "kv_connector":"NeuronConnector",
+            "kv_buffer_device":"cpu",
+            "kv_role":"kv_consumer",
+            "kv_rank":1,
+            "kv_parallel_size":2,
+            "kv_buffer_size":2e11,
+            "kv_ip":"'"$NEURON_SEND_IP"'",
+            "neuron_core_offset": "'"$NC_OFFSET"'"
+      }'
+fi
+
+python3 -m vllm.entrypoints.openai.api_server \
+      --model "$MODEL_PATH" \
+      --max-num-seqs "$BATCH_SIZE" \
+      --max-model-len 8192 \
+      --tensor-parallel-size "$TP_DEGREE" \
+      --device neuron \
+      --use-v2-block-manager \
+      --override-neuron-config "{}" \
+      --kv-transfer-config "$TRANSFER_CONFIG" \
+      --port "$PORT"
+```
+
+```bash
+#!/bin/bash
+# llmperf.sh
+
+export OPENAI_API_BASE="http://localhost:8000/v1"
+export OPENAI_API_KEY="mock_key"
+
+python llmperf/token_benchmark_ray.py \
+   --model=$MODEL_PATH \
+   --tokenizer=$MODEL_PATH \
+   --mean-input-tokens=1024 \
+   --stddev-input-tokens=0\
+   --mean-output-tokens=100 \
+   --stddev-output-tokens=10 \
+   --max-num-completed-requests=200 \
+   --timeout=1720000 \
+   --num-concurrent-requests=4 \
+   --results-dir=llmperf_results \
+   --llm-api=openai \
+   --additional-sampling-params "{\"top_k\": 50, \"top_p\": 0.9, \"temperature\": 0.7}"
+```
+
+```bash
+#!/bin/bash
+# baseline_server.sh
+
+while [[ $# -gt 0 ]]; do
+   case $1 in
+      --tp-degree)
+            TP_DEGREE="$2"
+            shift 2
+            ;;
+      --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+      --model-path)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+      --compiled-model-path)
+            COMPILED_MODEL_PATH="$2"
+            shift 2
+            ;;
+      *)  
+            echo "Unknown parameter: $1"
+            echo "Usage: $0 --tp-degree <value> --batch-size <value> --model-path <path> \
+                           --compiled-model-path <path>"
+            exit 1
+            ;;
+   esac
+done
+
+export NEURON_COMPILED_ARTIFACTS="$COMPILED_MODEL_PATH"
+export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=2
+
+if [ "$SINGLE_INSTANCE" = "1" ]; then
+   NEURON_RT_VISIBLE_CORES=0-31
+fi
+
+python3 -m vllm.entrypoints.openai.api_server \
+      --model "$MODEL_PATH" \
+      --max-num-seqs "$BATCH_SIZE" \
+      --max-model-len 8192 \
+      --tensor-parallel-size "$TP_DEGREE" \
+      --device neuron \
+      --use-v2-block-manager \
+      --override-neuron-config "{}" \
+      --port 8000
+```
+
+## torch-core-placement.rst
+
+```python
+import torch
+import torch_neuron
+
+m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+m1 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc1
 ```
 
 ```python
-neuron_config = dict(
-    tp_degree=parallel_config.tensor_parallel_size,
-    ctx_batch_size=1,
-    batch_size=scheduler_config.max_num_seqs,
-    max_context_length=scheduler_config.max_model_len,
-    seq_len=scheduler_config.max_model_len,
-    enable_bucketing=True,
-    is_continuous_batching=True,
-    quantized=False,
-    torch_dtype=TORCH_DTYPE_TO_NEURON_AMP[model_config.dtype],
-    padding_side="right"
-)
+import torch
+import torch_neuron
+
+m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+m1 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc1
 ```
 
 ```python
-override_neuron_config={
-    "enable_bucketing":False,
-}
+import torch
+import torch_neuron
+
+m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc4
+m1 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc5
 ```
 
 ```python
-import os
-os.environ['VLLM_NEURON_FRAMEWORK'] = "neuronx-distributed-inference"
+import torch
+import torch_neuron
 
-from vllm import LLM, SamplingParams
-
-prompts = [
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
-sampling_params = SamplingParams(top_k=1)
-
-llm = LLM(
-    model="meta-llama/Llama-3.1-8B-Instruct",
-    max_num_seqs=4,
-    max_model_len=128,
-    override_neuron_config={
-        "enable_bucketing":False,
-    },
-    device="neuron",
-    tensor_parallel_size=32)
-
-outputs = llm.generate(prompts, sampling_params)
-
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.outputs[0].text
-    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
+m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+m1 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc0-nc1
+m2 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc1
 ```
 
 ```python
-from openai import OpenAI
+import torch
+import torch_neuron
 
-openai_api_key = "EMPTY"
-openai_api_base = "http://localhost:8000/v1"
+m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+m1 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc1
+```
 
-client = OpenAI(
-    api_key=openai_api_key,
-    base_url=openai_api_base,
-)
+```python
+import torch
+import torch_neuron
 
-models = client.models.list()
-model_name = models.data[0].id
+m0 = torch.jit.load('model-with-4-neuron-pipeline-cores.pt')  # Loads to nc0-nc3
+```
 
-max_tokens = 1024
-temperature = 1.0
-top_p = 1.0
-top_k = 50
-stream = False
+```python
+import torch
+import torch_neuron
 
-prompt = "Hello, my name is Llama "
-response = client.chat.completions.create(
-    model=model_name,
-    messages=[{"role": "user", "content": prompt}],
-    max_tokens=int(max_tokens),
-    temperature=float(temperature),
-    top_p=float(top_p),
-    stream=stream,
-    extra_body={'top_k': top_k}
-)
+m0 = torch.jit.load('model-with-3-neuron-pipeline-cores.pt')  # Loads to nc0-nc2
+m1 = torch.jit.load('model-with-4-neuron-pipeline-cores.pt')  # Loads to nc3-nc6
+m2 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc7
+```
 
-generated_text = ""
-if stream:
-    for chunk in response:
-        if chunk.choices[0].delta.content is not None:
-            generated_text += chunk.choices[0].delta.content
-else:
-    generated_text = response.choices[0].message.content
-    
-print(generated_text)
+```python
+import torch
+import torch_neuron
+
+m0 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc0-nc1
+m1 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc2-nc3
+m2 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+m3 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc2
+m4 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc0
+```
+
+```python
+import torch
+import torch_neuron
+
+m0 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc0-nc1
+m1 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc2-nc3
+m2 = torch.jit.load('model-with-3-neuron-pipeline-cores.pt')  # Loads to nc0-nc2
+```
+
+```python
+import torch
+import torch_neuron
+
+models = list()
+for _ in range(4):
+    model = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')
+    models.append(model)
+```
+
+```python
+import torch
+import torch_neuron
+
+# NOTE: Order of loads does NOT matter
+
+with torch_neuron.experimental.neuron_cores_context(2):
+    m1 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc2-nc3
+
+with torch_neuron.experimental.neuron_cores_context(0):
+    m2 = torch.jit.load('model-with-3-neuron-pipeline-cores.pt')  # Loads to nc0-nc2
+
+with torch_neuron.experimental.neuron_cores_context(0):
+    m0 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads to nc0-nc1
+
+with torch_neuron.experimental.neuron_cores_context(3):
+    m3 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads to nc3
+```
+
+```python
+import torch
+import torch_neuron
+
+with torch_neuron.experimental.multicore_context():
+    m0 = torch.jit.load('model-with-1-neuron-pipeline-cores.pt')  # Loads replications to nc0-nc7
+```
+
+```python
+import torch
+import torch_neuron
+
+with torch_neuron.experimental.neuron_cores_context(start_nc=2, nc_count=4):
+    m0 = torch.jit.load('model-with-2-neuron-pipeline-cores.pt')  # Loads replications to nc2-nc5
 ```
 
 ## torch-neuronx-profiling-with-tb.rst
@@ -3772,9 +4842,10 @@ device = xm.xla_device()
 class NN(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.layer1 = torch.nn.Linear(4, 4)
+
+        self.layer1 = torch.nn.Linear(4,4)
         self.nl1 = torch.nn.ReLU()
-        self.layer2 = torch.nn.Linear(4, 2)
+        self.layer2 = torch.nn.Linear(4,2)
         self.nl2 = torch.nn.Tanh()
 
     def forward(self, x):
@@ -3782,15 +4853,19 @@ class NN(torch.nn.Module):
         return self.nl2(self.layer2(x))
 
 with torch.no_grad():
+
     model = NN()
-    inp = torch.rand(4, 4)
+
+    inp = torch.rand(4,4)
     output = model(inp)
 
     with torch_neuronx.experimental.profiler.profile(
         port=9012,
         profile_type='operator',
-        ms_duration=10000):
+        ms_duration=10000 ):
         
+        # IMPORTANT: the model has to be transferred to XLA within
+        # the context manager, otherwise profiling won't work
         neuron_model = model.to(device)
         neuron_inp = inp.to(device)
         
@@ -3800,6 +4875,7 @@ with torch.no_grad():
 
 ```python
 import os
+import time
 import torch
 import torch_neuronx
 from torch_neuronx.experimental import profiler
@@ -3807,9 +4883,10 @@ from torch_neuronx.experimental import profiler
 class NN(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.layer1 = torch.nn.Linear(4, 4)
+
+        self.layer1 = torch.nn.Linear(4,4)
         self.nl1 = torch.nn.ReLU()
-        self.layer2 = torch.nn.Linear(4, 2)
+        self.layer2 = torch.nn.Linear(4,2)
         self.nl2 = torch.nn.Tanh()
 
     def forward(self, x):
@@ -3819,7 +4896,8 @@ class NN(torch.nn.Module):
 model = NN()
 model.eval()
 
-inp = torch.rand(4, 4)
+inp = torch.rand(4,4)
+
 output = model(inp)
 
 with torch_neuronx.experimental.profiler.profile(
@@ -3827,161 +4905,9 @@ with torch_neuronx.experimental.profiler.profile(
     profile_type='operator',
     ms_duration=10000,
     traced_only=True):
-    
+
     neuron_model = torch_neuronx.trace(model, inp, compiler_workdir="./compiler_cache")
-    output_neuron = neuron_model(inp)
-```
-
-## pytorch-neuron-programming-guide.rst
-
-```python
-import torch_xla.core.xla_model as xm
-
-device = xm.xla_device()
-```
-
-```python
-device = 'xla'
-```
-
-```python
-model.to(device)
-tensor.to(device)
-```
-
-```python
-tensor.cpu()
-```
-
-```python
-tensor.to('cpu')
-```
-
-```python
-import torch_xla.core.xla_model as xm
-
-device = xm.xla_device()
-# or
-device = 'xla'
-```
-
-```python
-xm.mark_step()
-```
-
-```python
-device = 'cpu'
-if not os.environ.get("DISABLE_XLA", None):
-    device = 'xla'
-
-# end of training step 
-if not os.environ.get("DISABLE_XLA", None):
-    xm.mark_step()
-```
-
-```python
-import torch_xla.distributed.parallel_loader as pl
-```
-
-```python
-import torch_xla.distributed.xla_backend
-torch.distributed.init_process_group('xla')
-```
-
-```python
-xm.optimizer_step(optimizer)
-```
-
-```python
-parallel_loader = pl.MpDeviceLoader(dataloader, device)
-```
-
-```python
-import torch_xla.core.xla_model as xm
-
-devkind = xm.xla_device_kind()
-print(devkind)
-```
-
-```python
-import torch_xla.core.xla_model as xm
-
-devices = xm.get_xla_supported_devices()
-print(len(devices))
-print(devices)
-```
-
-```python
-from torch_neuronx.utils import get_platform_target
-
-platform = get_platform_target()
-print(platform)
-```
-
-```python
-os.environ["NEURON_RT_STOCHASTIC_ROUNDING_EN"] = "1"
-
-# model is created
-model.to(torch.bfloat16)
-```
-
-```python
-running_loss = torch.zeros(1, dtype=torch.float).to(device)
-```
-
-```python
-grad = p.grad.data.float()
-```
-
-```python
-# model is created
-model.to(torch.bfloat16)
-```
-
-```python
-# keep a copy of weights in highprec
-self.param_groups_highprec = []
-for group in self.param_groups:
-    params = group['params']
-    param_groups_highprec = [p.data.float() for p in params]
-    self.param_groups_highprec.append({'params': param_groups_highprec})
-```
-
-```python
-os.environ["NEURON_CC_FLAGS"] = "--auto-cast=none"
-```
-
-```python
-with torch.autocast(dtype=torch.bfloat16, device_type='xla'):
-    # forward pass
-```
-
-```python
-def train_loop_fn(train_loader):
-    for i, data in enumerate(train_loader):
-        inputs = data[0]
-        labels = data[3]
-        outputs = model(inputs, labels=labels)
-        loss = outputs.loss/ flags.grad_acc_steps
-        loss.backward()
-        optimizer.step()
-        xm.mark_step()
-```
-
-```python
-os.environ["NEURON_CC_FLAGS"] = "--auto-cast=none"
-
-def train_loop_fn(train_loader):
-    for i, data in enumerate(train_loader):
-        torch.cuda.is_bf16_supported = lambda: True
-        with torch.autocast(dtype=torch.bfloat16, device_type='xla'):
-            inputs = data[0]
-            labels = data[3]
-            outputs = model(inputs, labels=labels)
-        loss = outputs.loss/ flags.grad_acc_steps
-        loss.backward()
-        optimizer.step()
-        xm.mark_step()
+    neuron_model(inp)
 ```
 
 ## perceiver-multimodal_benchmark.py
@@ -3989,7 +4915,7 @@ def train_loop_fn(train_loader):
 ```python
 import torch
 import torch.nn as nn
-from typing import Optional, Union, Tuple
+from typing import Optional, Tuple, Union
 from transformers import PerceiverForMultimodalAutoencoding
 from transformers.modeling_outputs import BaseModelOutputWithCrossAttentions
 from transformers.models.perceiver.modeling_perceiver import PerceiverBasicDecoder, PerceiverClassifierOutput
@@ -4078,6 +5004,82 @@ class MultimodalPerceiverWrapper(nn.Module):
             del logits
 
         return reconstruction
+
+
+def custom_model_forward(
+        self,
+        nchunks,
+        image_chunk_size,
+        audio_chunk_size,
+        neuron_decoder,
+        inputs: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, PerceiverClassifierOutput]:
+
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        perceiver_wrapper = MultimodalPerceiverWrapper(self.perceiver, nchunks, image_chunk_size, audio_chunk_size)
+        outputs = perceiver_wrapper(
+            inputs,
+            neuron_decoder,
+            attention_mask=attention_mask,
+            head_mask=head_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        return outputs
+
+
+def custom_decoder_query(self, inputs, modality_sizes=None, inputs_without_pos=None, subsampled_points=None):
+    if self.position_encoding_type == "none":
+        raise ValueError("You cannot construct decoder queries when position_encoding_type is set to none")
+    if subsampled_points is not None:
+        def unravel_indices(indices, shape):
+            coord = []
+            for dim in reversed(shape):
+                coord.append(indices % dim)
+                indices = indices // dim
+            coord = torch.stack(coord[::-1], dim=-1)
+            return coord
+
+        pos = unravel_indices(subsampled_points, self.output_index_dims)
+
+        batch_size = inputs.shape[0]
+        pos = -1 + 2 * pos / torch.tensor(self.output_index_dims)[None, :]
+        pos = torch.broadcast_to(pos[None], [batch_size, pos.shape[0], pos.shape[1]])
+        if self.position_encoding_type == "trainable":
+            pos_emb = self.output_position_encodings(batch_size)
+        elif self.position_encoding_type == "fourier":
+            pos_emb = self.output_position_encodings(
+                self.output_index_dims, batch_size=batch_size, device=inputs.device, dtype=inputs.dtype, pos=pos
+            )
+
+        pos_emb = self.positions_projection(pos_emb)
+        pos_emb = torch.reshape(pos_emb, [pos_emb.shape[0], -1, pos_emb.shape[-1]])
+    else:
+        batch_size = inputs.shape[0]
+        index_dims = inputs.shape[2:]
+
+        if self.position_encoding_type == "trainable":
+            pos_emb = self.output_position_encodings(batch_size)
+        elif self.position_encoding_type == "fourier":
+            pos_emb = self.output_position_encodings(
+                index_dims, batch_size, device=inputs.device, dtype=inputs.dtype
+            )
+
+        pos_emb = self.positions_projection(pos_emb)
+
+    if self.concat_preprocessed_input:
+        if inputs_without_pos is None:
+            raise ValueError("Value is required for inputs_without_pos if concat_preprocessed_input is True")
+        pos_emb = torch.cat([inputs_without_pos, pos_emb], dim=-1)
+
+    return pos_emb
 
 
 class EncoderWrapper(nn.Module):
@@ -4180,6 +5182,127 @@ class NeuronDecoder(nn.Module):
         return output
 ```
 
+## disaggregated-inference.rst
+
+```python
+# Proxy Server - Request Flow
+prefill_task = asyncio.create_task(anext(prefill_response))
+decode_task = asyncio.create_task(anext(decode_response))
+
+await prefill_task
+async for chunk in handle_prefill_response(prefill_response,
+                                         streaming, endpoint,
+                                         uid, request_time):
+    yield chunk
+
+await decode_task
+async for chunk in handle_decode_response(decode_response,
+                                        streaming, endpoint, uid,
+                                        request_time):
+    yield chunk
+```
+
+```python
+# Worker Discovery and Connection Manager
+class NeuronConnector:
+    def _keep_alive_ectd(self):
+        # Add worker to etcd
+        etcd_client.put(
+            f"/workers/{self.role}/{self.local_ip}/{self.api_server_port}",
+            json.dumps({"connections": []}),
+            lease
+        )
+```
+
+```python
+# Static 1P1D Mode - Buffer Initialization
+def initialize_buffer(self):
+    if self.config.is_kv_producer:
+        self.static_buffer = SendBuffer(
+            self.kv_caches,
+            self.zmq_context,
+            self.neuron_recv_ip,
+            self.config.kv_ip,
+            self.config.kv_port
+        )
+```
+
+```python
+# Dynamic xPyD Mode - Buffer Setup
+def maybe_setup_buffer(self, remote_ip, remote_port):
+    if self.static_buffer:
+        return self.static_buffer
+
+    key = "" if self.config.is_kv_producer else (remote_ip, remote_port)
+    
+    if key in self.connection_dict:
+        return self.connection_dict[key]
+```
+
+```python
+# Transfer Engine - KV Cache Transfer
+class NeuronTransferEngine:
+    def transfer_neuron_tensors(self, tensors, offsets, lengths, peer_devices, ...):
+        self.engine.queue_transfer_with_token(
+            tensors, offsets, lengths, peer_devices, self.local_devices,
+            self.comm_ids, completion_count, completion_token, use_queue,
+            completion_time_out)
+```
+
+```python
+# Send Handler - Prefill Side
+def send_handler(self):
+    while True:
+        identity, request = self.router.recv_json()
+    
+        if request["type"] == "handshake":
+            self.router.send_json(identity, {
+                "status": "ok",
+                "timestamp": time.time()
+            })
+            continue
+    
+        if request["type"] == "kv_map_init":
+            # Set up transfer details
+            continue
+            
+        if request["type"] == "lookup_all":
+            self._process_lookup_all(identity, request)
+            continue
+```
+
+```python
+# Starting Transfers - Prefill Side
+# ensure that the request is finished prefill
+if request_id not in self.lookup_dict:
+    self.router.send_json(identity, {"success": False})
+    return
+
+# After getting decode server request and prefill is finished
+kv_caches, offsets, lengths, peer_devices = \
+    self.generate_transfer_sequences(entry, remote_id=identity_str)
+
+# Start transfer
+self.get_transfer_engine(remote_id=identity_str).transfer_neuron_tensors(
+    kv_caches, offsets, lengths, peer_devices,
+    completion_token=entry.completion_token)
+```
+
+```python
+# Starting Transfers - Decode Side
+# receive prefill worker's output token
+entry.output_token = torch.tensor(
+    response["output_token"]).unsqueeze(0)
+
+kv_caches, offsets, lengths, peer_devices = \
+     self.generate_transfer_sequences(entry)
+
+# do not wait for request completion for recv buffer
+self.get_transfer_engine().transfer_neuron_tensors(
+    kv_caches, offsets, lengths, peer_devices,
+    completion_token=entry.completion_token)
+```
+
 ## mlp.rst
 
 ```python
@@ -4191,12 +5314,38 @@ device = 'xla'
 ```
 
 ```python
-model.to(device)
+optimizer.zero_grad()
+```
+
+```python
+output = model(train_x)
+```
+
+```python
+loss_fn(output, train_label)
+```
+
+```python
+loss.backward()
+```
+
+```python
+optimizer.step()
+```
+
+```python
+import torch_xla.core.xla_model as xm
+
 xm.mark_step()
+```
+
+```python
 loss.item()
 ```
 
 ```python
+import torch_xla.core.xla_model as xm
+
 xm.save(checkpoint, path)
 ```
 
@@ -4210,15 +5359,26 @@ torch.distributed.init_process_group('xla')
 ```python
 from torch_xla.distributed import MpDeviceLoader
 
-test_loader = MpDeviceLoader(test_dataset, batch_size=32, drop_last=True)
+data_loader = MpDeviceLoader(dataset, batch_size=32)
 ```
 
 ```python
+import torch_xla.core.xla_model as xm
+
 xm.optimizer_step(optimizer)
 ```
 
 ```python
+import torch_xla.core.xla_model as xm
+
 world_size = xm.xrt_world_size()
+```
+
+```python
+from torch.utils.data import DataLoader, DistributedSampler
+
+sampler = DistributedSampler(dataset)
+data_loader = DataLoader(dataset, batch_size=32, sampler=sampler)
 ```
 
 ```python
@@ -4232,170 +5392,6 @@ if idx == 0:
 from torch.utils.data import DataLoader
 
 test_loader = DataLoader(test_dataset, batch_size=32, drop_last=True)
-```
-
-## use-neuron-profile.rst
-
-```python
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import neuronxcc.nki as nki
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-import os
-
-os.environ["NEURON_FRAMEWORK_DEBUG"] = "1"
-os.environ["XLA_IR_DEBUG"] = "1"
-os.environ["XLA_HLO_DEBUG"] = "1"
-
-
-@nki.jit
-def nki_matmul_fully_optimized_(
-    lhsT,
-    rhs,
-    # Meta-parameters
-    TILES_IN_BLOCK_M=16,
-    TILES_IN_BLOCK_N=2,
-    TILES_IN_BLOCK_K=8,
-):
-  """NKI kernel to compute a large matrix multiplication efficiently by
-     blocking all dimensions and doing layout optimization.
-
-  Args:
-      lhsT: an input tensor of shape [K,M], where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and M is a multiple of 128 * TILES_IN_BLOCK_M.  It is the
-        left-hand-side argument of the matrix multiplication, delivered transposed
-        for optimal performance.
-      rhs: an input tensor of shape [K,N],  where K is a multiple of 128 *
-        TILES_IN_BLOCK_K and N is a multiple of 512 * TILES_IN_BLOCK_N.  It is
-        the right-hand-side argument of the matrix multiplication.
-      TILES_IN_BLOCK_*: meta parameters to control blocking dimensions
-  Returns:
-      result: the resulting output tensor of shape [M,N]
-  """
-
-  K, M = lhsT.shape
-  K_, N = rhs.shape
-  assert K == K_, "lhsT and rhs must have the same contraction dimension"
-  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
-  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-  TILE_K = nl.tile_size.pmax  # 128
-  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
-
-  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
-  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
-  BLOCK_K = TILE_K * TILES_IN_BLOCK_K
-
-  # the size has to be multiple of block size
-  assert M % BLOCK_M == 0
-  assert N % BLOCK_N == 0
-  assert K % BLOCK_K == 0
-
-  NUM_BLOCK_M = M // BLOCK_M
-  NUM_BLOCK_N = N // BLOCK_N
-  NUM_BLOCK_K = K // BLOCK_K
-
-  # Blocking N dimension (the RHS free dimension)
-  for n in nl.affine_range(NUM_BLOCK_N):
-    result_tiles = nl.zeros((NUM_BLOCK_M, TILES_IN_BLOCK_M, TILES_IN_BLOCK_N,
-                             nl.par_dim(TILE_M), TILE_N),
-                            dtype=lhsT.dtype,
-                            buffer=nl.sbuf)
-
-    # Blocking K dimension (the contraction dimension)
-    # Use `sequential_range` because we do not want the compiler to change this loop by,
-    # for example, vectorizing it
-    for k in nl.sequential_range(NUM_BLOCK_K):
-      # Loading tiles from rhs
-      # setting the load tile to `TILE_K x BLOCK_SIZE_N` to optimize DMA performance
-      i_rhs = nl.mgrid[0:TILE_K, 0:BLOCK_N]
-      rhs_tiles = nl.ndarray((TILES_IN_BLOCK_K, nl.par_dim(TILE_K), BLOCK_N),
-                             dtype=rhs.dtype,
-                             buffer=nl.sbuf)
-
-      for bk_r in nl.affine_range(TILES_IN_BLOCK_K):
-        rhs_tiles[bk_r, i_rhs.p, i_rhs.x] = nl.load(
-            rhs[(TILES_IN_BLOCK_K * k + bk_r) * TILE_K + i_rhs.p,
-                BLOCK_N * n + i_rhs.x])
-
-      # Blocking M dimension (the LHS free dimension)
-      for m in nl.affine_range(NUM_BLOCK_M):
-        # Loading tiles from lhsT
-        i_lhsT = nl.mgrid[0:TILE_K, 0:BLOCK_M]
-        lhsT_tiles = nl.ndarray((TILES_IN_BLOCK_K, nl.par_dim(TILE_K), BLOCK_M),
-                                dtype=lhsT.dtype,
-                                buffer=nl.sbuf)
-        for bk_l in nl.affine_range(TILES_IN_BLOCK_K):
-          lhsT_tiles[bk_l, i_lhsT.p, i_lhsT.x] = nl.load(
-              lhsT[(TILES_IN_BLOCK_K * k + bk_l) * TILE_K + i_lhsT.p,
-                   BLOCK_M * m + i_lhsT.x])
-
-        # Do matmul with all tiles in the blocks
-        i_lhsT_mm = nl.mgrid[0:TILE_K, 0:TILE_M]
-        i_rhs_mm = nl.mgrid[0:TILE_K, 0:TILE_N]
-        i_res_mm = nl.mgrid[0:TILE_M, 0:TILE_N]
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          for bm in nl.affine_range(TILES_IN_BLOCK_M):
-            res_tile = nl.zeros((TILE_M, TILE_N), dtype=nl.float32, buffer=nl.psum)
-
-            for bk in nl.affine_range(TILES_IN_BLOCK_K):
-              res_tile[...] += nisa.nc_matmul(
-                  lhsT_tiles[bk, i_lhsT_mm.p, bm * TILE_M + i_lhsT_mm.x],
-                  rhs_tiles[bk, i_rhs_mm.p, bn * TILE_N + i_rhs_mm.x])
-
-            # Accumulate on corresponding SBUF tile
-            result_tiles[m, bm, bn, i_res_mm.p,
-                         i_res_mm.x] += res_tile[i_res_mm.p, i_res_mm.x]
-
-    # Copying the result from SBUF to HBM
-    for m in nl.affine_range(NUM_BLOCK_M):
-      for bm in nl.affine_range(TILES_IN_BLOCK_M):
-        i_res = nl.mgrid[0:TILE_M, 0:TILE_N]
-        i_res_packed = nl.mgrid[0:TILE_M, 0:BLOCK_N]
-        result_packed = nl.ndarray((TILE_M, BLOCK_N),
-                                   dtype=result_tiles.dtype,
-                                   buffer=nl.sbuf)
-
-        # coalesce result tiles for better DMA performance
-        for bn in nl.affine_range(TILES_IN_BLOCK_N):
-          result_packed[i_res.p,
-                        bn * TILE_N + i_res.x] = nl.copy(result_tiles[m, bm, bn,
-                                                                      i_res.p,
-                                                                      i_res.x])
-        nl.store(result[(TILES_IN_BLOCK_M * m + bm) * TILE_M + i_res_packed.p,
-                        BLOCK_N * n + i_res_packed.x],
-                 value=result_packed[i_res_packed.p, i_res_packed.x])
-
-  return result
-
-
-class NKILinear(nn.Module):
-    def __init__(self, in_features, out_features):
-        super(NKILinear, self).__init__()
-        self.weight = nn.Parameter(torch.randn(out_features, in_features))
-        self.bias = nn.Parameter(torch.randn(out_features))
-
-    def forward(self, x):
-        weight_T = self.weight.t()
-        x_T = x.t()
-        output = nki_matmul_fully_optimized_(x_T, weight_T)
-        return output + self.bias
-
-
-class MLP(nn.Module):
-    def __init__(self):
-        super(MLP, self).__init__()
-        self.fc1 = NKILinear(2048, 2048)
-        self.fc2 = NKILinear(2048, 1024)
-        self.fc3 = NKILinear(1024, 1024)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return F.log_softmax(x, dim=1)
 ```
 
 ## hf_llama3_8B_DPO_ORPO.rst
@@ -4439,219 +5435,176 @@ dataset = dataset.map(
 dataset.to_json("data_dpo.jsonl")
 ```
 
-## disaggregated-inference.rst
-
-```python
-class NeuronConnector:
-    def _keep_alive_ectd(self):
-        # Add worker to etcd
-        etcd_client.put(
-            f"/workers/{self.role}/{self.local_ip}/{self.api_server_port}",
-            json.dumps({"connections": []}),
-            lease
-        )
-```
-
-```python
-def initialize_buffer(self):
-    if self.config.is_kv_producer:
-        self.static_buffer = SendBuffer(
-            self.kv_caches,
-            self.zmq_context,
-            self.neuron_recv_ip,
-            self.config.kv_ip,
-            self.config.kv_port
-        )
-```
-
-```python
-def maybe_setup_buffer(self, remote_ip, remote_port):
-    if self.static_buffer:
-        return self.static_buffer
-
-    key = "" if self.config.is_kv_producer else (remote_ip, remote_port)
-    
-    if key in self.connection_dict:
-        return self.connection_dict[key]
-```
-
-```python
-class NeuronTransferEngine:
-    def transfer_neuron_tensors(self, tensors, offsets, lengths, peer_devices, ...):
-        self.engine.queue_transfer_with_token(
-            tensors, offsets, lengths, peer_devices, self.local_devices,
-            self.comm_ids, completion_count, completion_token, use_queue,
-            completion_time_out)
-```
-
-```python
-def send_handler(self):
-    while True:
-        identity, request = self.router.recv_json()
-    
-        if request["type"] == "handshake":
-            self.router.send_json(identity, {
-                "status": "ok",
-                "timestamp": time.time()
-            })
-            continue
-    
-        if request["type"] == "kv_map_init":
-            # Set up transfer details
-            continue
-            
-        if request["type"] == "lookup_all":
-            self._process_lookup_all(identity, request)
-            continue
-```
-
-```python
-# Prefill Side - Starting Transfers
-if request_id not in self.lookup_dict:
-    self.router.send_json(identity, {"success": False})
-    return
-
-kv_caches, offsets, lengths, peer_devices = \
-    self.generate_transfer_sequences(entry, remote_id=identity_str)
-
-self.get_transfer_engine(remote_id=identity_str).transfer_neuron_tensors(
-    kv_caches, offsets, lengths, peer_devices,
-    completion_token=entry.completion_token)
-```
-
-```python
-# Decode Side - Starting Transfers
-entry.output_token = torch.tensor(
-    response["output_token"]).unsqueeze(0)
-
-kv_caches, offsets, lengths, peer_devices = \
-     self.generate_transfer_sequences(entry)
-
-self.get_transfer_engine().transfer_neuron_tensors(
-    kv_caches, offsets, lengths, peer_devices,
-    completion_token=entry.completion_token)
-```
-
-```python
-prefill_task = asyncio.create_task(anext(prefill_response))
-decode_task = asyncio.create_task(anext(decode_response))
-
-await prefill_task
-async for chunk in handle_prefill_response(prefill_response,
-                                         streaming, endpoint,
-                                         uid, request_time):
-    yield chunk
-
-await decode_task
-async for chunk in handle_decode_response(decode_response,
-                                        streaming, endpoint, uid,
-                                        request_time):
-    yield chunk
-```
-
-## vllm-user-guide-v1.rst
+## finetune_hftrainer.rst
 
 ```python
 import os
-from vllm import LLM, SamplingParams
-
-# Initialize the model
-llm = LLM(
-    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    max_num_seqs=4,
-    max_model_len=128,
-    tensor_parallel_size=32
-)
-
-# Generate text
-prompts = [
-    "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-]
-sampling_params = SamplingParams(temperature=0.0)
-outputs = llm.generate(prompts, sampling_params)
-
-for output in outputs:
-    print(f"Prompt: {output.prompt}")
-    print(f"Generated: {output.outputs[0].text}")
+if os.environ.get("NEURON_EXTRACT_GRAPHS_ONLY", "0") == "1":
+    from accelerate.accelerator import Accelerator
+    def pad_across_processes(self, tensor, dim=0, pad_index=0, pad_first=False):
+        return tensor
+    Accelerator.pad_across_processes = pad_across_processes
 ```
 
 ```python
+# Enable torchrun
 import os
-from vllm import LLM, SamplingParams
+import torch
+import torch_xla.distributed.xla_backend
+from packaging import version
+from transformers import __version__, Trainer
+if version.parse(__version__) < version.parse("4.26.0") and os.environ.get("WORLD_SIZE"):
+    torch.distributed.init_process_group('xla')
 
-# Initialize the model
-llm = LLM(
-    model="meta-llama/Llama-3.3-70B-Instruct",
-    max_num_seqs=4,
-    max_model_len=4096,
-    tensor_parallel_size=64,
-    additional_config=dict(
-        override_neuron_config=dict(
-            enable_bucketing=False,
-        )
-    ),
-)
-
-# Generate text
-prompts = [
-    "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-]
-sampling_params = SamplingParams(temperature=0.0)
-outputs = llm.generate(prompts, sampling_params)
-
-for output in outputs:
-    print(f"Prompt: {output.prompt}")
-    print(f"Generated: {output.outputs[0].text}")
-```
-
-```python
-from openai import OpenAI
-
-# Client Setup
-openai_api_key = "EMPTY"
-openai_api_base = "http://localhost:8000/v1"
-
-client = OpenAI(
-    api_key=openai_api_key,
-    base_url=openai_api_base,
-)
-
-models = client.models.list()
-model_name = models.data[0].id
-
-# Sampling Parameters
-max_tokens = 1024
-temperature = 1.0
-top_p = 1.0
-top_k = 50
-stream = False
-
-# Chat Completion Request
-prompt = "Hello, my name is Llama "
-response = client.chat.completions.create(
-    model=model_name,
-    messages=[{"role": "user", "content": prompt}],
-    max_tokens=int(max_tokens),
-    temperature=float(temperature),
-    top_p=float(top_p),
-    stream=stream,
-    extra_body={'top_k': top_k}
-)
-
-# Parse the response
-generated_text = ""
-if stream:
-    for chunk in response:
-        if chunk.choices[0].delta.content is not None:
-            generated_text += chunk.choices[0].delta.content
+# Disable DDP for torchrun
+import contextlib
+if version.parse(__version__) < version.parse("4.20.0"):
+    def _wrap_model(self, model, training=True):
+        model.no_sync = lambda: contextlib.nullcontext()
+        return model
 else:
-    generated_text = response.choices[0].message.content
-    
-print(generated_text)
+    def _wrap_model(self, model, training=True, dataloader=None):
+        model.no_sync = lambda: contextlib.nullcontext()
+        return model
+Trainer._wrap_model = _wrap_model
+
+# Workaround for NaNs seen with transformers version >= 4.21.0
+# https://github.com/aws-neuron/aws-neuron-sdk/issues/593
+import transformers
+if os.environ.get("XLA_USE_BF16") or os.environ.get("XLA_DOWNCAST_BF16"):
+    transformers.modeling_utils.get_parameter_dtype = lambda x: torch.bfloat16
+```
+
+## pytorch-neuron-programming-guide.rst
+
+```python
+import torch_xla.core.xla_model as xm
+
+device = xm.xla_device()
+```
+
+```python
+device = 'xla'
+```
+
+```python
+model.to(device)
+tensor.to(device)
+```
+
+```python
+tensor.cpu()
+```
+
+```python
+tensor.to('cpu')
+```
+
+```python
+import torch_xla.core.xla_model as xm
+
+device = xm.xla_device()
+# or
+device = 'xla'
+```
+
+```python
+xm.mark_step()
+```
+
+```python
+device = 'cpu'
+if not os.environ.get("DISABLE_XLA", None):
+    device = 'xla'
+
+...
+
+    # end of training step 
+    if not os.environ.get("DISABLE_XLA", None):
+        xm.mark_step()
+```
+
+```python
+import torch_xla.distributed.parallel_loader as pl
+```
+
+```python
+import torch_xla.distributed.xla_backend
+torch.distributed.init_process_group('xla')
+```
+
+```python
+xm.optimizer_step(optimizer)
+```
+
+```python
+parallel_loader = pl.MpDeviceLoader(dataloader, device)
+```
+
+```python
+os.environ["NEURON_RT_STOCHASTIC_ROUNDING_EN"] = "1"
+
+# model is created
+model.to(torch.bfloat16)
+```
+
+```python
+running_loss = torch.zeros(1, dtype=torch.float).to(device)
+```
+
+```python
+grad = p.grad.data.float()
+```
+
+```python
+# model is created
+model.to(torch.bfloat16)
+```
+
+```python
+# keep a copy of weights in highprec
+self.param_groups_highprec = []
+for group in self.param_groups:
+    params = group['params']
+    param_groups_highprec = [p.data.float() for p in params]
+    self.param_groups_highprec.append({'params': param_groups_highprec})
+```
+
+```python
+os.environ["NEURON_CC_FLAGS"] = "--auto-cast=none"
+```
+
+```python
+with torch.autocast(dtype=torch.bfloat16, device_type='xla'):
+    # forward pass
+```
+
+```python
+def train_loop_fn(train_loader):
+    for i, data in enumerate(train_loader):
+        inputs = data[0]
+        labels = data[3]
+        outputs = model(inputs, labels=labels)
+        loss = outputs.loss/ flags.grad_acc_steps
+        loss.backward()
+        optimizer.step()
+        xm.mark_step()
+```
+
+```python
+os.environ["NEURON_CC_FLAGS"] = "--auto-cast=none"
+
+def train_loop_fn(train_loader):
+    for i, data in enumerate(train_loader):
+        torch.cuda.is_bf16_supported = lambda: True
+        with torch.autocast(dtype=torch.bfloat16, device_type='xla'):
+            inputs = data[0]
+            labels = data[3]
+            outputs = model(inputs, labels=labels)
+        loss = outputs.loss/ flags.grad_acc_steps
+        loss.backward()
+        optimizer.step()
+        xm.mark_step()
 ```
 
 ## hf_llama3_70B_pretraining.rst
@@ -4674,10 +5627,97 @@ tokenizer.save_pretrained(".")
 ```python
 import torch
 import torch.nn as nn
-from typing import Optional
+from typing import Optional, Tuple, Union
+from transformers.modeling_outputs import BaseModelOutputWithCrossAttentions
+from transformers.models.perceiver.modeling_perceiver import restructure
 import torch_neuronx
 
-# Define wrapper for tracing encoder
+
+class MultimodalPerceiverWrapper(nn.Module):
+    def __init__(self, perceiver_model, nchunks, image_chunk_size, audio_chunk_size):
+        super().__init__()
+        self.perceiver_model = perceiver_model
+        self.nchunks = nchunks
+        self.image_chunk_size = image_chunk_size
+        self.audio_chunk_size = audio_chunk_size
+    
+    def forward(self, inputs: torch.FloatTensor,
+        neuron_decoder,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None):
+
+        output_attentions = output_attentions if output_attentions is not None else self.perceiver_model.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.perceiver_model.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.perceiver_model.config.use_return_dict
+        
+        if self.perceiver_model.input_preprocessor is not None:
+            inputs, modality_sizes, inputs_without_pos = self.perceiver_model.input_preprocessor(inputs)
+        else:
+            modality_sizes = None
+            inputs_without_pos = None
+            if inputs.size()[-1] != self.perceiver_model.config.d_model:
+                raise ValueError(
+                    f"Last dimension of the inputs: {inputs.size()[-1]} doesn't correspond to config.d_model:"
+                    f" {self.perceiver_model.config.d_model}. Make sure to set config.d_model appropriately."
+                )
+
+        batch_size, seq_length, _ = inputs.size()
+        device = inputs.device
+
+        if attention_mask is None:
+            attention_mask = torch.ones((batch_size, seq_length), device=device)
+        extended_attention_mask = self.perceiver_model.invert_attention_mask(attention_mask)
+
+        head_mask = self.perceiver_model.get_head_mask(head_mask, self.perceiver_model.config.num_blocks * self.perceiver_model.config.num_self_attends_per_block)
+        embedding_output = self.perceiver_model.embeddings(batch_size=batch_size)
+
+        encoder_outputs = self.perceiver_model.encoder(
+            embedding_output,
+            attention_mask=None,
+            head_mask=head_mask,
+            inputs=inputs,
+            inputs_mask=extended_attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = encoder_outputs[0]
+
+        logits = None
+        reconstruction = {}
+        for chunk_idx in range(self.nchunks):
+            subsampled_output_points = {
+            'image': torch.arange(
+                self.image_chunk_size * chunk_idx, self.image_chunk_size * (chunk_idx + 1)).to(device),
+            'audio': torch.arange(
+                self.audio_chunk_size * chunk_idx, self.audio_chunk_size * (chunk_idx + 1)).to(device),
+            'label': None,
+            }
+            
+            logits = neuron_decoder(sequence_output, extended_attention_mask, 
+                                             inputs, modality_sizes, inputs_without_pos, subsampled_points=subsampled_output_points)
+
+            reconstruction['label'] = logits['label']
+            if 'image' not in reconstruction:
+                reconstruction['image'] = logits['image']
+                reconstruction['audio'] = logits['audio']
+            else:
+                reconstruction['image'] = torch.cat(
+                    [reconstruction['image'], logits['image']], dim=1)
+                reconstruction['audio'] = torch.cat(
+                    [reconstruction['audio'], logits['audio']], dim=1)
+            
+            del logits
+
+        return reconstruction
+```
+
+```python
 class EncoderWrapper(nn.Module):
     def __init__(self, encoder):
         super().__init__()
@@ -4686,6 +5726,7 @@ class EncoderWrapper(nn.Module):
     def forward(self, embedding_output, inputs, extended_attention_mask):
         output = self.encoder(embedding_output, inputs=inputs, inputs_mask=extended_attention_mask)
         return output
+
 
 class NeuronEncoder(nn.Module):
     def __init__(self, encoder_wrapper):
@@ -4703,16 +5744,10 @@ class NeuronEncoder(nn.Module):
         return_dict: Optional[bool] = True):
 
         last_hidden_states = self.encoder_wrapper(hidden_states, inputs, inputs_mask)['last_hidden_state']
-        return last_hidden_states
+        return BaseModelOutputWithCrossAttentions(last_hidden_state=last_hidden_states)
 ```
 
 ```python
-import torch
-import torch.nn as nn
-from typing import Optional
-import torch_neuronx
-
-# Define wrapper for tracing decoder
 class DecoderWrapper(nn.Module):
     def __init__(self, decoder, decoder_query_audio, decoder_query_image, decoder_query_label, output_postprocessor):
         super().__init__()
@@ -4748,13 +5783,44 @@ class DecoderWrapper(nn.Module):
                                  "label": 1}
         logits = self.output_postprocessor(logits, modality_sizes=output_modality_sizes)
         return logits
+
+
+class NeuronDecoder(nn.Module):
+    def __init__(self, decoder_wrapper):
+        super().__init__()
+        self.decoder_wrapper = decoder_wrapper
+        self.modalities = decoder_wrapper.decoder.modalities
+        self.padding = decoder_wrapper.decoder.padding
+
+    def forward(self, z, query_mask, inputs, modality_sizes, inputs_without_pos=None, subsampled_points=None, output_attentions=False):
+        inputs = restructure(modality_sizes, inputs)
+
+        assert(subsampled_points is not None)
+        assert(inputs_without_pos is not None)
+
+        for modality, decoder in self.modalities.items():
+            if modality == "audio":
+                audio_input, audio_input_without_pos, audio_subsampled_point, audio_padding = inputs[modality], inputs_without_pos[modality], subsampled_points[modality].to(torch.float32), self.padding[modality]
+            elif modality == "image":
+                image_input, image_input_without_pos, image_subsampled_point, image_padding = inputs[modality], inputs_without_pos[modality], subsampled_points[modality].to(torch.float32), self.padding[modality]
+            else:
+                label_input, label_input_without_pos, label_padding = inputs[modality], inputs_without_pos[modality], self.padding[modality]
+
+        assert(audio_input_without_pos is not None)
+        assert(audio_subsampled_point is not None)
+        assert(image_input_without_pos is not None)
+        assert(image_subsampled_point is not None)
+        assert(label_input_without_pos is not None)
+
+        output = self.decoder_wrapper(z, query_mask, 
+                                        audio_input, audio_input_without_pos, audio_subsampled_point, audio_padding,
+                                        image_input, image_input_without_pos, image_subsampled_point, image_padding,
+                                        label_input, label_input_without_pos, label_padding)
+        return output
 ```
 
 ```python
-import torch
-import torch_neuronx
-
-# Compile Encoder with torch_neuronx.trace
+# Compile Encoder
 neuron_encoder.encoder_wrapper = torch_neuronx.trace(
   neuron_encoder.encoder_wrapper,
   (embedding_output, sample_inputs, extended_attention_mask),
@@ -4762,15 +5828,11 @@ neuron_encoder.encoder_wrapper = torch_neuronx.trace(
   compiler_args=[f"--temp-dir={COMPILER_WORKDIR_ENCODER}", "--auto-cast=none"]
 )
 
-# Save compiled encoder
 torch.jit.save(neuron_encoder.encoder_wrapper, encoder_fname)
 ```
 
 ```python
-import torch
-import torch_neuronx
-
-# Compile Decoder with torch_neuronx.trace
+# Compile Decoder
 neuron_decoder.decoder_wrapper = torch_neuronx.trace(
    neuron_decoder.decoder_wrapper,
    (z, query_mask, audio_input, audio_input_without_pos, audio_subsampled_point, audio_padding,
@@ -4780,110 +5842,582 @@ neuron_decoder.decoder_wrapper = torch_neuronx.trace(
    compiler_args=[f"--temp-dir={COMPILER_WORKDIR_DECODER}", "--auto-cast=none"]
 )
 
-# Save compiled decoder
 torch.jit.save(neuron_decoder.decoder_wrapper, decoder_fname)
 ```
 
-## quickstart-implement-run-kernel.rst
+## matrix_multiplication.rst
 
 ```python
-import nki
-import nki.language as nl
-import nki.isa as nisa
+import neuron.nki as nki
+import neuron.nki.language as nl
+import numpy as np
 
-@nki.jit(platform_target="trn1")
-def nki_tensor_add_kernel(a_input, b_input):
+@nki.jit
+def nki_matmul_basic_(lhs, rhs):
     """
-    NKI kernel to compute element-wise addition of two input tensors.
+    Basic NKI matrix multiplication kernel.
+    Computes: lhs [M, K] * rhs [K, N] = output [M, N]
+    where M=64, K=128, N=512
     """
-
-    # Check both input tensor shapes are the same for element-wise operation.
-    assert a_input.shape == b_input.shape
-
-    # Check the first dimension's size to ensure it does not exceed on-chip
-    # memory tile size, since this simple kernel does not tile inputs.
-    assert a_input.shape[0] <= nl.tile_size.pmax
-
-    # Allocate space for the input tensors in SBUF and copy the inputs from HBM
-    # to SBUF with DMA copy. Note: 'sbuf' is a keyword in NKI.
-    a_tile = sbuf.view(dtype=a_input.dtype, shape=a_input.shape)
-    nisa.dma_copy(dst=a_tile, src=a_input)
-
-    b_tile = sbuf.view(dtype=b_input.dtype, shape=b_input.shape)
-    nisa.dma_copy(dst=b_tile, src=b_input)
-
-    # Allocate space for the result and use tensor_tensor to perform
-    # element-wise addition. Note: the first argument of 'tensor_tensor'
-    # is the destination tensor.
-    c_tile = sbuf.view(dtype=a_input.dtype, shape=a_input.shape)
-    nisa.tensor_tensor(dst=c_tile, data1=a_tile, data2=b_tile, op=nl.add)
-
-    # Create a tensor in HBM and copy the result into HBM. Note: Simlar to
-    # 'sbuf', 'hbm' is a keyword in NKI.
-    c_output = hbm.view(dtype=a_input.dtype, shape=a_input.shape)
-    nisa.dma_copy(dst=c_output, src=c_tile)
-
-    # Return kernel output as function output.
-    return c_output
+    # Define indices to access input tensors
+    i_m, i_n = nl.mgrid[64, 512]
+    i_k = nl.arange(128)
+    
+    # Load LHS in transposed form (adhering to layout considerations)
+    lhs_tile = nl.load(lhs[i_k, i_m])
+    
+    # Load RHS
+    rhs_tile = nl.load(rhs[i_k, i_n])
+    
+    # Perform matrix multiplication with transposed LHS
+    output = nl.matmul(lhs_tile, rhs_tile, transpose_x=True)
+    
+    # Copy result from PSUM to SBUF
+    output_sbuf = nl.copy(output, buffer=nl.sbuf)
+    
+    # Store result to HBM
+    nl.store(output_sbuf, output[i_m, i_n])
 ```
 
 ```python
 import torch
-from torch_xla.core import xla_model as xm
-from add_kernel import nki_tensor_add_kernel
+import neuron.nki as nki
 
-device = xm.xla_device()
+# Execute kernel and verify correctness
+lhs = torch.randn(64, 128, dtype=torch.bfloat16)
+rhs = torch.randn(128, 512, dtype=torch.bfloat16)
 
-a = torch.ones((4, 3), dtype=torch.float16).to(device=device)
-b = torch.ones((4, 3), dtype=torch.float16).to(device=device)
+# Run NKI kernel
+nki_output = nki_matmul_basic_(lhs, rhs)
 
-c = nki_tensor_add_kernel(a, b)
-
-print(c)
+# Compare with PyTorch
+torch_output = torch.matmul(lhs, rhs)
+assert torch.allclose(nki_output, torch_output, rtol=1e-2, atol=1e-2)
 ```
 
 ```python
-import jax.numpy as jnp
-from add_kernel import nki_tensor_add_kernel
+import neuron.nki as nki
+import neuron.nki.language as nl
 
-a = jnp.ones((4, 3), dtype=jnp.float16)
-b = jnp.ones((4, 3), dtype=jnp.float16)
-
-c = nki_tensor_add_kernel(a, b)
-
-print(c)
-```
-
-## design-rmsnorm-quant.rst
-
-```python
-def rmsnorm_quant_ref(inp: np.ndarray, gamma: np.ndarray, eps: float = 1e-6) -> Tuple[np.ndarray, np.ndarray]:
-    """RMSNorm + Quantization reference impl.
-
-    - inp: shape [B, S, H]
-    - output[0]: shape [B, S, H] in fp8e4, representing the quantized RMSNorm output of input
-    - output[1]: shape [B, S, 4] in fp32 representing the per-row dequantization scale
+@nki.jit
+def nki_matmul_tiled_(lhs_t, rhs, output_shape):
     """
-    assert(len(inp.shape) == 3)
-    inp = inp.astype(np.float32)
-    gamma = gamma.astype(np.float32)
+    Tiled matrix multiplication kernel.
+    Handles larger matrices by tiling across M, N, and K dimensions.
+    """
+    M, N = output_shape
+    
+    # Tile LHS_T free dimension (M)
+    for m in nl.affine_range(0, M, 128):
+        # Tile RHS free dimension (N)
+        for n in nl.affine_range(0, N, 512):
+            # Zero-out accumulator buffer
+            i_m = nl.arange(128)
+            i_n = nl.arange(512)
+            psum_buf = nl.zeros((128, 512), buffer=nl.psum)
+            
+            # Tile contraction dimension (K)
+            for k in nl.affine_range(0, 1024, 128):
+                i_k = nl.arange(128)
+                
+                # Load tiles
+                lhs_tile = nl.load(lhs_t[m : m+128, k : k+128])
+                rhs_tile = nl.load(rhs[k : k+128, n : n+512])
+                
+                # Accumulate matmul results
+                psum_buf += nl.matmul(lhs_tile, rhs_tile)
+            
+            # Copy from PSUM to SBUF and store
+            result = nl.copy(psum_buf, buffer=nl.sbuf)
+            nl.store(result, output[m : m+128, n : n+512])
+```
 
-    # Perform RMSNorm
-    rms = np.sqrt(np.mean(np.square(inp), axis=-1, keepdims=True))
-    norm = inp * np.reciprocal(rms + eps)
-    norm *= gamma
+```python
+import neuron.nki as nki
+import neuron.nki.language as nl
 
-    # Perform quantization
-    norm_abs_max = np.abs(norm).max(axis=-1, keepdims=True)
-    quant_scale = 240.0 / norm_abs_max
-    norm_quant = norm * quant_scale
-    assert(np.allclose(norm, norm_quant * np.reciprocal(quant_scale)))  # dequantization should yield same norm
+@nki.jit
+def nki_matmul_hoist_load_(lhs_t, rhs, output_shape):
+    """
+    Optimization 1: Remove redundant loads by hoisting them out of innermost loop.
+    """
+    M, N = output_shape
+    
+    for m in nl.affine_range(0, M, 128):
+        for n in nl.affine_range(0, N, 512):
+            psum_buf = nl.zeros((128, 512), buffer=nl.psum)
+            
+            # Hoist RHS load outside K loop
+            rhs_tile = nl.load(rhs[:, n : n+512])
+            
+            for k in nl.affine_range(0, 1024, 128):
+                # Load LHS tile
+                lhs_tile = nl.load(lhs_t[m : m+128, k : k+128])
+                
+                # Accumulate matmul results
+                psum_buf += nl.matmul(lhs_tile, rhs_tile[k : k+128, :])
+            
+            result = nl.copy(psum_buf, buffer=nl.sbuf)
+            nl.store(result, output[m : m+128, n : n+512])
+```
 
-    # Cast and return
-    norm_quant = dt.static_cast(norm_quant, dt.float8_e4m3)
-    dequant_scale = dt.static_cast(np.reciprocal(quant_scale), np.float32)
+```python
+import neuron.nki as nki
+import neuron.nki.language as nl
 
-    return norm_quant, dequant_scale
+@nki.jit
+def nki_matmul_block_free_dimension_(lhs_t, rhs, output_shape):
+    """
+    Optimization 2: Improve arithmetic intensity through blocking free dimensions.
+    """
+    M, N = output_shape
+    
+    # Block free dimensions
+    for m_block in nl.affine_range(0, M, 256):
+        for n_block in nl.affine_range(0, N, 1024):
+            # Load larger blocks of LHS and RHS
+            lhs_tiles = nl.load(lhs_t[m_block : m_block+256, :])
+            rhs_tiles = nl.load(rhs[:, n_block : n_block+1024])
+            
+            psum_buf = nl.zeros((256, 1024), buffer=nl.psum)
+            
+            for k in nl.affine_range(0, 1024, 128):
+                # Use blocked tiles
+                lhs_tile = lhs_tiles[:, k : k+128]
+                rhs_tile = rhs_tiles[k : k+128, :]
+                
+                psum_buf += nl.matmul(lhs_tile, rhs_tile)
+            
+            result = nl.copy(psum_buf, buffer=nl.sbuf)
+            nl.store(result, output[m_block : m_block+256, n_block : n_block+1024])
+```
+
+```python
+import neuron.nki as nki
+import neuron.nki.language as nl
+
+@nki.jit
+def nki_matmul_fully_optimized_(lhs_t, rhs, output_shape):
+    """
+    Optimization 3: Block all dimensions and optimize DMA efficiency.
+    Optimized for large matrices: M, N multiples of 2048; K multiple of 512.
+    """
+    M, N = output_shape
+    
+    NUM_BLOCK_M = 16  # 2048 numbers in M dimension
+    NUM_BLOCK_N = 2   # 1024 numbers in N dimension
+    NUM_BLOCK_K = 8   # 1024 numbers in K dimension
+    
+    TILE_M = 128
+    TILE_N = 512
+    TILE_K = 128
+    
+    for m_block in nl.affine_range(0, M, NUM_BLOCK_M * TILE_M):
+        for n_block in nl.affine_range(0, N, NUM_BLOCK_N * TILE_N):
+            # Initialize result tiles for accumulation
+            result_tiles = nl.zeros((NUM_BLOCK_M, TILE_M, NUM_BLOCK_N, TILE_N), buffer=nl.sbuf)
+            
+            # Block contraction dimension with sequential range
+            for k_block in nl.sequential_range(0, 1024, NUM_BLOCK_K * TILE_K):
+                # Load blocked tiles
+                lhs_tiles = nl.load(lhs_t[m_block : m_block + NUM_BLOCK_M * TILE_M, 
+                                          k_block : k_block + NUM_BLOCK_K * TILE_K])
+                rhs_tiles = nl.load(rhs[k_block : k_block + NUM_BLOCK_K * TILE_K, 
+                                        n_block : n_block + NUM_BLOCK_N * TILE_N])
+                
+                # Compute matmuls for all combinations
+                for m_idx in nl.affine_range(NUM_BLOCK_M):
+                    for n_idx in nl.affine_range(NUM_BLOCK_N):
+                        psum_buf = nl.zeros((TILE_M, TILE_N), buffer=nl.psum)
+                        
+                        for k_idx in nl.affine_range(NUM_BLOCK_K):
+                            lhs_tile = lhs_tiles[m_idx * TILE_M : (m_idx + 1) * TILE_M,
+                                                 k_idx * TILE_K : (k_idx + 1) * TILE_K]
+                            rhs_tile = rhs_tiles[k_idx * TILE_K : (k_idx + 1) * TILE_K,
+                                                 n_idx * TILE_N : (n_idx + 1) * TILE_N]
+                            
+                            psum_buf += nl.matmul(lhs_tile, rhs_tile)
+                        
+                        result_tiles[m_idx, :, n_idx, :] += nl.copy(psum_buf, buffer=nl.sbuf)
+            
+            # Store results
+            nl.store(result_tiles, output[m_block : m_block + NUM_BLOCK_M * TILE_M,
+                                          n_block : n_block + NUM_BLOCK_N * TILE_N])
+```
+
+```python
+import torch
+import neuron.nki as nki
+
+def test_correctness(kernel_fn, kernel_name, lhs, rhs):
+    """
+    Test correctness of NKI kernel against PyTorch implementation.
+    """
+    print(f"Checking correctness of {kernel_name}")
+    
+    # Run NKI kernel
+    nki_output = kernel_fn(lhs, rhs)
+    
+    # Compare with PyTorch
+    torch_output = torch.matmul(lhs, rhs)
+    
+    if torch.allclose(nki_output, torch_output, rtol=1e-2, atol=1e-2):
+        print("NKI and Torch match")
+    else:
+        print("NKI and Torch do NOT match")
+```
+
+```python
+import neuron.nki as nki
+
+def benchmark_kernel(kernel_fn, lhs, rhs, num_iterations=100):
+    """
+    Benchmark NKI kernel performance.
+    """
+    import time
+    
+    # Warmup
+    kernel_fn(lhs, rhs)
+    
+    # Measure
+    start = time.time()
+    for _ in range(num_iterations):
+        kernel_fn(lhs, rhs)
+    end = time.time()
+    
+    latency_ms = (end - start) / num_iterations * 1000
+    return latency_ms
+```
+
+## matrix_multiplication_nki_kernels.py
+
+```python
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.typing as nt
+```
+
+```python
+@nki.jit
+def nki_matmul_basic_(lhsT, rhs):
+  """NKI kernel to compute a 64x128x512 matrix multiplication operation
+
+  Args:
+      lhsT: an input tensor of shape [128,64], a left hand side argument of the
+        matrix multiplication, delivered transposed for optimal performance
+      rhs: an input tensor of shape [128,512], a right hand side argument of the
+        matrix multiplication
+  Returns:
+      result: the resulting output tensor of shape [64,512]
+  """
+  result = nl.ndarray((64, 512), dtype=lhsT.dtype, buffer=nl.shared_hbm)
+
+  i_lhsT_p, i_lhsT_f = nl.mgrid[0:128, 0:64]
+  i_rhs_p, i_rhs_f = nl.mgrid[0:128, 0:512]
+  i_out_p, i_out_f = nl.mgrid[0:64, 0:512]
+
+  lhs_tile = nl.load(lhsT[i_lhsT_p, i_lhsT_f])
+  rhs_tile = nl.load(rhs[i_rhs_p, i_rhs_f])
+
+  result_psum = nl.matmul(lhs_tile, rhs_tile, transpose_x=True)
+  result_sbuf = nl.copy(result_psum, dtype=result.dtype)
+
+  nl.store(result[i_out_p, i_out_f], value=result_sbuf)
+
+  return result
+```
+
+```python
+@nki.jit
+def nki_matmul_tiled_(lhsT, rhs):
+  """NKI kernel to compute a matrix multiplication operation in a tiled manner
+
+  Args:
+      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
+        128.  It is the left-hand-side argument of the matrix multiplication,
+        delivered transposed for optimal performance.
+      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
+        is a multiple of 512.  It is the right-hand-side argument of the matrix
+        multiplication.
+  Returns:
+      result: the resulting output tensor of shape [M,N]
+  """
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
+
+  TILE_M = nl.tile_size.gemm_stationary_fmax
+  TILE_K = nl.tile_size.pmax
+  TILE_N = nl.tile_size.gemm_moving_fmax
+
+  for m in nl.affine_range(M // TILE_M):
+    for n in nl.affine_range(N // TILE_N):
+      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
+
+      for k in nl.affine_range(K // TILE_K):
+        lhsT_tile = nl.ndarray((TILE_K, TILE_M), dtype=lhsT.dtype, buffer=nl.sbuf)
+        rhs_tile = nl.ndarray((TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
+
+        lhsT_tile[...] = nl.load(lhsT[k * TILE_K:(k + 1) * TILE_K,
+                                      m * TILE_M:(m + 1) * TILE_M])
+        rhs_tile[...] = nl.load(rhs[k * TILE_K:(k + 1) * TILE_K,
+                                    n * TILE_N:(n + 1) * TILE_N])
+
+        res_psum += nl.matmul(lhsT_tile[...], rhs_tile[...], transpose_x=True)
+
+      res_sb = nl.copy(res_psum, dtype=result.dtype)
+      nl.store(result[m * TILE_M:(m + 1) * TILE_M, n * TILE_N:(n + 1) * TILE_N],
+               value=res_sb)
+
+  return result
+```
+
+```python
+@nki.jit
+def nki_matmul_hoist_load_(lhsT, rhs):
+  """NKI kernel to compute a matrix multiplication operation in a tiled manner
+     while hoisting the load of the lhsT and rhs to outer loops.
+
+  Args:
+      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
+        128.  It is the left-hand-side argument of the matrix multiplication,
+        delivered transposed for optimal performance.
+      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
+        is a multiple of 512.  It is the right-hand-side argument of the matrix
+        multiplication.
+  Returns:
+      result: the resulting output tensor of shape [M,N]
+  """
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
+
+  TILE_M = nl.tile_size.gemm_stationary_fmax
+  TILE_K = nl.tile_size.pmax
+  TILE_N = nl.tile_size.gemm_moving_fmax
+
+  i_lhsT = nl.mgrid[0:TILE_K, 0:TILE_M]
+  i_rhs = nl.mgrid[0:TILE_K, 0:TILE_N]
+  i_res = nl.mgrid[0:TILE_M, 0:TILE_N]
+
+  for m in nl.affine_range(M // TILE_M):
+    lhsT_tiles = nl.ndarray((K // TILE_K, nl.par_dim(TILE_K), TILE_N),
+                            dtype=lhsT.dtype,
+                            buffer=nl.sbuf)
+
+    for k in nl.affine_range(K // TILE_K):
+      lhsT_tiles[k, i_lhsT.p, i_lhsT.x] = nl.load(lhsT[k * TILE_K + i_lhsT.p,
+                                                       m * TILE_M + i_lhsT.x])
+
+    for n in nl.affine_range(N // TILE_N):
+
+      rhs_tiles = nl.ndarray((K // TILE_K, nl.par_dim(TILE_K), TILE_N),
+                             dtype=rhs.dtype,
+                             buffer=nl.sbuf)
+      for k in nl.affine_range(K // TILE_K):
+        rhs_tiles[k, i_rhs.p, i_rhs.x] = nl.load(rhs[k * TILE_K + i_rhs.p,
+                                                     n * TILE_N + i_rhs.x])
+
+      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
+      for k in nl.affine_range(K // TILE_K):
+        res_psum[...] += nl.matmul(lhsT_tiles[k, i_lhsT.p, i_lhsT.x],
+                                   rhs_tiles[k, i_rhs.p, i_rhs.x],
+                                   transpose_x=True)
+
+      res_sb = nl.copy(res_psum, dtype=result.dtype)
+      nl.store(result[m * TILE_M + i_res.p, n * TILE_N + i_res.x], value=res_sb)
+
+  return result
+```
+
+```python
+@nki.jit
+def nki_matmul_block_free_dimension_(lhsT, rhs):
+  """NKI kernel to compute a matrix multiplication operation while blocking the
+     free dimensions of the LHS and RHS to improve memory access pattern.
+
+  Args:
+      lhsT: an input tensor of shape [K,M], where both K and M are multiples for
+        128.  It is the left-hand-side argument of the matrix multiplication,
+        delivered transposed for optimal performance.
+      rhs: an input tensor of shape [K,N], where K is a multiple of 128, and N
+        is a multiple of 512.  It is the right-hand-side argument of the matrix
+        multiplication.
+  Returns:
+      result: the resulting output tensor of shape [M,N]
+  """
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
+
+  TILE_M = nl.tile_size.gemm_stationary_fmax
+  TILE_K = nl.tile_size.pmax
+  TILE_N = nl.tile_size.gemm_moving_fmax
+
+  i_lhsT = nl.mgrid[0:TILE_K, 0:TILE_M]
+  i_rhs = nl.mgrid[0:TILE_K, 0:TILE_N]
+  i_res = nl.mgrid[0:TILE_M, 0:TILE_N]
+
+  TILES_IN_BLOCK_M = 2
+  TILES_IN_BLOCK_N = 2
+
+  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
+  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
+
+  assert M % BLOCK_M == 0
+  assert N % BLOCK_N == 0
+
+  for m in nl.affine_range(M // BLOCK_M):
+    lhsT_tiles = nl.ndarray(
+        (TILES_IN_BLOCK_M, K // TILE_K, nl.par_dim(TILE_K), TILE_M),
+        dtype=lhsT.dtype,
+        buffer=nl.sbuf)
+    for bm in nl.affine_range(TILES_IN_BLOCK_M):
+      for k in nl.affine_range(K // TILE_K):
+        lhsT_tiles[bm, k, i_lhsT.p, i_lhsT.x] = nl.load(
+            lhsT[k * TILE_K + i_lhsT.p,
+                 (m * TILES_IN_BLOCK_M + bm) * TILE_M + i_lhsT.x])
+
+    for n in nl.affine_range(N // BLOCK_N):
+      rhs_tiles = nl.ndarray(
+          (TILES_IN_BLOCK_N, K // TILE_K, nl.par_dim(TILE_K), TILE_N),
+          dtype=rhs.dtype,
+          buffer=nl.sbuf)
+      for bn in nl.affine_range(TILES_IN_BLOCK_N):
+        for k in nl.affine_range(K // TILE_K):
+          rhs_tiles[bn, k, i_rhs.p, i_rhs.x] = nl.load(
+              rhs[k * TILE_K + i_rhs.p,
+                  (n * TILES_IN_BLOCK_N + bn) * TILE_N + i_rhs.x])
+
+      for bm in nl.affine_range(TILES_IN_BLOCK_M):
+        for bn in nl.affine_range(TILES_IN_BLOCK_N):
+          res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
+          for k in nl.affine_range(K // TILE_K):
+            res_psum += nl.matmul(lhsT_tiles[bm, k, i_lhsT.p, i_lhsT.x],
+                                  rhs_tiles[bn, k, i_rhs.p, i_rhs.x],
+                                  transpose_x=True)
+
+          res_sb = nl.copy(res_psum, dtype=result.dtype)
+          nl.store(result[(m * TILES_IN_BLOCK_M + bm) * TILE_M + i_res.p,
+                          (n * TILES_IN_BLOCK_N + bn) * TILE_N + i_res.x],
+                   value=res_sb)
+
+  return result
+```
+
+```python
+@nki.jit
+def nki_matmul_fully_optimized_(
+    lhsT,
+    rhs,
+    TILES_IN_BLOCK_M=16,
+    TILES_IN_BLOCK_N=2,
+    TILES_IN_BLOCK_K=8,
+):
+  """NKI kernel to compute a large matrix multiplication efficiently by
+     blocking all dimensions and doing layout optimization.
+
+  Args:
+      lhsT: an input tensor of shape [K,M], where K is a multiple of 128 *
+        TILES_IN_BLOCK_K and M is a multiple of 128 * TILES_IN_BLOCK_M.  It is the
+        left-hand-side argument of the matrix multiplication, delivered transposed
+        for optimal performance.
+      rhs: an input tensor of shape [K,N],  where K is a multiple of 128 *
+        TILES_IN_BLOCK_K and N is a multiple of 512 * TILES_IN_BLOCK_N.  It is
+        the right-hand-side argument of the matrix multiplication.
+      TILES_IN_BLOCK_*: meta parameters to control blocking dimensions
+  Returns:
+      result: the resulting output tensor of shape [M,N]
+  """
+
+  K, M = lhsT.shape
+  K_, N = rhs.shape
+  assert K == K_, "lhsT and rhs must have the same contraction dimension"
+  result = nl.ndarray((M, N), dtype=lhsT.dtype, buffer=nl.shared_hbm)
+
+  TILE_M = nl.tile_size.gemm_stationary_fmax
+  TILE_K = nl.tile_size.pmax
+  TILE_N = nl.tile_size.gemm_moving_fmax
+
+  BLOCK_M = TILE_M * TILES_IN_BLOCK_M
+  BLOCK_N = TILE_N * TILES_IN_BLOCK_N
+  BLOCK_K = TILE_K * TILES_IN_BLOCK_K
+
+  assert M % BLOCK_M == 0
+  assert N % BLOCK_N == 0
+  assert K % BLOCK_K == 0
+
+  NUM_BLOCK_M = M // BLOCK_M
+  NUM_BLOCK_N = N // BLOCK_N
+  NUM_BLOCK_K = K // BLOCK_K
+
+  for n in nl.affine_range(NUM_BLOCK_N):
+    result_tiles = nl.zeros((NUM_BLOCK_M, TILES_IN_BLOCK_M, TILES_IN_BLOCK_N,
+                             nl.par_dim(TILE_M), TILE_N),
+                            dtype=lhsT.dtype,
+                            buffer=nl.sbuf)
+
+    for k in nl.sequential_range(NUM_BLOCK_K):
+      i_rhs = nl.mgrid[0:TILE_K, 0:BLOCK_N]
+      rhs_tiles = nl.ndarray((TILES_IN_BLOCK_K, nl.par_dim(TILE_K), BLOCK_N),
+                             dtype=rhs.dtype,
+                             buffer=nl.sbuf)
+
+      for bk_r in nl.affine_range(TILES_IN_BLOCK_K):
+        rhs_tiles[bk_r, i_rhs.p, i_rhs.x] = nl.load(
+            rhs[(TILES_IN_BLOCK_K * k + bk_r) * TILE_K + i_rhs.p,
+                BLOCK_N * n + i_rhs.x])
+
+      for m in nl.affine_range(NUM_BLOCK_M):
+        i_lhsT = nl.mgrid[0:TILE_K, 0:BLOCK_M]
+        lhsT_tiles = nl.ndarray((TILES_IN_BLOCK_K, nl.par_dim(TILE_K), BLOCK_M),
+                                dtype=lhsT.dtype,
+                                buffer=nl.sbuf)
+        for bk_l in nl.affine_range(TILES_IN_BLOCK_K):
+          lhsT_tiles[bk_l, i_lhsT.p, i_lhsT.x] = nl.load(
+              lhsT[(TILES_IN_BLOCK_K * k + bk_l) * TILE_K + i_lhsT.p,
+                   BLOCK_M * m + i_lhsT.x])
+
+        i_lhsT_mm = nl.mgrid[0:TILE_K, 0:TILE_M]
+        i_rhs_mm = nl.mgrid[0:TILE_K, 0:TILE_N]
+        i_res_mm = nl.mgrid[0:TILE_M, 0:TILE_N]
+        for bn in nl.affine_range(TILES_IN_BLOCK_N):
+          for bm in nl.affine_range(TILES_IN_BLOCK_M):
+            res_tile = nl.zeros((TILE_M, TILE_N), dtype=nl.float32, buffer=nl.psum)
+
+            for bk in nl.affine_range(TILES_IN_BLOCK_K):
+              res_tile[...] += nisa.nc_matmul(
+                  lhsT_tiles[bk, i_lhsT_mm.p, bm * TILE_M + i_lhsT_mm.x],
+                  rhs_tiles[bk, i_rhs_mm.p, bn * TILE_N + i_rhs_mm.x])
+
+            result_tiles[m, bm, bn, i_res_mm.p,
+                         i_res_mm.x] += res_tile[i_res_mm.p, i_res_mm.x]
+
+    for m in nl.affine_range(NUM_BLOCK_M):
+      for bm in nl.affine_range(TILES_IN_BLOCK_M):
+        i_res = nl.mgrid[0:TILE_M, 0:TILE_N]
+        i_res_packed = nl.mgrid[0:TILE_M, 0:BLOCK_N]
+        result_packed = nl.ndarray((TILE_M, BLOCK_N),
+                                   dtype=result_tiles.dtype,
+                                   buffer=nl.sbuf)
+
+        for bn in nl.affine_range(TILES_IN_BLOCK_N):
+          result_packed[i_res.p,
+                        bn * TILE_N + i_res.x] = nl.copy(result_tiles[m, bm, bn,
+                                                                      i_res.p,
+                                                                      i_res.x])
+        nl.store(result[(TILES_IN_BLOCK_M * m + bm) * TILE_M + i_res_packed.p,
+                        BLOCK_N * n + i_res_packed.x],
+                 value=result_packed[i_res_packed.p, i_res_packed.x])
+
+  return result
 ```
 
 ## t5_model_layers.py
@@ -4907,6 +6441,16 @@ def prune_linear_layer(layer: BaseParallelLinear, index: torch.LongTensor,
                        dim: int = 0) -> BaseParallelLinear:
     """
     Prune a linear layer to keep only entries in index.
+
+    Used to remove heads.
+
+    Args:
+        layer (`BaseParallelLinear`): The layer to prune.
+        index (`torch.LongTensor`): The indices to keep in the layer.
+        dim (`int`, *optional*, defaults to 0): The dimension on which to keep the indices.
+
+    Returns:
+        `BaseParallelLinear`: The pruned layer as a new layer with `requires_grad=True`.
     """
     index = index.to(layer.weight.device)
     W = layer.weight.index_select(dim, index).clone().detach()
@@ -4934,11 +6478,13 @@ def prune_linear_layer(layer: BaseParallelLinear, index: torch.LongTensor,
 class ParallelAttention(T5Attention):
     def __init__(self, config: T5Config, has_relative_attention_bias=False):
         super().__init__(config, has_relative_attention_bias)
+        # Per attention head and per partition values
         world_size = parallel_state.get_tensor_model_parallel_size()
         self.num_attention_heads_per_partition = divide(
             self.n_heads, world_size)
         self.hidden_size_per_partition = self.num_attention_heads_per_partition * self.key_value_proj_dim
 
+        # Mesh TensorFlow initialization to avoid scaling before softmax
         self.q = ColumnParallelLinear(self.d_model,
                                       self.inner_dim,
                                       bias=False,
@@ -4959,6 +6505,200 @@ class ParallelAttention(T5Attention):
         if self.has_relative_attention_bias:
             self.relative_attention_bias = ParallelEmbedding(self.relative_attention_num_buckets, self.n_heads)
         self.n_heads = self.num_attention_heads_per_partition
+
+    def prune_heads(self, heads):
+        if len(heads) == 0:
+            return
+        heads, index = find_pruneable_heads_and_indices(
+            heads, self.num_attention_heads_per_partition, self.key_value_proj_dim, self.pruned_heads
+        )
+        # Prune linear layers
+        self.q = prune_linear_layer(self.q, index)
+        self.k = prune_linear_layer(self.k, index)
+        self.v = prune_linear_layer(self.v, index)
+        self.o = prune_linear_layer(self.o, index, dim=1)
+        # Update hyper params
+        self.num_attention_heads_per_partition = self.num_attention_heads_per_partition - len(heads)
+        self.hidden_size_per_partition = self.key_value_proj_dim * self.num_attention_heads_per_partition
+        self.pruned_heads = self.pruned_heads.union(heads)
+
+    def compute_bias(self, query_length, key_length, device=None):
+        """Compute binned relative position bias"""
+        if device is None:
+            device = self.relative_attention_bias.weight.device
+        context_position = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
+        memory_position = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
+        relative_position = memory_position - context_position  # shape (query_length, key_length)
+        relative_position_bucket = self._relative_position_bucket(
+            relative_position,  # shape (query_length, key_length)
+            bidirectional=(not self.is_decoder),
+            num_buckets=self.relative_attention_num_buckets,
+            max_distance=self.relative_attention_max_distance,
+        )
+        values = self.relative_attention_bias(
+            relative_position_bucket)
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        values = values[:, :, tp_rank * self.num_attention_heads_per_partition:(tp_rank + 1)
+                                                                     * self.num_attention_heads_per_partition]
+
+        values = values.permute([2, 0, 1]).unsqueeze(
+            0)  # shape (1, num_heads, query_length, key_length)
+        return values
+
+    def forward(
+        self,
+        hidden_states,
+        mask=None,
+        key_value_states=None,
+        position_bias=None,
+        past_key_value=None,
+        layer_head_mask=None,
+        query_length=None,
+        use_cache=False,
+        output_attentions=False,
+    ):
+        """
+        Self-attention (if key_value_states is None) or attention over source sentence (provided by key_value_states).
+        """
+        # Input is (batch_size, seq_length, dim)
+        # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
+        # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
+        self.is_decoder = True
+        batch_size, seq_length = hidden_states.shape[:2]
+
+        real_seq_length = seq_length
+
+        if past_key_value is not None:
+            assert (
+                    len(past_key_value) == 2
+            ), f"past_key_value should have 2 past states: keys and values. Got {len(past_key_value)} past states"
+            real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
+
+        key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
+
+        def shape(states):
+            """projection"""
+            return states.view(batch_size, -1, self.num_attention_heads_per_partition,
+                               self.key_value_proj_dim).transpose(1, 2)
+
+        def unshape(states):
+            """reshape"""
+            return states.transpose(1, 2).contiguous().view(batch_size, -1,
+                                                            self.hidden_size_per_partition)
+
+        def project(hidden_states, proj_layer, key_value_states, past_key_value):
+            """projects hidden states correctly to key/query states"""
+            if key_value_states is None:
+                # self-attn
+                # (batch_size, n_heads, seq_length, dim_per_head)
+                hidden_states = shape(proj_layer(hidden_states))
+            elif past_key_value is None:
+                # cross-attn
+                # (batch_size, n_heads, seq_length, dim_per_head)
+                hidden_states = shape(proj_layer(key_value_states))
+
+            if past_key_value is not None:
+                if key_value_states is None:
+                    # self-attn
+                    # (batch_size, n_heads, key_length, dim_per_head)
+                    hidden_states = torch.cat([past_key_value, hidden_states], dim=2)
+                elif past_key_value.shape[2] != key_value_states.shape[1]:
+                    # checking that the `sequence_length` of the `past_key_value` is the same as
+                    # the provided `key_value_states` to support prefix tuning
+                    # cross-attn
+                    # (batch_size, n_heads, seq_length, dim_per_head)
+                    hidden_states = shape(proj_layer(key_value_states))
+                else:
+                    # cross-attn
+                    hidden_states = past_key_value
+            return hidden_states
+
+        # get query states
+        query_states = shape(
+            self.q(hidden_states))  # (batch_size, n_heads, seq_length, dim_per_head)
+
+        # get key/value states
+        key_states = project(
+            hidden_states, self.k, key_value_states,
+            past_key_value[0] if past_key_value is not None else None
+        )
+        value_states = project(
+            hidden_states, self.v, key_value_states,
+            past_key_value[1] if past_key_value is not None else None
+        )
+
+        # compute scores
+        scores = torch.matmul(
+            query_states, key_states.transpose(3, 2)
+        )  # equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
+
+        if position_bias is None:
+            if not self.has_relative_attention_bias:
+                position_bias = torch.zeros(
+                    (1, self.num_attention_heads_per_partition, real_seq_length, key_length),
+                    device=scores.device,
+                    dtype=scores.dtype
+                )
+                if self.gradient_checkpointing and self.training:
+                    position_bias.requires_grad = True
+            else:
+                position_bias = self.compute_bias(real_seq_length, key_length, device=scores.device)
+
+            # if key and values are already calculated
+            # we want only the last query position bias
+            if past_key_value is not None:
+                position_bias = position_bias[:, :, -hidden_states.size(1):, :]
+
+            if mask is not None:
+                position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
+
+        if self.pruned_heads:
+            mask = torch.ones(position_bias.shape[1])
+            mask[list(self.pruned_heads)] = 0
+            position_bias_masked = position_bias[:, mask.bool()]
+        else:
+            position_bias_masked = position_bias
+
+        scores += position_bias_masked
+        attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(
+            scores
+        )  # (batch_size, n_heads, seq_length, key_length)
+        attn_weights = nn.functional.dropout(
+            attn_weights, p=self.dropout, training=self.training
+        )  # (batch_size, n_heads, seq_length, key_length)
+
+        # Mask heads if we want to
+        if layer_head_mask is not None:
+            attn_weights = attn_weights * layer_head_mask
+
+        attn_output = unshape(
+            torch.matmul(attn_weights, value_states))  # (batch_size, seq_length, dim)
+        attn_output = self.o(attn_output)
+
+        present_key_value_state = (key_states, value_states) if (
+                self.is_decoder and use_cache) else None
+        outputs = (attn_output,) + (present_key_value_state,) + (position_bias,)
+
+        if output_attentions:
+            outputs = outputs + (attn_weights,)
+        return outputs
+
+
+class ParallelSelfAttention(T5LayerSelfAttention):
+    def __init__(self, config, has_relative_attention_bias=False):
+        super().__init__(config, has_relative_attention_bias=False)
+        self.SelfAttention = ParallelAttention(config,
+                                         has_relative_attention_bias=has_relative_attention_bias)
+        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+
+
+class ParallelCrossAttention(T5LayerCrossAttention):
+    def __init__(self, config):
+        super().__init__(config)
+        self.EncDecAttention = ParallelAttention(config, has_relative_attention_bias=False)
+        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
 
 
 class ParallelDenseActDense(T5DenseActDense):
@@ -4987,96 +6727,38 @@ class ParallelDenseGatedActDense(T5DenseGatedActDense):
                                     bias=False)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.act = ACT2FN[config.dense_act_fn]
-```
 
-## neuronperf_benchmark_guide.rst
 
-```python
-def preprocess_fn(x):
-    return x * 5
-```
+class ParallelFF(T5LayerFF):
+    def __init__(self, config: T5Config):
+        super().__init__(config)
+        if config.is_gated_act:
+            self.DenseReluDense = ParallelDenseGatedActDense(config)
+        else:
+            self.DenseReluDense = ParallelDenseActDense(config)
 
-```python
-def preprocess_fn(x, y, z):
-    return x / 255, y / 255, z / 255
-```
+        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
 
-```python
-def postprocess_fn(x):
-    return x.argmax()
-```
 
-```python
-reports = npf.torch.benchmark('model_neuron_b1.pt', ..., workers_per_model=1)
-```
+def load_pretrained_with_parallel_attn(model_name):
+    model = T5ForConditionalGeneration.from_pretrained(model_name, torch_dtype="auto")
 
-```python
-workers_per_model = [1, 2]
-reports = npf.torch.benchmark('model_neuron_b1.pt', ..., workers_per_model=workers_per_model)
-```
+    # Parallel implementation of Attention modules.
+    from t5_model_layers import ParallelSelfAttention, ParallelFF, ParallelCrossAttention
 
-```python
-reports = npf.torch.benchmark('model_neuron_b1.pt', ..., n_models=6)
-```
+    for index, block in enumerate(model.decoder.block):
+        if index == 0:
+            block.layer[0] = ParallelSelfAttention(model.config,
+                                                   has_relative_attention_bias=True)
+        else:
+            block.layer[0] = ParallelSelfAttention(model.config)
+        block.layer[1] = ParallelCrossAttention(model.config)
+        block.layer[2] = ParallelFF(model.config)
+    # Load the weights into the parallel layers        
+    neuronx_distributed.parallel_layers.load(model_name.split("/")[-1] + ".pt", model, sharded=False)
 
-```python
-n_models = list(range(1, 10))
-reports = npf.torch.benchmark('model_neuron_b1.pt', ..., n_models=n_models)
-```
-
-```python
-reports = npf.torch.benchmark('model_neuron_b1.pt', ..., pipeline_sizes=2)
-```
-
-```python
-reports = npf.torch.benchmark('model_index.json', ..., pipeline_sizes=[1, 2, 3])
-```
-
-```python
-reports = npf.torch.benchmark('model_index.json', ..., duration=10)
-```
-
-```python
-results = npf.torch.benchmark('model_index.json', ..., return_timers=True)
-```
-
-```python
-reports = npf.get_reports(results)
-```
-
-```python
-reports = npf.torch.benchmark(..., n_models=1, duration=5, verbosity=2)
-```
-
-```python
-reports = npf.torch.benchmark(..., multiprocess=False)
-```
-
-```python
-reports = npf.torch.benchmark(..., multiinterpreter=True)
-```
-
-```python
-cpu_reports = npf.cpu.benchmark(YourModelClass, ...)
-```
-
-```python
-gpu_reports = npf.torch.benchmark(YourModelClass, ..., device_type="gpu")
-```
-
-```python
-import torch
-
-class ModelWrapper(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        from transformers import AutoModelForSequenceClassification
-        model_name = "bert-base-cased"
-        self.bert = AutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
-        self.add_module(model_name, self.bert)
-
-    def forward(self, *inputs):
-        return self.bert(*inputs)
+    return model
 ```
 
 ## mamba_nki_kernels.py
@@ -5086,7 +6768,9 @@ import neuronxcc.nki as nki
 import neuronxcc.nki.language as nl
 import neuronxcc.nki.isa as nisa
 import numpy as np
+```
 
+```python
 @nki.jit
 def mamba_v1(delta, u, A, B, C):
     """Computes the SSM operation in the Mamba model.
@@ -5145,7 +6829,9 @@ def mamba_v1(delta, u, A, B, C):
                     scanC_accum[i_channel_tile, 0:channel_psize, 0:seq_len])
 
     return output
+```
 
+```python
 @nki.jit
 def mamba_v2(delta, u, A, B, C):
     """Computes the SSM operation in the Mamba model.
@@ -5353,6 +7039,7 @@ sequence_1 = ("Around the Beaufort Sea, however, mature males reportedly "
               "The legs are stocky and the ears and tail are small.")
 
 # Run inference on inputs with different shapes
+# We create the variable shapes by randomly cropping the sequences
 for _ in range(10):
     # Get random sequence lengths between 0 and 128
     paraphrase_len = int(np.random.uniform(128))
@@ -5372,219 +7059,46 @@ for _ in range(10):
     output = buckets[target_bucket](*paraphrase_padded)
 ```
 
-## matrix_multiplication.rst
-
-```python
-import nki
-import nki.language as nl
-from nki import nisa
-
-@nl.kernel
-def nki_matmul_basic_():
-    # Define indices to access LHS and RHS input tensors
-    lhs_T = nl.ndarray(shape=(128, 64), dtype=nl.bfloat16, buffer=nl.sbuf)
-    rhs = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-    output = nl.ndarray(shape=(64, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-    
-    # Load inputs from HBM to SBUF
-    nisa.dma_copy(lhs_T, nl.hbm_ref(lhs_T_hbm))
-    nisa.dma_copy(rhs, nl.hbm_ref(rhs_hbm))
-    
-    # Perform matrix multiplication
-    psum_result = nl.ndarray(shape=(64, 512), dtype=nl.bfloat16, buffer=nl.psum)
-    nisa.nc_matmul(psum_result, lhs_T, rhs, transpose_lhs=True)
-    
-    # Copy result from PSUM to SBUF
-    nisa.tensor_copy(output, psum_result)
-    
-    # Store result to HBM
-    nisa.dma_copy(nl.hbm_ref(output_hbm), output)
-```
-
-```python
-import nki
-import nki.language as nl
-from nki import nisa
-
-@nl.kernel
-def nki_matmul_tiled_(M, K, N):
-    lhs_T = nl.ndarray(shape=(K, M), dtype=nl.bfloat16, buffer=nl.hbm)
-    rhs = nl.ndarray(shape=(K, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    output = nl.ndarray(shape=(M, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    
-    psum_buf = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.psum)
-    
-    for m in nl.affine_range(M // 128):
-        for n in nl.affine_range(N // 512):
-            accum = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            nisa.dma_copy(accum, nl.hbm_ref(output[m*128:(m+1)*128, n*512:(n+1)*512]))
-            
-            for k in nl.affine_range(K // 128):
-                lhs_tile = nl.ndarray(shape=(128, 128), dtype=nl.bfloat16, buffer=nl.sbuf)
-                rhs_tile = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-                
-                nisa.dma_copy(lhs_tile, nl.hbm_ref(lhs_T[k*128:(k+1)*128, m*128:(m+1)*128]))
-                nisa.dma_copy(rhs_tile, nl.hbm_ref(rhs[k*128:(k+1)*128, n*512:(n+1)*512]))
-                
-                nisa.nc_matmul(psum_buf, lhs_tile, rhs_tile)
-            
-            nisa.tensor_copy(accum, psum_buf)
-            nisa.dma_copy(nl.hbm_ref(output[m*128:(m+1)*128, n*512:(n+1)*512]), accum)
-```
-
-```python
-import nki
-import nki.language as nl
-from nki import nisa
-
-@nl.kernel
-def nki_matmul_hoist_load_(M, K, N):
-    lhs_T = nl.ndarray(shape=(K, M), dtype=nl.bfloat16, buffer=nl.hbm)
-    rhs = nl.ndarray(shape=(K, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    output = nl.ndarray(shape=(M, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    
-    psum_buf = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.psum)
-    
-    for m in nl.affine_range(M // 128):
-        for n in nl.affine_range(N // 512):
-            accum = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            nisa.dma_copy(accum, nl.hbm_ref(output[m*128:(m+1)*128, n*512:(n+1)*512]))
-            
-            lhs_tiles = nl.ndarray(shape=(K // 128, 128, 128), dtype=nl.bfloat16, buffer=nl.sbuf)
-            rhs_tiles = nl.ndarray(shape=(K // 128, 128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            
-            for k in nl.affine_range(K // 128):
-                nisa.dma_copy(lhs_tiles[k], nl.hbm_ref(lhs_T[k*128:(k+1)*128, m*128:(m+1)*128]))
-                nisa.dma_copy(rhs_tiles[k], nl.hbm_ref(rhs[k*128:(k+1)*128, n*512:(n+1)*512]))
-            
-            for k in nl.affine_range(K // 128):
-                nisa.nc_matmul(psum_buf, lhs_tiles[k], rhs_tiles[k])
-            
-            nisa.tensor_copy(accum, psum_buf)
-            nisa.dma_copy(nl.hbm_ref(output[m*128:(m+1)*128, n*512:(n+1)*512]), accum)
-```
-
-```python
-import nki
-import nki.language as nl
-from nki import nisa
-
-@nl.kernel
-def nki_matmul_block_free_dimension_(M, K, N):
-    lhs_T = nl.ndarray(shape=(K, M), dtype=nl.bfloat16, buffer=nl.hbm)
-    rhs = nl.ndarray(shape=(K, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    output = nl.ndarray(shape=(M, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    
-    psum_buf = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.psum)
-    
-    NUM_BLOCK_M = 2
-    NUM_BLOCK_N = 2
-    
-    for m_block in nl.affine_range(M // (128 * NUM_BLOCK_M)):
-        for n_block in nl.affine_range(N // (512 * NUM_BLOCK_N)):
-            result_tiles = nl.ndarray(shape=(NUM_BLOCK_M, NUM_BLOCK_N, 128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            
-            for m in nl.affine_range(NUM_BLOCK_M):
-                for n in nl.affine_range(NUM_BLOCK_N):
-                    nisa.dma_copy(result_tiles[m, n], nl.hbm_ref(output[m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]))
-            
-            lhs_tiles = nl.ndarray(shape=(K // 128, NUM_BLOCK_M, 128, 128), dtype=nl.bfloat16, buffer=nl.sbuf)
-            rhs_tiles = nl.ndarray(shape=(K // 128, NUM_BLOCK_N, 128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            
-            for k in nl.affine_range(K // 128):
-                for m in nl.affine_range(NUM_BLOCK_M):
-                    nisa.dma_copy(lhs_tiles[k, m], nl.hbm_ref(lhs_T[k*128:(k+1)*128, m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128]))
-                for n in nl.affine_range(NUM_BLOCK_N):
-                    nisa.dma_copy(rhs_tiles[k, n], nl.hbm_ref(rhs[k*128:(k+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]))
-            
-            for k in nl.affine_range(K // 128):
-                for m in nl.affine_range(NUM_BLOCK_M):
-                    for n in nl.affine_range(NUM_BLOCK_N):
-                        nisa.nc_matmul(psum_buf, lhs_tiles[k, m], rhs_tiles[k, n])
-                        nisa.tensor_copy(result_tiles[m, n], psum_buf)
-            
-            for m in nl.affine_range(NUM_BLOCK_M):
-                for n in nl.affine_range(NUM_BLOCK_N):
-                    nisa.dma_copy(nl.hbm_ref(output[m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]), result_tiles[m, n])
-```
-
-```python
-import nki
-import nki.language as nl
-from nki import nisa
-
-@nl.kernel
-def nki_matmul_fully_optimized_(M, K, N):
-    lhs_T = nl.ndarray(shape=(K, M), dtype=nl.bfloat16, buffer=nl.hbm)
-    rhs = nl.ndarray(shape=(K, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    output = nl.ndarray(shape=(M, N), dtype=nl.bfloat16, buffer=nl.hbm)
-    
-    psum_buf = nl.ndarray(shape=(128, 512), dtype=nl.bfloat16, buffer=nl.psum)
-    
-    NUM_BLOCK_M = 16
-    NUM_BLOCK_N = 2
-    NUM_BLOCK_K = 8
-    
-    for m_block in nl.affine_range(M // (128 * NUM_BLOCK_M)):
-        for n_block in nl.affine_range(N // (512 * NUM_BLOCK_N)):
-            result_tiles = nl.ndarray(shape=(NUM_BLOCK_M, NUM_BLOCK_N, 128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            
-            for m in nl.affine_range(NUM_BLOCK_M):
-                for n in nl.affine_range(NUM_BLOCK_N):
-                    nisa.dma_copy(result_tiles[m, n], nl.hbm_ref(output[m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]))
-            
-            lhs_tiles = nl.ndarray(shape=(NUM_BLOCK_K, NUM_BLOCK_M, 128, 128), dtype=nl.bfloat16, buffer=nl.sbuf)
-            rhs_tiles = nl.ndarray(shape=(NUM_BLOCK_K, NUM_BLOCK_N, 128, 512), dtype=nl.bfloat16, buffer=nl.sbuf)
-            
-            for k_block in nl.affine_range(K // (128 * NUM_BLOCK_K)):
-                for k in nl.sequential_range(NUM_BLOCK_K):
-                    for m in nl.affine_range(NUM_BLOCK_M):
-                        nisa.dma_copy(lhs_tiles[k, m], nl.hbm_ref(lhs_T[k_block*128*NUM_BLOCK_K+k*128:(k_block*128*NUM_BLOCK_K+k+1)*128, m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128]))
-                    for n in nl.affine_range(NUM_BLOCK_N):
-                        nisa.dma_copy(rhs_tiles[k, n], nl.hbm_ref(rhs[k_block*128*NUM_BLOCK_K+k*128:(k_block*128*NUM_BLOCK_K+k+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]))
-                
-                for k in nl.sequential_range(NUM_BLOCK_K):
-                    for m in nl.affine_range(NUM_BLOCK_M):
-                        for n in nl.affine_range(NUM_BLOCK_N):
-                            nisa.nc_matmul(psum_buf, lhs_tiles[k, m], rhs_tiles[k, n])
-                            nisa.tensor_copy(result_tiles[m, n], psum_buf)
-            
-            for m in nl.affine_range(NUM_BLOCK_M):
-                for n in nl.affine_range(NUM_BLOCK_N):
-                    nisa.dma_copy(nl.hbm_ref(output[m_block*128*NUM_BLOCK_M+m*128:(m_block*128*NUM_BLOCK_M+m+1)*128, n_block*512*NUM_BLOCK_N+n*512:(n_block*512*NUM_BLOCK_N+n+1)*512]), result_tiles[m, n])
-```
-
 ## bert_model.py
 
 ```python
 import tensorflow as tf
 from tensorflow.neuron import fuse
 
-# Fusing encoder with compiler arguments
+# Example 1: Using the fuse decorator for compiler optimization
 fuser = fuse(compiler_args=['--fp32-cast', 'matmult'], timeout=360000)
 bert.encoder = fuser(bert.encoder)
 ```
 
 ```python
-# Layer normalization implementation
-def layer_norm(self, input_tensor, layer_name, force_float32=False):
-    dtype = tf.float32 if force_float32 else self.layer_norm_dtype
-    gamma = dtype.as_numpy_dtype(self.weights_dict['bert/{}/LayerNorm/gamma:0'.format(layer_name)])
-    beta = dtype.as_numpy_dtype(self.weights_dict['bert/{}/LayerNorm/beta:0'.format(layer_name)])
-    with tf.name_scope('bert/{}/LayerNorm'.format(layer_name)):
-        input_tensor = tf.cast(input_tensor, dtype)
-        mean = tf.reduce_mean(input_tensor, axis=[-1], keepdims=True, name='mean')
-        residuals = tf.subtract(input_tensor, mean, name='residuals')
-        var = tf.reduce_mean(residuals * residuals, axis=[-1], keepdims=True, name='var')
-        rsqrt = tf.rsqrt(var + dtype.as_numpy_dtype(self.eps))
-        norm_output = tf.multiply(residuals, rsqrt, name='normalized')
-        output_tensor = norm_output * gamma + beta
-        output_tensor = tf.cast(output_tensor, self.dtype)
-    return output_tensor
+import tensorflow as tf
+
+# Example 2: Creating placeholders with dynamic batch size
+input_ids_ph_shape = input_ids.shape.as_list()
+input_ids_ph_shape[0] = None
+input_ids_ph = tf.placeholder(input_ids.dtype, input_ids_ph_shape, name='input_ids')
 ```
 
 ```python
-# Self-attention implementation
+import tensorflow as tf
+
+# Example 3: Modifying NeuronOp attributes for batch axis configuration
+neuron_op_node = [node for node in new_graph_def.node if node.op == 'NeuronOp'][0]
+neuron_op_node.attr['input_batch_axis'].list.i[:] = [0, 0]
+neuron_op_node.attr['output_batch_axis'].list.i[:] = [0]
+```
+
+```python
+import tensorflow as tf
+
+# Example 4: Saving optimized model with inputs and outputs
+tf.saved_model.simple_save(sess, args.output_saved_model, inputs, outputs)
+```
+
+```python
+import tensorflow as tf
+
+# Example 5: Self-attention implementation with multi-head attention
 def self_attention(self, input_tensor, bias_tensor, layer_name):
     query_kernel = self.weights_dict['bert/encoder/{}/attention/self/query/kernel:0'.format(layer_name)] * 0.125
     query_bias = self.weights_dict['bert/encoder/{}/attention/self/query/bias:0'.format(layer_name)] * 0.125
@@ -5621,275 +7135,23 @@ def self_attention(self, input_tensor, bias_tensor, layer_name):
 ```
 
 ```python
-# Fully connected layer implementation
-def fully_connected(self, input_tensor, layer_name):
-    inter_kernel = self.weights_dict['bert/encoder/{}/intermediate/dense/kernel:0'.format(layer_name)]
-    inter_bias = self.weights_dict['bert/encoder/{}/intermediate/dense/bias:0'.format(layer_name)]
-    out_kernel = self.weights_dict['bert/encoder/{}/output/dense/kernel:0'.format(layer_name)]
-    out_bias = self.weights_dict['bert/encoder/{}/output/dense/bias:0'.format(layer_name)]
-    with tf.name_scope('bert/encoder/{}/fully_connected/intermediate/dense'.format(layer_name)):
-        matmul = tf.matmul(input_tensor, inter_kernel.astype(self.dtype.as_numpy_dtype))
-        bias_add = tf.nn.bias_add(matmul, inter_bias.astype(self.dtype.as_numpy_dtype))
-        gelu = self.gelu_sigmoid(bias_add) if self.crude_gelu else self.gelu_tanh(bias_add)
-    with tf.name_scope('bert/encoder/{}/fully_connected/output/dense'.format(layer_name)):
-        matmul = tf.matmul(gelu, out_kernel.astype(self.dtype.as_numpy_dtype))
-        bias_add = tf.nn.bias_add(matmul, out_bias.astype(self.dtype.as_numpy_dtype))
-        output_tensor = bias_add + input_tensor
-    return output_tensor
-```
-
-## ssd300_model.py
-
-```python
 import tensorflow as tf
-import tensorflow.neuron as tfn
-from functools import partial
-import numpy as np
 
-def decode_jpeg_resize(input_tensor, image_size):
-    # decode jpeg
-    tensor = tf.image.decode_png(input_tensor, channels=3)
-
-    # resize
-    decoded_shape = tf.shape(tensor)
-    tensor = tf.cast(tensor, tf.float32)
-    decoded_shape_hw = decoded_shape[0:2]
-    decoded_shape_hw_float32 = tf.cast(decoded_shape_hw, tf.float32)
-    tensor = tf.image.resize(tensor, image_size)
-
-    # normalize
-    tensor -= np.array([0.485, 0.456, 0.406]).astype(np.float32) * 255.0
-    return tensor, decoded_shape_hw_float32[::-1]
-
-
-def preprocessor(input_tensor, image_size):
-    with tf.name_scope('Preprocessor'):
-        tensor, bbox_scale_hw = tf.map_fn(
-            partial(decode_jpeg_resize, image_size=image_size), input_tensor,
-            dtype=(tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
-    return tensor, bbox_scale_hw
-
-
-def tf_Conv2d(input_tensor, module, first_conv=False):
-    np_dtype = input_tensor.dtype.as_numpy_dtype
-    kernel_np = module.weight.detach().numpy().transpose([2, 3, 1, 0])
-    if first_conv:
-        kernel_np /= (np.array([0.229, 0.224, 0.225]).astype(np.float32) * 255.0)[:, np.newaxis]
-    kernel = tf.constant(kernel_np.astype(np_dtype))
-    if any(module.padding):
-        pad_h, pad_w = module.padding
-        padding = [[0, 0], [pad_h, pad_h], [pad_w, pad_w], [0, 0]]
-        input_tensor = tf.pad(input_tensor, padding)
-    stride_h, stride_w = module.stride
-    tensor = tf.nn.conv2d(input_tensor, kernel, strides=[1, stride_h, stride_w, 1], padding='VALID')
-    if module.bias is not None:
-        bias = tf.constant(module.bias.detach().numpy().astype(np_dtype))
-        tensor = tf.nn.bias_add(tensor, bias)
-    return tensor
-
-
-def tf_BatchNorm2d(input_tensor, module):
-    def _norm_np(ts):
-        return ts.astype(input_tensor.dtype.as_numpy_dtype)
-    mean = _norm_np(module.running_mean.detach().numpy())
-    offset = _norm_np(module.bias.detach().numpy())
-    inv_std = np.sqrt(module.running_var.detach().numpy() + module.eps)
-    scale_inv_std = _norm_np(module.weight.detach().numpy() / inv_std)
-    return scale_inv_std * (input_tensor - mean) + offset
-
-
-def tf_MaxPool2d(input_tensor, module):
-    pad = module.padding
-    tensor = tf.pad(input_tensor, [[0, 0], [pad, pad], [pad, pad], [0, 0]])
-    return tf.nn.max_pool2d(tensor, ksize=module.kernel_size, strides=module.stride, padding='VALID')
-
-
-def tf_Bottleneck(input_tensor, module):
-    tensor = tf_Conv2d(input_tensor, module.conv1)
-    tensor = tf_BatchNorm2d(tensor, module.bn1)
-    tensor = tf.nn.relu(tensor)
-    tensor = tf_Conv2d(tensor, module.conv2)
-    tensor = tf_BatchNorm2d(tensor, module.bn2)
-    tensor = tf.nn.relu(tensor)
-    tensor = tf_Conv2d(tensor, module.conv3)
-    tensor = tf_BatchNorm2d(tensor, module.bn3)
-    if module.downsample is not None:
-        input_tensor = tf_Conv2d(input_tensor, module.downsample[0])
-        input_tensor = tf_BatchNorm2d(input_tensor, module.downsample[1])
-    return tf.nn.relu(input_tensor + tensor)
-
-
-def tf_SequentialBottleneck(tensor, seq, resnet):
-    with tf.name_scope('{}.Sequential'.format(seq)):
-        for idx, module in enumerate(resnet[seq]):
-            with tf.name_scope('{}.BasicBlock'.format(idx)):
-                tensor = tf_Bottleneck(tensor, module)
-    return tensor
-
-
-def tf_bbox_view(detection_feed, modules, ndim):
-    results = []
-    for idx, (tensor, mod) in enumerate(zip(detection_feed, modules)):
-        with tf.name_scope('branch{}'.format(idx)):
-            tensor = tf_Conv2d(tensor, mod)
-            tensor = tf.transpose(tensor, [0, 3, 1, 2])
-            tensor = tf.cast(tensor, tf.float32)
-
-            shape = tensor.shape.as_list()
-            batch_size = -1 if shape[0] is None else shape[0]
-            new_shape = [batch_size, ndim, np.prod(shape[1:]) // ndim]
-            results.append(tf.reshape(tensor, new_shape))
-    tensor = tf.concat(results, axis=-1)
-    return tensor
-
-
-def tf_feature_extractor(input_tensor, resnet):
-    with tf.name_scope('FeatureExtractor'):
-        with tf.name_scope('0.Conv2d'):
-            tensor = tf_Conv2d(input_tensor, resnet[0], first_conv=True)
-        with tf.name_scope('1.BatchNorm2d'):
-            tensor = tf_BatchNorm2d(tensor, resnet[1])
-        with tf.name_scope('2.ReLU'):
-            tensor = tf.nn.relu(tensor)
-        with tf.name_scope('3.MaxPool2d'):
-            tensor = tf_MaxPool2d(tensor, resnet[3])
-        tensor = tf_SequentialBottleneck(tensor, 4, resnet)
-        tensor = tf_SequentialBottleneck(tensor, 5, resnet)
-        tensor = tf_SequentialBottleneck(tensor, 6, resnet)
-        tensor = tf.cast(tensor, tf.float16)
-    return tensor
-
-
-def tf_box_predictor(tensor, ssd300_torch):
-    with tf.name_scope('BoxPredictor'):
-        detection_feed = [tensor]
-        for idx, block in enumerate(ssd300_torch.additional_blocks):
-            with tf.name_scope('{}.Sequential'.format(idx)):
-                tensor = tf_Conv2d(tensor, block[0])
-                tensor = tf_BatchNorm2d(tensor, block[1])
-                tensor = tf.nn.relu(tensor)
-                tensor = tf_Conv2d(tensor, block[3])
-                tensor = tf_BatchNorm2d(tensor, block[4])
-                tensor = tf.nn.relu(tensor)
-                detection_feed.append(tensor)
-        with tf.name_scope('Boxes'):
-            loc = tf_bbox_view(detection_feed, ssd300_torch.loc, ndim=4)
-        with tf.name_scope('Probabilities'):
-            conf = tf_bbox_view(detection_feed, ssd300_torch.conf, ndim=ssd300_torch.label_num)
-    return loc, conf
-
-
-@tfn.fuse(batch_size=1, dynamic_batch_size=True)
-def tf_ssd300(input_tensor, ssd300_torch):
-    with tf.name_scope('SSD300'):
-        tensor = tf_feature_extractor(input_tensor, ssd300_torch.feature_extractor.feature_extractor)
-        loc, conf = tf_box_predictor(tensor, ssd300_torch)
-    return loc, conf
-
-
-def scale_back_batch(bboxes_in, scores_in, scale_xy, scale_wh, dboxes_xywh):
-    """
-        Do scale and transform from xywh to ltrb
-        suppose input Nx4xnum_bbox Nxlabel_numxnum_bbox
-    """
-    with tf.name_scope('ScaleBackBatch'):
-        bboxes_in = tf.transpose(bboxes_in, [0, 2, 1])
-        scores_in = tf.transpose(scores_in, [0, 2, 1])
-
-        bboxes_xy = bboxes_in[:, :, :2]
-        bboxes_wh = bboxes_in[:, :, 2:]
-        bboxes_xy *= scale_xy
-        bboxes_wh *= scale_wh
-
-        bboxes_xy = bboxes_xy * dboxes_xywh[:, :, 2:] + dboxes_xywh[:, :, :2]
-        bboxes_wh = tf.exp(bboxes_wh) * dboxes_xywh[:, :, 2:]
-
-        bboxes_wh_half = 0.5 * bboxes_wh
-        bboxes_lt = bboxes_xy - bboxes_wh_half
-        bboxes_rb = bboxes_xy + bboxes_wh_half
-
-        bboxes_in = tf.concat([bboxes_lt, bboxes_rb], axis=-1)
-
-        return bboxes_in, tf.nn.softmax(scores_in, axis=-1)
-
-
-def select_nms_outputs(input_tensors):
-    boxes_xywh, scores, classes, valid_detections = input_tensors
-    return boxes_xywh[:valid_detections], scores[:valid_detections], classes[:valid_detections]
-
-
-def postprocessor(ploc_ts, plabel_ts, bbox_scale_hw_ts, scale_xy, scale_wh, dboxes_xywh):
-    with tf.name_scope('Postprocessor'):
-        ploc_ts = tf.cast(ploc_ts, tf.float32)
-        plabel_ts = tf.cast(plabel_ts, tf.float32)
-        bboxes_ts, probs_ts = scale_back_batch(ploc_ts, plabel_ts, scale_xy, scale_wh, dboxes_xywh)
-        bboxes_ts = bboxes_ts[:, :, tf.newaxis, :]
-        probs_ts = probs_ts[:, :, 1:]
-        nms_outputs = tf.image.combined_non_max_suppression(
-            bboxes_ts,
-            probs_ts,
-            max_output_size_per_class=200,
-            max_total_size=200,
-            iou_threshold=0.5,
-            score_threshold=0.05,
-            pad_per_class=False,
-            clip_boxes=False,
-            name='CombinedNonMaxSuppression',
-        )
-        nmsed_boxes_x0y0x1y1, nmsed_scores, nmsed_classes, valid_detections = nms_outputs
-        nmsed_boxes_x0y0 = nmsed_boxes_x0y0x1y1[..., :2]
-        nmsed_boxes_x1y1 = nmsed_boxes_x0y0x1y1[..., 2:]
-        bbox_scale_hw_ts = bbox_scale_hw_ts[:, tf.newaxis, :]
-        nmsed_boxes_xy = nmsed_boxes_x0y0 * bbox_scale_hw_ts
-        nmsed_boxes_wh = (nmsed_boxes_x1y1 - nmsed_boxes_x0y0) * bbox_scale_hw_ts
-        nmsed_boxes_xywh = tf.concat([nmsed_boxes_xy, nmsed_boxes_wh], axis=-1)
-        nmsed_boxes_xywh, nmsed_scores, nmsed_classes = tf.map_fn(
-            select_nms_outputs, (nmsed_boxes_xywh, nmsed_scores, nmsed_classes, valid_detections),
-            dtype=(tf.float32, tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
-    return nmsed_boxes_xywh, nmsed_scores, nmsed_classes
-```
-
-## hf_llama3_8B_SFT_LORA.rst
-
-```python
-import transformers
-
-tokenizer_path="llama3_tokenizer"
-model_weights_path="llama3-8B_hf_weights"
-model_id = "meta-llama/Meta-Llama-3-8B"
-
-t = transformers.AutoTokenizer.from_pretrained(model_id)
-t.save_pretrained(tokenizer_path)
-
-m = transformers.AutoModelForCausalLM.from_pretrained(model_id)
-m.save_pretrained(model_weights_path)
-```
-
-```yaml
-exp_manager:
-    resume_from_checkpoint: /pretrained_ckpt
-
-data:
-    train_dir: /example_datasets/llama3_8b/training.jsonl
-    val_dir: /example_datasets/llama3_8b/validation.json
-    dev_choose_samples: 2250
-    seq_length: 4096
-    tokenizer:
-        type: /llama3_tokenizer
-
-model:
-    weight_init_only: True
-
-model_alignment_strategy:
-    sft:
-        packing: True
-    peft:
-        lora_rank: 16
-        lora_alpha: 32
-        lora_dropout: 0.05
-        lora_bias: "none"
-        lora_verbose: True
-        target_modules: ["qkv_proj"]
+# Example 6: Layer normalization implementation
+def layer_norm(self, input_tensor, layer_name, force_float32=False):
+    dtype = tf.float32 if force_float32 else self.layer_norm_dtype
+    gamma = dtype.as_numpy_dtype(self.weights_dict['bert/{}/LayerNorm/gamma:0'.format(layer_name)])
+    beta = dtype.as_numpy_dtype(self.weights_dict['bert/{}/LayerNorm/beta:0'.format(layer_name)])
+    with tf.name_scope('bert/{}/LayerNorm'.format(layer_name)):
+        input_tensor = tf.cast(input_tensor, dtype)
+        mean = tf.reduce_mean(input_tensor, axis=[-1], keepdims=True, name='mean')
+        residuals = tf.subtract(input_tensor, mean, name='residuals')
+        var = tf.reduce_mean(residuals * residuals, axis=[-1], keepdims=True, name='var')
+        rsqrt = tf.rsqrt(var + dtype.as_numpy_dtype(self.eps))
+        norm_output = tf.multiply(residuals, rsqrt, name='normalized')
+        output_tensor = norm_output * gamma + beta
+        output_tensor = tf.cast(output_tensor, self.dtype)
+    return output_tensor
 ```
 
 ## ssd300_model.py
@@ -6103,189 +7365,364 @@ def postprocessor(ploc_ts, plabel_ts, bbox_scale_hw_ts, scale_xy, scale_wh, dbox
             select_nms_outputs, (nmsed_boxes_xywh, nmsed_scores, nmsed_classes, valid_detections),
             dtype=(tf.float32, tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
     return nmsed_boxes_xywh, nmsed_scores, nmsed_classes
+
+
+class DefaultBoxes(object):
+
+    def __init__(self, fig_size, feat_size, steps, scales, aspect_ratios,
+                 scale_xy=0.1, scale_wh=0.2):
+
+        self.feat_size = feat_size
+        self.fig_size = fig_size
+
+        self.scale_xy_ = scale_xy
+        self.scale_wh_ = scale_wh
+
+        self.steps = steps
+        self.scales = scales
+
+        fk = fig_size/np.array(steps)
+        self.aspect_ratios = aspect_ratios
+
+        self.default_boxes = []
+        for idx, sfeat in enumerate(self.feat_size):
+
+            sk1 = scales[idx]/fig_size
+            sk2 = scales[idx+1]/fig_size
+            sk3 = np.sqrt(sk1*sk2)
+            all_sizes = [(sk1, sk1), (sk3, sk3)]
+
+            for alpha in aspect_ratios[idx]:
+                w, h = sk1*np.sqrt(alpha), sk1/np.sqrt(alpha)
+                all_sizes.append((w, h))
+                all_sizes.append((h, w))
+            for w, h in all_sizes:
+                for i, j in itertools.product(range(sfeat), repeat=2):
+                    cx, cy = (j+0.5)/fk[idx], (i+0.5)/fk[idx]
+                    self.default_boxes.append((cx, cy, w, h))
+
+        self.dboxes = np.array(self.default_boxes)
+        self.dboxes = self.dboxes.clip(min=0, max=1)
+        self.dboxes_ltrb = self.dboxes.copy()
+        self.dboxes_ltrb[:, 0] = self.dboxes[:, 0] - 0.5 * self.dboxes[:, 2]
+        self.dboxes_ltrb[:, 1] = self.dboxes[:, 1] - 0.5 * self.dboxes[:, 3]
+        self.dboxes_ltrb[:, 2] = self.dboxes[:, 0] + 0.5 * self.dboxes[:, 2]
+        self.dboxes_ltrb[:, 3] = self.dboxes[:, 1] + 0.5 * self.dboxes[:, 3]
+
+    @property
+    def scale_xy(self):
+        return self.scale_xy_
+
+    @property
+    def scale_wh(self):
+        return self.scale_wh_
+
+    def __call__(self, order="ltrb"):
+        if order == "ltrb": return self.dboxes_ltrb
+        if order == "xywh": return self.dboxes
+
+
+def dboxes300_coco():
+    figsize = 300
+    feat_size = [38, 19, 10, 5, 3, 1]
+    steps = [8, 16, 32, 64, 100, 300]
+    scales = [21, 45, 99, 153, 207, 261, 315]
+    aspect_ratios = [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
+    dboxes = DefaultBoxes(figsize, feat_size, steps, scales, aspect_ratios)
+    return dboxes
 ```
 
-## migrate-from-tnx-to-nxdi.rst
+## hf_llama3_8B_SFT_LORA.rst
 
 ```python
-import os
+import transformers
 
-# Force vLLM framework to use neuronx-distributed-inference
-os.environ['VLLM_NEURON_FRAMEWORK'] = "neuronx-distributed-inference"
+tokenizer_path="llama3_tokenizer"
+model_weights_path="llama3-8B_hf_weights"
+model_id = "meta-llama/Meta-Llama-3-8B"
+
+t = transformers.AutoTokenizer.from_pretrained(model_id)
+t.save_pretrained(tokenizer_path)
+
+m = transformers.AutoModelForCausalLM.from_pretrained(model_id)
+m.save_pretrained(model_weights_path)
 ```
 
-```python
-from neuronx_distributed.inference import NeuronConfig, NeuronLlamaForCausalLM, LlamaInferenceConfig
-from neuronx_distributed.inference.config import load_pretrained_config
-
-model_path = "/home/ubuntu/models/open_llama_3b"
-compiled_model_path = "/home/ubuntu/compiled_models/open_llama_3b"
-
-neuron_config = NeuronConfig(
-    batch_size=1,
-    tp_degree=8,
-    seq_len=128
-)
-
-config = LlamaInferenceConfig(
-    neuron_config,
-    load_config=load_pretrained_config(model_path)
-)
-
-model = NeuronLlamaForCausalLM(model_path, config)
-
-# Compile the model, shard the weights, and save to the given path.
-model.compile(compiled_model_path)
-```
-
-## tiling-overview.rst
+## ssd300_model.py
 
 ```python
-import nki.isa as nisa
-import nki.language as nl
-import nki
+import numpy as np
+import tensorflow as tf
+from functools import partial
+import tensorflow.neuron as tfn
 
-# The hardware supports up to 128 partitions
-P_DIM = nki.language.tile_size.pmax
 
-# allocating memory for input and output tiles
-# note that memory allocation does not initialize
-in_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
-out_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
+def decode_jpeg_resize(input_tensor, image_size):
+    # decode jpeg
+    tensor = tf.image.decode_png(input_tensor, channels=3)
 
-# process first tile from input to output
-nki.isa.dma_copy(dst=in_tile, src=input[0:P_DIM, 0:256])
-nki.isa.reciprocal(dst=out_tile, data=in_tile)
-nki.isa.dma_copy(dst=output[0:P_DIM, 0:256], src=out_tile)
+    # resize
+    decoded_shape = tf.shape(tensor)
+    tensor = tf.cast(tensor, tf.float32)
+    decoded_shape_hw = decoded_shape[0:2]
+    decoded_shape_hw_float32 = tf.cast(decoded_shape_hw, tf.float32)
+    tensor = tf.image.resize(tensor, image_size)
 
-# process second tile
-nki.isa.dma_copy(dst=in_tile, src=input[P_DIM:256, 0:256])
-nki.isa.reciprocal(dst=out_tile, data=in_tile)
-nki.isa.dma_copy(dst=output[P_DIM:256, 0:256], src=out_tile)
-```
+    # normalize
+    tensor -= np.array([0.485, 0.456, 0.406]).astype(np.float32) * 255.0
+    return tensor, decoded_shape_hw_float32[::-1]
 
-```python
-# allocate memory for input and output tiles
-in_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
-out_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
-# process tiles
-for i in range(input.shape[0] // P_DIM):
-    s = nl.ds(i * P_DIM, P_DIM) # equivalent to i * P_DIM : (i + 1) * P_DIM
-    nki.isa.dma_copy(dst=in_tile, src=input[s, 0:256])
-    nki.isa.reciprocal(dst=out_tile, data=in_tile)
-    nki.isa.dma_copy(dst=output[s, 0:256], src=out_tile)
-```
 
-```python
-import nki.isa as nisa
-import nki.language as nl
-import nki
+def preprocessor(input_tensor, image_size):
+    with tf.name_scope('Preprocessor'):
+        tensor, bbox_scale_hw = tf.map_fn(
+            partial(decode_jpeg_resize, image_size=image_size), input_tensor,
+            dtype=(tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
+    return tensor, bbox_scale_hw
 
-# The hardware supports up to 128 partitions
-P_DIM = nki.language.tile_size.pmax
 
-@nki.jit
-def tensor_kernel(in_tensor):
-    """NKI kernel to compute elementwise reciprocal of an input tensor
-    Args:
-        in_tensor: an input tensor of shape [128,512]
-    Returns:
-        out_tensor: an output tensor of shape [128,512]
+def tf_Conv2d(input_tensor, module, first_conv=False):
+    np_dtype = input_tensor.dtype.as_numpy_dtype
+    kernel_np = module.weight.detach().numpy().transpose([2, 3, 1, 0])
+    if first_conv:
+        kernel_np /= (np.array([0.229, 0.224, 0.225]).astype(np.float32) * 255.0)[:, np.newaxis]
+    kernel = tf.constant(kernel_np.astype(np_dtype))
+    if any(module.padding):
+        pad_h, pad_w = module.padding
+        padding = [[0, 0], [pad_h, pad_h], [pad_w, pad_w], [0, 0]]
+        input_tensor = tf.pad(input_tensor, padding)
+    stride_h, stride_w = module.stride
+    tensor = tf.nn.conv2d(input_tensor, kernel, strides=[1, stride_h, stride_w, 1], padding='VALID')
+    if module.bias is not None:
+        bias = tf.constant(module.bias.detach().numpy().astype(np_dtype))
+        tensor = tf.nn.bias_add(tensor, bias)
+    return tensor
+
+
+def tf_BatchNorm2d(input_tensor, module):
+    def _norm_np(ts):
+        return ts.astype(input_tensor.dtype.as_numpy_dtype)
+    mean = _norm_np(module.running_mean.detach().numpy())
+    offset = _norm_np(module.bias.detach().numpy())
+    inv_std = np.sqrt(module.running_var.detach().numpy() + module.eps)
+    scale_inv_std = _norm_np(module.weight.detach().numpy() / inv_std)
+    return scale_inv_std * (input_tensor - mean) + offset
+
+
+def tf_MaxPool2d(input_tensor, module):
+    pad = module.padding
+    tensor = tf.pad(input_tensor, [[0, 0], [pad, pad], [pad, pad], [0, 0]])
+    return tf.nn.max_pool2d(tensor, ksize=module.kernel_size, strides=module.stride, padding='VALID')
+
+
+def tf_Bottleneck(input_tensor, module):
+    tensor = tf_Conv2d(input_tensor, module.conv1)
+    tensor = tf_BatchNorm2d(tensor, module.bn1)
+    tensor = tf.nn.relu(tensor)
+    tensor = tf_Conv2d(tensor, module.conv2)
+    tensor = tf_BatchNorm2d(tensor, module.bn2)
+    tensor = tf.nn.relu(tensor)
+    tensor = tf_Conv2d(tensor, module.conv3)
+    tensor = tf_BatchNorm2d(tensor, module.bn3)
+    if module.downsample is not None:
+        input_tensor = tf_Conv2d(input_tensor, module.downsample[0])
+        input_tensor = tf_BatchNorm2d(input_tensor, module.downsample[1])
+    return tf.nn.relu(input_tensor + tensor)
+
+
+def tf_SequentialBottleneck(tensor, seq, resnet):
+    with tf.name_scope('{}.Sequential'.format(seq)):
+        for idx, module in enumerate(resnet[seq]):
+            with tf.name_scope('{}.BasicBlock'.format(idx)):
+                tensor = tf_Bottleneck(tensor, module)
+    return tensor
+
+
+def tf_bbox_view(detection_feed, modules, ndim):
+    results = []
+    for idx, (tensor, mod) in enumerate(zip(detection_feed, modules)):
+        with tf.name_scope('branch{}'.format(idx)):
+            tensor = tf_Conv2d(tensor, mod)
+            tensor = tf.transpose(tensor, [0, 3, 1, 2])
+            tensor = tf.cast(tensor, tf.float32)
+
+            shape = tensor.shape.as_list()
+            batch_size = -1 if shape[0] is None else shape[0]
+            new_shape = [batch_size, ndim, np.prod(shape[1:]) // ndim]
+            results.append(tf.reshape(tensor, new_shape))
+    tensor = tf.concat(results, axis=-1)
+    return tensor
+
+
+def tf_feature_extractor(input_tensor, resnet):
+    with tf.name_scope('FeatureExtractor'):
+        with tf.name_scope('0.Conv2d'):
+            tensor = tf_Conv2d(input_tensor, resnet[0], first_conv=True)
+        with tf.name_scope('1.BatchNorm2d'):
+            tensor = tf_BatchNorm2d(tensor, resnet[1])
+        with tf.name_scope('2.ReLU'):
+            tensor = tf.nn.relu(tensor)
+        with tf.name_scope('3.MaxPool2d'):
+            tensor = tf_MaxPool2d(tensor, resnet[3])
+        tensor = tf_SequentialBottleneck(tensor, 4, resnet)
+        tensor = tf_SequentialBottleneck(tensor, 5, resnet)
+        tensor = tf_SequentialBottleneck(tensor, 6, resnet)
+        tensor = tf.cast(tensor, tf.float16)
+    return tensor
+
+
+def tf_box_predictor(tensor, ssd300_torch):
+    with tf.name_scope('BoxPredictor'):
+        detection_feed = [tensor]
+        for idx, block in enumerate(ssd300_torch.additional_blocks):
+            with tf.name_scope('{}.Sequential'.format(idx)):
+                tensor = tf_Conv2d(tensor, block[0])
+                tensor = tf_BatchNorm2d(tensor, block[1])
+                tensor = tf.nn.relu(tensor)
+                tensor = tf_Conv2d(tensor, block[3])
+                tensor = tf_BatchNorm2d(tensor, block[4])
+                tensor = tf.nn.relu(tensor)
+                detection_feed.append(tensor)
+        with tf.name_scope('Boxes'):
+            loc = tf_bbox_view(detection_feed, ssd300_torch.loc, ndim=4)
+        with tf.name_scope('Probabilities'):
+            conf = tf_bbox_view(detection_feed, ssd300_torch.conf, ndim=ssd300_torch.label_num)
+    return loc, conf
+
+
+@tfn.fuse(batch_size=1, dynamic_batch_size=True)
+def tf_ssd300(input_tensor, ssd300_torch):
+    with tf.name_scope('SSD300'):
+        tensor = tf_feature_extractor(input_tensor, ssd300_torch.feature_extractor.feature_extractor)
+        loc, conf = tf_box_predictor(tensor, ssd300_torch)
+    return loc, conf
+
+
+def scale_back_batch(bboxes_in, scores_in, scale_xy, scale_wh, dboxes_xywh):
     """
-    X_SIZE = 128
-    Y_SIZE = 512
-    
-    # allocate space for the result
-    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
-    # allocate space for tile memory
-    in_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
-    out_tile = nl.ndarray((P_DIM, 256), dtype=nl.float32, buffer=nl.sbuf)
-
-    # Process first tile
-    nki.isa.dma_copy(dst=in_tile, src=in_tensor[0:P_DIM, 0:256])
-    nki.isa.reciprocal(dst=out_tile, data=in_tile)
-    nki.isa.dma_copy(dst=out_tensor[0:P_DIM, 0:256], src=out_tile)
-    
-    return out_tensor
-```
-
-```python
-import nki.isa as nisa
-import nki.language as nl
-import nki
-
-# The hardware supports up to 128 partitions
-P_DIM = nki.language.tile_size.pmax
-
-@nki.jit
-def tensor_exp_kernel_(in_tensor):
-    """NKI kernel to compute elementwise exponential of an input tensor
-    Args:
-        in_tensor: an input tensor of shape [256,512]
-    Returns:
-        out_tensor: an output tensor of shape [256,512]
+        Do scale and transform from xywh to ltrb
+        suppose input Nx4xnum_bbox Nxlabel_numxnum_bbox
     """
-    X_SIZE = 128
-    Y_SIZE = 512
-    assert in_tensor.shape == (X_SIZE, Y_SIZE)
-    # allocate space for the result
-    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
-    # allocate space for tile memory
-    in_tile = nl.ndarray((P_DIM, Y_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-    out_tile = nl.ndarray((P_DIM, Y_SIZE), dtype=nl.float32, buffer=nl.sbuf)
+    with tf.name_scope('ScaleBackBatch'):
+        bboxes_in = tf.transpose(bboxes_in, [0, 2, 1])
+        scores_in = tf.transpose(scores_in, [0, 2, 1])
 
-    for k in nl.affine_range(in_tensor.shape[0] / nl.tile_size.pmax):
-        # Generate tensor indices for the input/output tensors
-        p_start = k * nl.tile_size.pmax
-        i_p = nl.ds(p_start, nl.tile_size.pmax)
+        bboxes_xy = bboxes_in[:, :, :2]
+        bboxes_wh = bboxes_in[:, :, 2:]
+        bboxes_xy *= scale_xy
+        bboxes_wh *= scale_wh
 
-        # Process tile
-        nki.isa.dma_copy(dst=in_tile, src=in_tensor[i_p, :])
-        nki.isa.reciprocal(dst=out_tile, data=in_tile)
-        nki.isa.dma_copy(dst=out_tensor[i_p, :], src=out_tile)
-    
-    return out_tensor
-```
+        bboxes_xy = bboxes_xy * dboxes_xywh[:, :, 2:] + dboxes_xywh[:, :, :2]
+        bboxes_wh = tf.exp(bboxes_wh) * dboxes_xywh[:, :, 2:]
 
-```python
-import nki.isa as nisa
-import nki.language as nl
-import nki
-import math
+        bboxes_wh_half = 0.5 * bboxes_wh
+        bboxes_lt = bboxes_xy - bboxes_wh_half
+        bboxes_rb = bboxes_xy + bboxes_wh_half
 
-# The hardware supports up to 128 partitions
-P_DIM = nki.language.tile_size.pmax
+        bboxes_in = tf.concat([bboxes_lt, bboxes_rb], axis=-1)
 
-@nki.jit
-def tensor_exp_kernel_(in_tensor):
-    """NKI kernel to compute elementwise exponential of an input tensor
-    Args:
-        in_tensor: an input tensor of ANY 2D shape (up to SBUF size)
-    Returns:
-        out_tensor: an output tensor of ANY 2D shape (up to SBUF size)
-    """
+        return bboxes_in, tf.nn.softmax(scores_in, axis=-1)
 
-    sz_p, sz_f = in_tensor.shape
-    assert sz_f < nl.tile_size.total_available_sbuf_size
-    
-    # allocate space for the result
-    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype, buffer=nl.shared_hbm)
-    # allocate space for tile memory
-    in_tile = nl.ndarray((P_DIM, sz_f), dtype=nl.float32, buffer=nl.sbuf)
-    out_tile = nl.ndarray((P_DIM, sz_f), dtype=nl.float32, buffer=nl.sbuf)
-    
-    for p in nl.affine_range(math.ceil(sz_p / P_DIM)):
-        # Generate tensor indices for the input/output tensors
-        p_start = p * P_DIM
-        p_end = p_start + P_DIM
-        i_p = slice(p_start, min(p_end, sz_p)) # same as nl.ds(p_start, min(p_end, sz_p) - p_start)
 
-        # Process tile
-        nki.isa.dma_copy(dst=in_tile, src=in_tensor[i_p, :])
-        nki.isa.reciprocal(dst=out_tile, data=in_tile)
-        nki.isa.dma_copy(dst=out_tensor[i_p, :], src=out_tile)
-        
-    return out_tensor
+def select_nms_outputs(input_tensors):
+    boxes_xywh, scores, classes, valid_detections = input_tensors
+    return boxes_xywh[:valid_detections], scores[:valid_detections], classes[:valid_detections]
+
+
+def postprocessor(ploc_ts, plabel_ts, bbox_scale_hw_ts, scale_xy, scale_wh, dboxes_xywh):
+    with tf.name_scope('Postprocessor'):
+        ploc_ts = tf.cast(ploc_ts, tf.float32)
+        plabel_ts = tf.cast(plabel_ts, tf.float32)
+        bboxes_ts, probs_ts = scale_back_batch(ploc_ts, plabel_ts, scale_xy, scale_wh, dboxes_xywh)
+        bboxes_ts = bboxes_ts[:, :, tf.newaxis, :]
+        probs_ts = probs_ts[:, :, 1:]
+        nms_outputs = tf.image.combined_non_max_suppression(
+            bboxes_ts,
+            probs_ts,
+            max_output_size_per_class=200,
+            max_total_size=200,
+            iou_threshold=0.5,
+            score_threshold=0.05,
+            pad_per_class=False,
+            clip_boxes=False,
+            name='CombinedNonMaxSuppression',
+        )
+        nmsed_boxes_x0y0x1y1, nmsed_scores, nmsed_classes, valid_detections = nms_outputs
+        nmsed_boxes_x0y0 = nmsed_boxes_x0y0x1y1[..., :2]
+        nmsed_boxes_x1y1 = nmsed_boxes_x0y0x1y1[..., 2:]
+        bbox_scale_hw_ts = bbox_scale_hw_ts[:, tf.newaxis, :]
+        nmsed_boxes_xy = nmsed_boxes_x0y0 * bbox_scale_hw_ts
+        nmsed_boxes_wh = (nmsed_boxes_x1y1 - nmsed_boxes_x0y0) * bbox_scale_hw_ts
+        nmsed_boxes_xywh = tf.concat([nmsed_boxes_xy, nmsed_boxes_wh], axis=-1)
+        nmsed_boxes_xywh, nmsed_scores, nmsed_classes = tf.map_fn(
+            select_nms_outputs, (nmsed_boxes_xywh, nmsed_scores, nmsed_classes, valid_detections),
+            dtype=(tf.float32, tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
+    return nmsed_boxes_xywh, nmsed_scores, nmsed_classes
+
+
+class DefaultBoxes(object):
+
+    def __init__(self, fig_size, feat_size, steps, scales, aspect_ratios,
+                 scale_xy=0.1, scale_wh=0.2):
+
+        self.feat_size = feat_size
+        self.fig_size = fig_size
+
+        self.scale_xy_ = scale_xy
+        self.scale_wh_ = scale_wh
+
+        self.steps = steps
+        self.scales = scales
+
+        fk = fig_size/np.array(steps)
+        self.aspect_ratios = aspect_ratios
+
+        self.default_boxes = []
+        for idx, sfeat in enumerate(self.feat_size):
+
+            sk1 = scales[idx]/fig_size
+            sk2 = scales[idx+1]/fig_size
+            sk3 = np.sqrt(sk1*sk2)
+            all_sizes = [(sk1, sk1), (sk3, sk3)]
+
+            for alpha in aspect_ratios[idx]:
+                w, h = sk1*np.sqrt(alpha), sk1/np.sqrt(alpha)
+                all_sizes.append((w, h))
+                all_sizes.append((h, w))
+            for w, h in all_sizes:
+                for i, j in itertools.product(range(sfeat), repeat=2):
+                    cx, cy = (j+0.5)/fk[idx], (i+0.5)/fk[idx]
+                    self.default_boxes.append((cx, cy, w, h))
+
+        self.dboxes = np.array(self.default_boxes)
+        self.dboxes = self.dboxes.clip(min=0, max=1)
+        self.dboxes_ltrb = self.dboxes.copy()
+        self.dboxes_ltrb[:, 0] = self.dboxes[:, 0] - 0.5 * self.dboxes[:, 2]
+        self.dboxes_ltrb[:, 1] = self.dboxes[:, 1] - 0.5 * self.dboxes[:, 3]
+        self.dboxes_ltrb[:, 2] = self.dboxes[:, 0] + 0.5 * self.dboxes[:, 2]
+        self.dboxes_ltrb[:, 3] = self.dboxes[:, 1] + 0.5 * self.dboxes[:, 3]
+
+    @property
+    def scale_xy(self):
+        return self.scale_xy_
+
+    @property
+    def scale_wh(self):
+        return self.scale_wh_
+
+    def __call__(self, order="ltrb"):
+        if order == "ltrb": return self.dboxes_ltrb
+        if order == "xywh": return self.dboxes
+
+
+def dboxes300_coco():
+    figsize = 300
+    feat_size = [38, 19, 10, 5, 3, 1]
+    steps = [8, 16, 32, 64, 100, 300]
+    scales = [21, 45, 99, 153, 207, 261, 315]
+    aspect_ratios = [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
+    dboxes = DefaultBoxes(figsize, feat_size, steps, scales, aspect_ratios)
+    return dboxes
 ```
 
 ## trn2-llama3.1-405b-tutorial.rst
@@ -6311,13 +7748,12 @@ def run_llama_generate():
         max_model_len=2048,
         block_size=2048,
         dtype=torch.bfloat16,
-        enable_prefix_caching=False,
-        additional_config={
-            "override_neuron_config": {
-                "skip_warmup": True,
-                "max_context_length": 1024,
-            },
+        # Configure NeuronConfig.
+        override_neuron_config={
+            "max_context_length": 1024,
+            "skip_warmup": True,
         },
+        device="neuron"
     )
 
     # Run vLLM to generate outputs.
@@ -6391,6 +7827,7 @@ def run_llama_generate():
     draft_neuron_config.trace_tokengen_model = True
     draft_neuron_config.enable_fused_speculation = False
     draft_neuron_config.is_eagle_draft = True
+    draft_neuron_config.sequence_parallel_enabled = False
     draft_config = LlamaInferenceConfig(
         draft_neuron_config,
         load_config=load_pretrained_config(draft_model_path)
@@ -6620,7 +8057,7 @@ def state_preprocessor(shapes_collection: List[List[List[int]]], states: List[to
         state_tensor_shape = state_tensor.shape
         for j, npos in enumerate(expected_shape):
             state_tensor_dim_length = state_tensor_shape[j]
-            state_tensor = torch.ops.aten.slice(state_tensor, dim=j, start=state_tensor_dim_length-npos, end=state_tensor_dim_length)
+            state_tensor = torch.ops.aten.slice(state_tensor, dim=j, start=state_tensor_dim_length - npos, end=state_tensor_dim_length)
         sliced_state_tensors.append(state_tensor)
     
     return sliced_state_tensors
@@ -6696,75 +8133,20 @@ bucket_config = torch_neuronx.BucketModelConfig(get_bucket_kernel)
 bucket_trace_neuron = torch_neuronx.bucket_model_trace(get_bert_model, [paraphrase_s128, paraphrase_s512], bucket_config)
 ```
 
-## performance-profiling-vllm.rst
-
-```python
-import transformers
-
-model_id = "Qwen/Qwen3-8B-Base"
-config = transformers.AutoConfig.from_pretrained(model_id)
-config.num_hidden_layers = 4
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
-output_dir = "4layer_qwen3"
-
-model = transformers.AutoModelForCausalLM.from_pretrained(model_id, config=config)
-model.save_pretrained(output_dir)
-tokenizer.save_pretrained(output_dir)
-```
-
-```python
-import os
-os.environ['VLLM_NEURON_FRAMEWORK'] = "neuronx-distributed-inference"
-
-# Enable Neuron profiling via environment variables
-os.environ['XLA_IR_DEBUG'] = "1"
-os.environ['XLA_HLO_DEBUG'] = "1"
-os.environ['NEURON_FRAMEWORK_DEBUG'] = "1"
-os.environ['NEURON_RT_INSPECT_ENABLE'] = "1"
-os.environ['NEURON_RT_INSPECT_SYSTEM_PROFILE'] = "1"
-os.environ['NEURON_RT_INSPECT_DEVICE_PROFILE'] = "1"
-os.environ['NEURON_RT_INSPECT_OUTPUT_DIR'] = "./neuron_profiles"
-
-from vllm import LLM, SamplingParams
-
-prompts = [
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
-sampling_params = SamplingParams(top_k=1)
-
-llm = LLM(
-    model="4layer_qwen3",
-    max_num_seqs=4,
-    max_model_len=128,
-    override_neuron_config={
-        "enable_bucketing":False,
-    },
-    device="neuron",
-    tensor_parallel_size=8)
-
-outputs = llm.generate(prompts, sampling_params)
-```
-
-## neuron_profile_for_nki.rst
-
-```python
-import os
-os.environ["NEURON_FRAMEWORK_DEBUG"] = "1"
-os.environ["NEURON_CC_FLAGS"]= " --disable-dge "
-```
-
 ## sdxl_base_1024_compile.py
 
 ```python
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_neuronx
 import math
 import copy
+import diffusers
+from diffusers import DiffusionPipeline
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
+from diffusers.models.attention_processor import Attention
 from transformers.models.clip.modeling_clip import CLIPTextModelOutput
 from packaging import version
 
@@ -6912,18 +8294,22 @@ class TraceableTextEncoder(nn.Module):
     def forward(self, text_input_ids):
         out_tuple = self.text_encoder(text_input_ids, output_hidden_states=True, return_dict=False)
         return out_tuple
+```
 
-
-# Compile text encoder with torch_neuronx.trace
+```python
+# Compile Text Encoder with torch_neuronx.trace
 neuron_text_encoder = torch_neuronx.trace(
     traceable_text_encoder,
     text_input_ids_1,
     compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder'),
 )
+
+text_encoder_filename = os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder/model.pt')
 torch.jit.save(neuron_text_encoder, text_encoder_filename)
+```
 
-
-# Compile UNet with torch_neuronx.trace
+```python
+# Compile UNet with compiler arguments and optimization flags
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
@@ -6931,240 +8317,33 @@ unet_neuron = torch_neuronx.trace(
     compiler_args=["--model-type=unet-inference"]
 )
 
-# Enable asynchronous and lazy loading
 torch_neuronx.async_load(unet_neuron)
 torch_neuronx.lazy_load(unet_neuron)
 
+unet_filename = os.path.join(COMPILER_WORKDIR_ROOT, 'unet/model.pt')
 torch.jit.save(unet_neuron, unet_filename)
+```
 
-
-# Compile VAE decoder with torch_neuronx.trace
+```python
+# Compile VAE decoder with async loading
 decoder_neuron = torch_neuronx.trace(
     decoder, 
     decoder_in, 
     compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_decoder')
 )
 
-# Enable asynchronous loading
 torch_neuronx.async_load(decoder_neuron)
 
+decoder_filename = os.path.join(COMPILER_WORKDIR_ROOT, 'vae_decoder/model.pt')
 torch.jit.save(decoder_neuron, decoder_filename)
-
-
-# Compile VAE post_quant_conv with torch_neuronx.trace
-post_quant_conv_neuron = torch_neuronx.trace(
-    post_quant_conv, 
-    post_quant_conv_in,
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_post_quant_conv'),
-)
-
-# Enable asynchronous loading
-torch_neuronx.async_load(post_quant_conv_neuron)
-
-torch.jit.save(post_quant_conv_neuron, post_quant_conv_filename)
 ```
 
-## transformers-neuronx-developer-guide-for-continuous-batching.rst
-
-```python
-from vllm import LLM, SamplingParams
-
-# Sample prompts.
-prompts = [
-    "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
-# Create a sampling params object.
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
-
-# Create an LLM.
-llm = LLM(
-    model="meta-llama/Meta-Llama-3.1-8B-Instruct",
-    max_num_seqs=8,
-    # The max_model_len and block_size arguments are required to be same as max sequence length,
-    # when targeting neuron device. Currently, this is a known limitation in continuous batching
-    # support in transformers-neuronx.
-    max_model_len=128,
-    block_size=128,
-    # The device can be automatically detected when AWS Neuron SDK is installed.
-    # The device argument can be either unspecified for automated detection, or explicitly assigned.
-    device="neuron",
-    tensor_parallel_size=2)
-
-# Generate texts from the prompts. The output is a list of RequestOutput objects
-# that contain the prompt, generated text, and other information.
-outputs = llm.generate(prompts, sampling_params)
-# Print the outputs.
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.outputs[0].text
-    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
-```
-
-```python
-llm = LLM(
-    model="meta-llama/Meta-Llama-3.1-8B-Instruct",
-    max_num_seqs=8,
-    max_model_len=128,
-    block_size=128,
-    device="neuron",
-    tensor_parallel_size=32,
-    #Override or update the NeuronConfig
-    override_neuron_config={"shard_over_sequence":True})
-```
-
-```python
-from vllm import LLM, SamplingParams
-
-# Sample prompts.
-prompts = [
-    "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
-# Create a sampling params object.
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
-
-# Create an LLM.
-llm = LLM(
-    model="meta-llama/Meta-Llama-3.1-70B-Instruct",
-    speculative_model="meta-llama/Llama-3.2-1B-Instruct",
-    # The max_model_len, speculative_max_model_len, and block_size arguments are required to be same as max sequence length,
-    # when targeting neuron device. Currently, this is a known limitation in continuous batching
-    # support in transformers-neuronx.
-    max_model_len=128,
-    block_size=128,
-    speculative_max_model_len=128,
-    dtype="bfloat16",
-    max_num_seqs=4,
-    num_speculative_tokens=4,
-    # The device can be automatically detected when AWS Neuron SDK is installed.
-    # The device argument can be either unspecified for automated detection, or explicitly assigned.
-    device="neuron",
-    tensor_parallel_size=32,
-    use_v2_block_manager=True,
-)
-
-outputs = llm.generate(prompts, sampling_params)
-# Print the outputs.
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.outputs[0].text
-    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
-```
-
-## trace-vs-xla-lazytensor.rst
-
-```python
-import torch
-import torch_neuronx
-import torch_xla.core.xla_model as xm
-
-# Create XLA device
-device = xm.xla_device()
-
-# Load example model and inputs to Neuron device
-model = torch.nn.Sequential(
-    torch.nn.Linear(784, 120),
-    torch.nn.ReLU(),
-    torch.nn.Linear(120, 10),
-    torch.nn.Softmax(dim=-1),
-)
-model.eval()
-model.to(device)
-example = torch.rand((1, 784), device=device)
-
-# Inference
-with torch.no_grad():
-    result = model(example)
-    xm.mark_step()  # Compilation occurs here
-    print(result.cpu())
-```
-
-```python
-import torch
-import torch_neuronx
-import torch_xla.core.xla_model as xm
-
-# Create XLA device
-device = xm.xla_device()
-
-# Load example model and inputs to Neuron device
-model = torch.nn.Sequential(
-    torch.nn.Embedding(num_embeddings=30522, embedding_dim=512),
-    torch.nn.Linear(512, 128),
-    torch.nn.ReLU(),
-    torch.nn.Linear(128, 2),
-    torch.nn.Softmax(dim=-1),
-)
-model.eval()
-model.to(device)
-
-token_ids_1 = torch.tensor([
-    [1, 28, 748, 0],
-])
-token_ids_2 = torch.tensor([
-    [1, 13087, 10439, 1990, 18912, 0],
-    [1, 12009, 7849, 2509, 3500, 0],
-])
-
-# Inference
-with torch.no_grad():
-    result = model(token_ids_1)
-    xm.mark_step()
-    print(result.cpu())
-
-    result = model(token_ids_2)
-    xm.mark_step()
-    print(result.cpu())
-```
-
-```python
-import torch
-import torch_neuronx
-
-# Create example model and inputs
-model = torch.nn.Sequential(
-    torch.nn.Linear(784, 120),
-    torch.nn.ReLU(),
-    torch.nn.Linear(120, 10),
-    torch.nn.Softmax(dim=-1),
-)
-model.eval()
-example = torch.rand((1, 784))
-
-# Create fixed model trace
-trace = torch_neuronx.trace(model, example)
-
-# Inference
-result = trace(example)
-print(result)
-```
-
-```python
-class TestModel(torch.nn.Module):
-    def __init__(self, flag=1):
-        super().__init__()
-        self.flag = flag
-
-    def forward(self, tensor):
-        if self.flag:
-            return tensor
-        else:
-            return tensor * 2
-```
+## neuron_profile_for_nki.rst
 
 ```python
 import os
-os.environ['PT_XLA_DEBUG_LEVEL'] = '2'
-```
-
-```python
-import torch_xla
-torch_xla._XLAC._set_allow_execution(False)
+os.environ["NEURON_FRAMEWORK_DEBUG"] = "1"
+os.environ["NEURON_CC_FLAGS"]= " --disable-dge "
 ```
 
 ## training_llama_tp_zero1.rst
@@ -7225,227 +8404,6 @@ if global_step % every_n_steps_checkpoint == 0:
 ```python
 if global_step % every_n_steps_checkpoint == 0:
     optimizer.save_sharded_state_dict(flags.output_dir, num_workers_per_step=32)
-```
-
-## troubleshooting-guide.rst
-
-```python
-import os
-import mxnet as mx
-from concurrent import futures
-
-NUM_PARALLEL = 4
-os.environ['NEURONCORE_GROUP_SIZES'] = ','.join('1' for _ in range(NUM_PARALLEL))
-   
-data_iter = []
-for i in range(NUM_PARALLEL):
-    data_iter.append(mx.io.ImageRecordIter(
-        path_imgrec=recfile_base, data_shape=(3, 224, 224), batch_size=1,            
-        prefetch_buffer=1,
-        num_parts=NUM_PARALLEL, part_index=i))
-
-sym, args, auxs = mx.model.load_checkpoint('resnet-50_compiled', 0)
-
-exec_list = []
-for i in range(NUM_PARALLEL):
-    exec = sym.bind(ctx=mx.neuron(i), args=args, aux_states=auxs, grad_req='null')
-    exec_list.append(exec)
-
-def single_thread_infer(i):
-    for batch in data_iter[i]:
-        img = batch.data[0]
-        label = batch.label
-        feed_dict = {'data': img}
-        exe = exec_list[i]
-        exe.copy_params_from(feed_dict)
-        exe.forward()
-        out = exe.outputs[0]
-
-future_list = []
-with futures.ThreadPoolExecutor(max_workers=NUM_PARALLEL) as executor:
-    for i in range(NUM_PARALLEL):
-        future_list.append(executor.submit(single_thread_infer, i))
-```
-
-```python
-import os
-
-os.environ['NEURONCORE_GROUP_SIZES'] = '1'
-```
-
-## api-compilation-python-api.rst
-
-```python
-import torch
-import torch_neuron
-
-def foo(x, y):
-    return 2 * x + y
-
-# Run `foo` with the provided inputs and record the tensor operations
-traced_foo = torch.neuron.trace(foo, (torch.rand(3), torch.rand(3)))
-
-# `traced_foo` can now be run with the TorchScript interpreter or saved
-# and loaded in a Python-free environment
-torch.jit.save(traced_foo, 'foo.pt')
-traced_foo = torch.jit.load('foo.pt')
-```
-
-```python
-import torch
-import torch_neuron
-import torch.nn as nn
-
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv = nn.Conv2d(1, 1, 3)
-
-    def forward(self, x):
-        return self.conv(x) + 1
-
-n = Net()
-n.eval()
-
-inputs = torch.rand(1, 1, 3, 3)
-
-# Trace a specific method and construct `ScriptModule` with
-# a single `forward` method
-neuron_forward = torch.neuron.trace(n.forward, inputs)
-
-# Trace a module (implicitly traces `forward`) and constructs a
-# `ScriptModule` with a single `forward` method
-neuron_net = torch.neuron.trace(n, inputs)
-```
-
-```python
-import torch
-import torch_neuron
-from torchvision import models
-
-# Load the model and set it to evaluation mode
-model = models.resnet50(pretrained=True)
-model.eval()
-
-# Compile with an example input
-image = torch.rand([1, 3, 224, 224])
-model_neuron = torch.neuron.trace(model, image)
-```
-
-```python
-import torch
-import torch_neuron
-import torch.nn as nn
-
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()
-        self.conv = nn.Conv2d(1, 1, 3)
-
-    def forward(self, x):
-        return {'conv': self.conv(x) + 1}
-
-model = Model()
-model.eval()
-
-inputs = torch.rand(1, 1, 3, 3)
-
-# use the strict=False kwarg to compile a model with dictionary outputs
-# the model output format does not change
-model_neuron = torch.neuron.trace(model, inputs, strict=False)
-```
-
-```python
-import torch
-import torch_neuron
-from torchvision import models
-
-# Load the model and set it to evaluation mode
-model = models.resnet50(pretrained=True)
-model.eval()
-
-# Compile with an example input of batch size 1
-image = torch.rand([1, 3, 224, 224])
-model_neuron = torch.neuron.trace(model, image, dynamic_batch_size=True)
-
-# Execute with a batch of 7 images
-batch = torch.rand([7, 3, 224, 224])
-results = model_neuron(batch)
-```
-
-```python
-import torch
-import torch_neuron
-import torch.nn as nn
-
-class ExampleConvolutionLayer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv2d(1, 1, 3)
-
-    def forward(self, x):
-        return self.conv(x) + 1
-
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.layer = ExampleConvolutionLayer()
-
-    def forward(self, x):
-        return self.layer(x) * 100
-
-def subgraph_builder_function(node) -> bool:
-    """Select if the node will be included in the Neuron graph"""
-
-    # Node names are tuples of Module names.
-    if 'ExampleConvolutionLayer' in node.name:
-        return True
-
-    # Ignore all operations not in the example convolution layer
-    return False
-
-model = Model()
-model.eval()
-
-inputs = torch.rand(1, 1, 3, 3)
-
-# Log output shows that `aten::_convolution` and `aten::add` are compiled
-# but `aten::mul` is not. This will seamlessly switch between Neuron/CPU
-# execution in a single graph.
-neuron_model = torch_neuron.trace(
-    model,
-    inputs,
-    subgraph_builder_function=subgraph_builder_function
-)
-```
-
-```python
-import torch
-import torch_neuron
-from torchvision import models
-
-# Load the model
-model = models.resnet50(pretrained=True)
-model.eval()
-
-# Compile with an example input
-image = torch.rand([1, 3, 224, 224])
-#the models' output format does not change
-model_neuron = torch.neuron.trace(model, image, separate_weights=True)
-```
-
-## pytorch-neuron-parallel-compile.rst
-
-```python
-import os
-
-os.environ['NEURON_CC_FLAGS'] = os.environ.get('NEURON_CC_FLAGS', '') + "--cache_dir=<cache URL>"
-```
-
-```python
-import os
-
-os.environ['NEURON_CC_FLAGS'] = os.environ.get('NEURON_CC_FLAGS', '') + ' --retry_failed_compilation'
 ```
 
 ## sd_attention_nki_kernels.py
@@ -7662,26 +8620,28 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
 ## test_neuronperf.py
 
 ```python
+import numpy as np
 import neuronperf
-import time
 
 # Timer usage
 timer = neuronperf.Timer()
 with timer:
-    time.sleep(1)
+    pass  # code to time
 
-total_duration = timer.total_duration("s")
+total_duration_s = timer.total_duration("s")
 durations = timer.durations("s")
 timestamps = timer.timestamps()
+timer_length = len(timer)
 ```
 
 ```python
-import neuronperf
 import numpy as np
+import neuronperf
 
 # Timestamp conversion
 result_scalar = neuronperf.timestamp_convert(1, "s", "ms")
-result_array = neuronperf.timestamp_convert(np.array([1, 2, 3]), "s", "ms")
+times = np.array([1, 2, 3])
+times_ms = neuronperf.timestamp_convert(times, "s", "ms")
 ```
 
 ```python
@@ -7694,7 +8654,7 @@ index = neuronperf.model_index.create("dummy_model.ext", model_name="dummy")
 ```python
 import neuronperf
 
-# Model index save and load
+# Model index save, load, delete
 model_index = neuronperf.model_index.create("models/dummy.model", model_name="Dummy")
 neuronperf.model_index.save(model_index, filename="dummy_index.json")
 model_index_loaded = neuronperf.model_index.load("dummy_index.json")
@@ -7720,9 +8680,7 @@ neuronperf.model_index.move("dummy_index.json", "new_index.json", "new_models")
 import neuronperf
 
 # Model index append
-model_indexes = [
-    neuronperf.model_index.create(f"Dummy_{x}", model_name="Dummy") for x in range(10)
-]
+model_indexes = [neuronperf.model_index.create(f"Dummy_{x}", model_name="Dummy") for x in range(10)]
 combined_index = neuronperf.model_index.append(*model_indexes)
 ```
 
@@ -7733,9 +8691,50 @@ import neuronperf
 idx_1 = neuronperf.model_index.create("fake", performance_level=2, compile_s=1)
 idx_2 = neuronperf.model_index.create("fake2", compile_s=2)
 idx = neuronperf.model_index.append(idx_1, idx_2)
-
 filtered = neuronperf.model_index.filter(idx, filename="fake")
-filtered = neuronperf.model_index.filter(idx, performance_level=2)
+```
+
+```python
+import numpy as np
+import neuronperf
+
+# Benchmark with CPU
+benchmarker_results = neuronperf.cpu.benchmark(
+    neuronperf.DummyModel,
+    [np.array([1, 2, 3, 4])],
+    duration=2,
+    n_models=4,
+    multiprocess=False,
+    multiinterpreter=False,
+    verbosity=2,
+    return_timers=True,
+)
+```
+
+```python
+import neuronperf
+
+# Benchmark with custom load function
+reports = neuronperf.benchmark(
+    load_fn=lambda path, device_id: None,
+    model_filename="dummy_filename",
+    inputs=[[1]],
+    duration=2,
+    n_models=4,
+    multiprocess=False,
+    multiinterpreter=False,
+    verbosity=2,
+)
+```
+
+```python
+import neuronperf
+
+# Get and print reports
+reports = neuronperf.get_reports(benchmarker_results)
+neuronperf.print_reports(reports)
+csv_file = neuronperf.write_csv(reports)
+json_file = neuronperf.write_json(reports)
 ```
 
 ## framework_custom_op.rst
@@ -7748,7 +8747,17 @@ device = xm.xla_device()
 
 a = torch.randn(256, 1024, dtype=torch.float32).to(device)
 b = torch.randn(256, 1024, dtype=torch.float32).to(device)
-c = nki_tensor_add(a, b)
+c = a + b
+out = a * b * c
+
+print(out)
+```
+
+```python
+device = xm.xla_device()
+a = torch.randn(256, 1024, dtype=torch.float32).to(device)
+b = torch.randn(256, 1024, dtype=torch.float32).to(device)
+c = nki_tensor_add(a, b) # calling a NKI kernel, instead of the built-in torch op
 out = a * b * c
 print(out)
 ```
@@ -7759,15 +8768,20 @@ import jax.numpy as jnp
 
 @jax.jit
 def jax_customop_tutorial(a, b):
-    c = nki_tensor_add(a, b)
-    out = a * b * c
-    return out
+   c = a + b
+   out = a * b * c
+   return out
+```
 
-seed = jax.random.PRNGKey(0)
-seed_a, seed_b = jax.random.split(seed)
-a = jax.random.normal(seed_a, (256, 1024), dtype=jnp.float32)
-b = jax.random.normal(seed_b, (256, 1024), dtype=jnp.float32)
-print(jax_customop_tutorial(a, b))
+```python
+import jax
+import jax.numpy as jnp
+
+@jax.jit
+def jax_customop_tutorial(a, b):
+   c = nki_tensor_add(a, b) # calling a NKI kernel, instead of the built-in jax op
+   out = a * b * c
+   return out
 ```
 
 ```python
@@ -7777,20 +8791,25 @@ import torch_xla.core.xla_model as xm
 device = xm.xla_device()
 
 class NkiAddFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, a, b):
-        return nki_tensor_add(a, b)
+  @staticmethod
+  def forward(ctx, a, b):
+    return nki_tensor_add(a, b)
 
-    @staticmethod
-    def backward(ctx, dy, *args):
-        return dy, dy
+  @staticmethod
+  def backward(ctx, dy, *args):
+    # gradients for a and b
+    return dy, dy
 
+# now, let's define the compute graph
 a = torch.randn(256, 1024, dtype=torch.float32).to(device).detach().requires_grad_()
 b = torch.randn(256, 1024, dtype=torch.float32).to(device).detach().requires_grad_()
 c = NkiAddFunc.apply(a, b)
 out = a * b * c
 
+# here we define a (dummy) loss-function, in prep for backward propagation
 loss = out.sum()
+
+# lastly, let's invoke the auto-grad engine
 loss.backward()
 
 xm.mark_step()
@@ -7801,85 +8820,37 @@ import jax
 
 @jax.custom_vjp
 def nki_add_func(a, b):
-    return nki_tensor_add(a, b)
+   return nki_tensor_add(a, b)
 
 def f_forward(a, b):
-    return nki_add_func(a, b), (a, b)
+   # operator output and residual (same as input here)
+   return nki_add_func(a, b), (a, b)
 
 def f_backward(res, grad):
-    return grad, grad
+   # gradients for a and b
+   return grad, grad
 
 nki_add_func.defvjp(f_forward, f_backward)
 
 @jax.jit
 def jax_customop_tutorial_and_grad(a, b):
-    out = nki_add_func(a, b) * a * b
-    grad = jax.grad(lambda x, y: (nki_add_func(x, y) * x * y).sum(), argnums=(0, 1))(a, b)
-    return out, *grad
-```
+   out = nki_add_func(a, b) * x * y
 
-## generative-llm-inference-with-neuron.rst
-
-```python
-# Vocabulary of tokens the model can parse. The position of each token in the 
-# vocabulary is used as the token_id (an integer representing that token)
-vocab = ["having", "I", "fun", "am", "learning", ".", "Neuron"]
-
-# input token_ids: list of integers that represent the input tokens in this
-# case: "I", "am", "having", "fun"
-input_token_ids = [1, 3, 0, 2] 
-
-# The LLM gets a vector of input token_ids, and generates a probability-distribution
-# for what the output token_id should be (with a probability score for each token_id
-# in the vocabulary)
-output = LLM(input_token_ids) 
-
-# by taking argmax on the output, we effectively perform a 'greedy sampling' process,
-# i.e. we choose the token_id with the highest probability. Other sampling techniques
-# also exist, e.g. Top-K. By choosing a probabilistic sampling method we enable the model
-# to generate different outputs when called multiple times with the same input.
-next_token_id = np.argmax(output) 
-
-# map the token_id back into an output token
-next_token = vocab[next_token_id]
-```
-
-```python
-def generate(input_token_ids, n_tokens_to_generate):
-    for _ in range(n_tokens_to_generate): # decode loop
-        output = LLM(input_token_ids) # model forward pass
-    
-        next_token_id = np.argmax(output) # greedy sampling
-    
-        if (next_token_id == EOS_TOK_ID):
-            break # break if generated End Of Sentence (EOS)
-    
-        # append the prediction to the input, and continue to the next out_token
-        input_token_ids.append(int(next_token_id)) 
-
-    return input_token_ids[-n_tokens_to_generate :] # only return generated token_ids
-```
-
-```python
-{
-    "n_vocab": 50257, # number of tokens in our vocabulary
-    "n_ctx": 2048, # maximum possible sequence length of the input
-    "n_embd": 9216, # embedding dimension (determines the "width" of the network)
-    "n_head": 72, # number of attention heads (n_embd must be divisible by n_head)
-    "n_layer": 64 # number of layers (determines the "depth" of the network)
-}
+   # use the same dummy loss function (output sum) as PyTorch example above
+   grad = jax.grad(lambda x, y: (nki_add_func(x, y) * x * y).sum(), argnums=(0, 1))(a, b)
+   return out, *grad
 ```
 
 ## spmd_tensor_addition.rst
 
 ```python
-import neuronxcc.nki.language as nl
-from neuronxcc.nki import nki_jit
+import nki
+import nki.language as nl
 
-@nki_jit
+@nki.jit
 def nki_tensor_add_kernel_(a_input, b_input):
     # Allocate output tensor
-    c_output = nl.ndarray(shape=a_input.shape, dtype=a_input.dtype)
+    c_output = nl.zeros(a_input.shape, dtype=a_input.dtype)
     
     # Get program ID for SPMD execution
     pid_x = nl.program_id(0)
@@ -7894,30 +8865,218 @@ def nki_tensor_add_kernel_(a_input, b_input):
     offset_y = pid_y * tile_size_y
     
     # Generate tile indices using advanced indexing
-    indices_x = nl.arange(tile_size_x)[:, None]
-    indices_y = nl.arange(tile_size_y)[None, :]
+    indices_x = nl.arange(tile_size_x)[:, None] + offset_x
+    indices_y = nl.arange(tile_size_y)[None, :] + offset_y
     
     # Load tiles from input tensors
-    a_tile = nl.load(a_input[offset_x + indices_x, offset_y + indices_y])
-    b_tile = nl.load(b_input[offset_x + indices_x, offset_y + indices_y])
+    a_tile = nl.load(a_input[indices_x, indices_y])
+    b_tile = nl.load(b_input[indices_x, indices_y])
     
     # Compute sum
     c_tile = a_tile + b_tile
     
     # Store result back to output tensor
-    nl.store(c_output[offset_x + indices_x, offset_y + indices_y], c_tile)
+    nl.store(c_output[indices_x, indices_y], c_tile)
     
     return c_output
 ```
 
 ```python
 def nki_tensor_add(a, b):
+    # Get input tensor dimensions
+    shape = a.shape
+    
+    # Define tile sizes
+    tile_size_x = 128
+    tile_size_y = 512
+    
     # Calculate grid dimensions
-    grid_x = (a.shape[0] + 127) // 128
-    grid_y = (a.shape[1] + 511) // 512
+    grid_x = shape[0] // tile_size_x
+    grid_y = shape[1] // tile_size_y
     
     # Launch kernel with 2D grid
     return nki_tensor_add_kernel_[grid_x, grid_y](a, b)
+```
+
+```python
+import torch
+from spmd_tensor_addition_nki_kernels import nki_tensor_add
+
+# Prepare input tensors
+a = torch.rand(1024, 2048, dtype=torch.bfloat16)
+b = torch.rand(1024, 2048, dtype=torch.bfloat16)
+
+# Execute NKI kernel
+output_nki = nki_tensor_add(a, b)
+
+# Compute reference output using PyTorch
+output_torch = a + b
+
+# Verify correctness
+assert torch.allclose(output_nki, output_torch), "NKI and Torch outputs do not match"
+print("NKI and Torch match")
+```
+
+```python
+import jax
+import jax.numpy as jnp
+from spmd_tensor_addition_nki_kernels import nki_tensor_add
+
+# Prepare input arrays
+key = jax.random.PRNGKey(0)
+a = jax.random.uniform(key, (1024, 2048), dtype=jnp.bfloat16)
+b = jax.random.uniform(key, (1024, 2048), dtype=jnp.bfloat16)
+
+# Execute NKI kernel
+output_nki = nki_tensor_add(a, b)
+
+# Compute reference output using JAX
+output_jax = a + b
+
+# Verify correctness
+assert jnp.allclose(output_nki, output_jax), "NKI and JAX outputs do not match"
+print("NKI and JAX match")
+```
+
+## torch-lstm-support.rst
+
+```python
+import torch
+import torch_neuron
+
+class Network(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=7)
+
+    def forward(self, inputs):
+        output, (ht, ct) = self.lstm(inputs)
+        return output, (ht, ct)
+```
+
+```python
+import torch
+import torch_neuron
+
+class Network(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=7)
+
+    def forward(self, inputs, lengths):
+        packed_input = torch.nn.utils.rnn.pack_padded_sequence(
+            inputs,
+            lengths=lengths,
+            enforce_sorted=True,
+        )
+        packed_result, (ht, ct) = self.lstm(packed_input)
+        padded_result, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_result)
+        return padded_result, ht, ct
+```
+
+```python
+import torch
+import torch_neuron
+
+class Network(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=7)
+
+    def forward(self, inputs, lengths):
+        packed_input = torch.nn.utils.rnn.pack_padded_sequence(
+            inputs,
+            lengths=lengths,
+            enforce_sorted=False,
+        )
+        packed_result, (ht, ct) = self.lstm(packed_input)
+        padded_result, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_result)
+        return padded_result, ht, ct
+```
+
+```python
+import torch
+import torch_neuron
+
+class Network(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=7)
+
+    def forward(self, inputs, lengths):
+        packed_input = torch.nn.utils.rnn.pack_padded_sequence(
+            inputs,
+            lengths=lengths,
+            enforce_sorted=True,
+        )
+        packed_output, (ht, ct) = self.lstm(packed_input)
+        return ht, ct
+```
+
+## placement.py
+
+```python
+import contextlib
+import torch
+import torch_neuron.experimental
+
+# Example 1: set_neuron_cores - Single Load
+model = torch.jit.load('example_neuron_model.pt')
+torch_neuron.experimental.set_neuron_cores(model, start_nc=0, nc_count=1)
+model(example)  # Executes on NeuronCore 0
+
+# Example 2: set_neuron_cores - Multiple Core Replication
+model = torch.jit.load('example_neuron_model.pt')
+torch_neuron.experimental.set_neuron_cores(model, start_nc=2, nc_count=2)
+model(example)  # Executes on NeuronCore 2
+model(example)  # Executes on NeuronCore 3
+model(example)  # Executes on NeuronCore 2
+
+# Example 3: set_neuron_cores - Multiple Model Load
+model1 = torch.jit.load('example_neuron_model.pt')
+torch_neuron.experimental.set_neuron_cores(model1, start_nc=2)
+model2 = torch.jit.load('example_neuron_model.pt')
+torch_neuron.experimental.set_neuron_cores(model2, start_nc=0)
+model1(example)  # Executes on NeuronCore 2
+model2(example)  # Executes on NeuronCore 0
+
+# Example 4: set_multicore
+model = torch.jit.load('example_neuron_model.pt')
+torch_neuron.experimental.set_multicore(model)
+model(example)  # Executes on NeuronCore 0
+model(example)  # Executes on NeuronCore 1
+model(example)  # Executes on NeuronCore 2
+
+# Example 5: neuron_cores_context - Single Load
+with torch_neuron.experimental.neuron_cores_context(start_nc=0, nc_count=1):
+    model = torch.jit.load('example_neuron_model.pt')
+model(example)  # Executes on NeuronCore 0
+
+# Example 6: neuron_cores_context - Multiple Core Replication
+with torch_neuron.experimental.neuron_cores_context(start_nc=2, nc_count=2):
+    model = torch.jit.load('example_neuron_model.pt')
+model(example)  # Executes on NeuronCore 2
+model(example)  # Executes on NeuronCore 3
+model(example)  # Executes on NeuronCore 2
+
+# Example 7: neuron_cores_context - Multiple Model Load
+with torch_neuron.experimental.neuron_cores_context(start_nc=2):
+    model1 = torch.jit.load('example_neuron_model.pt')
+with torch_neuron.experimental.neuron_cores_context(start_nc=0):
+    model2 = torch.jit.load('example_neuron_model.pt')
+model1(example)  # Executes on NeuronCore 2
+model2(example)  # Executes on NeuronCore 0
+
+# Example 8: multicore_context
+with torch_neuron.experimental.multicore_context():
+    model = torch.jit.load('example_neuron_model.pt')
+model(example)  # Executes on NeuronCore 0
+model(example)  # Executes on NeuronCore 1
+model(example)  # Executes on NeuronCore 2
 ```
 
 ## customop-mlp-training.rst
@@ -7941,21 +9100,31 @@ class Relu(torch.autograd.Function):
 
 ```c++
 torch::Tensor relu_forward(const torch::Tensor& t_in) {
-    ...
+    // Implementation details omitted
     t_out_acc[i][j] = t_in_acc[i][j] > 0.0 ? t_in_acc[i][j] : 0.0;
-    ...
 }
 
 torch::Tensor relu_backward(const torch::Tensor& t_grad, const torch::Tensor& t_in) {
-    ...
+    // Implementation details omitted
     t_out_acc[i][j] = t_in_acc[i][j] > 0.0 ? t_grad_acc[i][j] : 0.0;
-    ...
 }
 
 TORCH_LIBRARY(my_ops, m) {
     m.def("relu_forward", &relu_forward);
     m.def("relu_backward", &relu_backward);
 }
+```
+
+```python
+import torch.utils.cpp_extension
+import os
+
+torch.utils.cpp_extension.load(
+    name='librelu',
+    sources=['relu.cpp'],
+    is_python_module=False,
+    build_directory=os.getcwd()
+)
 ```
 
 ```python
@@ -8027,24 +9196,81 @@ class Relu(torch.autograd.Function):
         return torch.ops.my_ops.relu_backward(grad, input), None
 ```
 
-## guide-torch-neuron-vs-torch-neuronx-inference.rst
+## bert_server.py
 
 ```python
-import torch
-import torchvision
-import torch_neuronx
+import os
+import collections
+import time
+import numpy as np
+import tensorflow as tf
+from distutils.version import LooseVersion
+import pkg_resources
+from threading import Lock
+from multiprocessing.dummy import Pool
+import grpc
+from concurrent import futures
+import mrpc_pb2_grpc
 
-model = torchvision.models.resnet50(pretrained=True).eval()
-image = torch.rand(1, 3, 224, 224)
 
-trace = torch_neuronx.trace(model, image)
+class BERTService(mrpc_pb2_grpc.mrpcServicer):
+
+    def __init__(self, model_path, parallel, batch_size, bootstrap, vocab_txt, num_thread_per_predictor=2):
+        num_queues = parallel * num_thread_per_predictor
+        config = tf.ConfigProto(inter_op_parallelism_threads=num_queues, intra_op_parallelism_threads=1)
+        tfn_version = LooseVersion(pkg_resources.get_distribution('tensorflow-neuron').version)
+        if tfn_version >= LooseVersion('1.15.0.1.0.1333.0'):
+            neuroncore_group_sizes = '{}x1'.format(parallel)
+            predictor = tf.contrib.predictor.from_saved_model(model_path, config=config)
+            self.predictor_list = [predictor for _ in range(num_queues)]
+        else:
+            neuroncore_group_sizes = ','.join('1' for _ in range(parallel))
+            predictor_list = [tf.contrib.predictor.from_saved_model(model_path, config=config) for _ in range(parallel)]
+            self.predictor_list = []
+            for pred in predictor_list:
+                self.predictor_list.extend(pred for _ in range(num_thread_per_predictor))
+        os.environ['NEURONCORE_GROUP_SIZES'] = neuroncore_group_sizes
+        if self.predictor_list[0].feed_tensors['input_ids'].shape.is_fully_defined():
+            self.batch_size = self.predictor_list[0].feed_tensors['input_ids'].shape.as_list()[0]
+        else:
+            self.batch_size = batch_size
+        self.output_name = list(self.predictor_list[0].fetch_tensors.keys())[0]
+        self.result_map = {}
+        self.alive = True
+
+    def cleanup(self) -> None:
+        for pred in self.predictor_list:
+            pred.session.close()
+
+    def process_input(self, idx: int) -> None:
+        request_queue = self.request_queue_list[idx]
+        predictor = self.predictor_list[idx]
+        while self.alive:
+            if len(request_queue) > 0:
+                sublist = request_queue[:self.batch_size]
+                request_queue[:self.batch_size] = []
+                iid_list = [iid for iid, _ in sublist]
+                model_feed_dict_list = [feed for _, feed in sublist]
+                batch_feeds = {
+                    key: np.concatenate([feed[key] for feed in model_feed_dict_list], axis=0)
+                    for key in model_feed_dict_list[0].keys()
+                }
+                start = time.time()
+                batch_predictions = predictor(batch_feeds)[self.output_name].argmax(-1)
+                latency = time.time() - start
+                self.result_map.update({iid: pred for iid, pred in zip(iid_list, batch_predictions)})
+            time.sleep(0.001)
+
+    def get_output(self, iid: int) -> int:
+        while iid not in self.result_map:
+            time.sleep(0.001)
+        return self.result_map.pop(iid)
 ```
 
 ## activation_memory_reduction_developer_guide.rst
 
 ```python
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXAttention
-from neuronx_distributed.parallel_layers import ColumnParallelLinear, RowParallelLinear
 
 class GPTNeoXAttentionNxD(GPTNeoXAttention):
     def __init__(self, config):
@@ -8086,8 +9312,6 @@ class GPTNeoXLayerNxD(GPTNeoXLayer):
 ```
 
 ```python
-import torch
-
 setattr(param, "sequence_parallel_enabled", sequence_parallel_enabled)
 ```
 
@@ -8096,7 +9320,10 @@ import torch
 from neuronx_distributed.parallel_layers.mappings import reduce_from_tensor_model_parallel_region
 
 def allreduce_sequence_parallel_gradients(optimizer):
-    """All-reduce layernorm parameters across model parallel nodes when sequence parallelism is used."""
+    """ All-reduce layernorm parameters across model parallel nodes when sequence parallelism is used.
+        Modified from megatron-lm:
+        https://gitlab-master.nvidia.com/ADLR/megatron-lm/-/blob/3f91f09bb2ab32f9904b47f46f19d2fc3f518ed8/megatron/training.py#L425
+    """
     grads = []
     for param_group in optimizer.__getstate__()['param_groups']:
         for group, params in param_group.items():
@@ -8121,7 +9348,9 @@ if self.config.sequence_parallel_enabled:
 ```python
 if config.sequence_parallel_enabled:
     qkv = qkv.transpose(0, 1)
+```
 
+```python
 attn_output = attn_output.transpose(0, 1)
 attn_output = self.dense(attn_output)
 ```
@@ -8150,65 +9379,27 @@ import torch.neuron
 print(*torch.neuron.get_supported_operations(), sep='\n')
 ```
 
-## tutorial-use-a-prebuilt-kernel.rst
+## training_llama_tp_pp.rst
 
 ```python
-import torch
-import torch.nn as nn
-import torch_xla.core.xla_model as xm
-import nki.language as nl
-from nkilib.core.mlp.mlp import fused_mlp_isa_kernel
-from nkilib.core.utils.common_types import ActFnType, NormType
+from huggingface_hub import login
+from transformers import AutoTokenizer
+
+login(token='your_own_hugging_face_token')
+
+tokenizer = AutoTokenizer.from_pretrained('meta-llama/Meta-Llama-3-8B')  
+# For llama2 uncomment line below
+# tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf')
+
+tokenizer.save_pretrained(".")
 ```
 
 ```python
-class MLPReference(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, dtype=torch.bfloat16):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False, dtype=dtype)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, dtype=dtype)
-
-    def forward(self, hidden: torch.Tensor) -> torch.Tensor:
-        gate_output = torch.nn.functional.silu(self.gate_proj(hidden))
-        up_output = self.up_proj(hidden)
-        return self.down_proj(gate_output * up_output)
+sudo rm -rf /home/ubuntu/.cache/
 ```
 
 ```python
-model = MLPReference(hidden_size, intermediate_size, dtype=torch.bfloat16)
-model.eval()
-input_tensor = torch.randn(batch_size, seq_len, hidden_size, dtype=torch.bfloat16) * 2
-with torch.no_grad():
-    reference_output = model(input_tensor)
-```
-
-```python
-device = xm.xla_device()
-nki_input = input_tensor.to(device=device, dtype=torch.bfloat16)
-gate_w_xla = model.gate_proj.weight.T.contiguous().to(device=device, dtype=torch.bfloat16)
-up_w_xla = model.up_proj.weight.T.contiguous().to(device=device, dtype=torch.bfloat16)
-down_w_xla = model.down_proj.weight.T.contiguous().to(device=device, dtype=torch.bfloat16)
-```
-
-```python
-with torch.no_grad():
-    nki_output = fused_mlp_isa_kernel[LNC_DEGREE](
-        hidden=nki_input,
-        gate_w=gate_w_xla,
-        up_w=up_w_xla,
-        down_w=down_w_xla,
-        attn_output=None,
-        norm_type=NormType.NO_NORM,
-        dtype=nl.bfloat16,
-        act_fn=ActFnType.SiLU,
-    )
-nki_output_cpu = nki_output.cpu()
-```
-
-```python
-assert nki_output_cpu.shape == reference_output.shape, f"Shape mismatch: {nki_output_cpu.shape} vs {reference_output.shape}"
-torch.testing.assert_close(nki_output_cpu, reference_output, rtol=1e-2, atol=1e-2)
+pip install -U datasets
 ```
 
 ## sd_15_512_compile.py
@@ -8306,6 +9497,17 @@ class NeuronTextEncoder(nn.Module):
 ```
 
 ```python
+class NeuronSafetyModelWrap(nn.Module):
+    def __init__(self, safety_model):
+        super().__init__()
+        self.safety_model = safety_model
+
+    def forward(self, clip_inputs):
+        return list(self.safety_model(clip_inputs).values())
+```
+
+```python
+# Compile text encoder
 text_encoder_neuron = torch_neuronx.trace(
     text_encoder.neuron_text_encoder, 
     emb, 
@@ -8317,6 +9519,7 @@ torch.jit.save(text_encoder_neuron, text_encoder_filename)
 ```
 
 ```python
+# Compile vae decoder
 decoder_neuron = torch_neuronx.trace(
     decoder, 
     decoder_in, 
@@ -8328,6 +9531,7 @@ torch.jit.save(decoder_neuron, decoder_filename)
 ```
 
 ```python
+# Compile unet
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
@@ -8340,6 +9544,7 @@ torch.jit.save(unet_neuron, unet_filename)
 ```
 
 ```python
+# Compile vae post_quant_conv
 post_quant_conv_neuron = torch_neuronx.trace(
     post_quant_conv, 
     post_quant_conv_in,
@@ -8351,6 +9556,7 @@ torch.jit.save(post_quant_conv_neuron, post_quant_conv_filename)
 ```
 
 ```python
+# Compile safety checker
 safety_model = torch_neuronx.trace(
     safety_model, 
     clip_input,
@@ -8361,331 +9567,221 @@ torch_neuronx.async_load(safety_model)
 torch.jit.save(safety_model, safety_model_neuron_filename)
 ```
 
-## test_nki_isa_tensor_scalar_cumulative.py
+## tf_neuron_check_model.py
 
 ```python
-import neuronxcc.nki as nki
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-import numpy as np
+import os
+import json
+import sys
+import struct
+import argparse
+import subprocess
+from collections import Counter
 
-@nki.jit(mode="simulation")
-def nki_tensor_scalar_cumulative_scalar(
-  src_data,
-  op0,
-  op1,
-  imm0,
-  imm1=None,
-  reduce_cmd=nisa.reduce_cmd.reset_reduce):
-  """Example 1: Basic usage of tensor scalar cumulative with scalar immediate values."""
-  result_tensor = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.hbm)
-  src = nl.load(src_data[...])
-  dst = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.sbuf)
-  
-  nisa.tensor_scalar_cumulative(
-    src=src,
-    dst=dst,
-    op0=op0,
-    op1=op1,
-    imm0=imm0,
-    imm1=imm1,
-    reduce_cmd=reduce_cmd
-  )
-  
-  nl.store(result_tensor, value=dst)
-  return result_tensor
+class neuron_parser:
+  def __init__(self):
+    self.parser = argparse.ArgumentParser()
+    self.parser.add_argument('model_path', type=str, help='a TensorFlow SavedModel directory (currently supporting TensorFlow v1 SaveModel only).')
+    self.parser.add_argument('--show_names', action='store_true', help='list operation by name instead of summarizing by type (caution: this option will generate many lines of output for a large model).')
+    self.parser.add_argument('--expand_subgraph', action='store_true', help='show subgraph operations.')
+    self.parser_args = self.parser.parse_args()
+    self.neuronop_info = {}
+    self.total_pipeline_cores = 0
+    self.min_required_pipeline_cores = 0
+    path = self.parser_args.model_path
+    if os.path.exists(path + '-symbol.json'):
+      self.load_mxnet_model(path)
+    elif os.path.isdir(path):
+      self.load_tensorflow_model(path)
+    else:
+      raise RuntimeError('Cannot determine framework type from model path argument.')
+    self.supported = self.get_neuron_supported()
+    self.supported.extend(self.addl_support)
+    for name, executable, (sg_nodetypes, sg_nodenames) in self.neuron_nodes:
+      num_cores, requested_cores, _ = self.get_cores_from_executable(executable)
+      self.neuronop_info[name] = (num_cores, requested_cores, sg_nodetypes, sg_nodenames)
+      self.total_pipeline_cores += num_cores
+      if num_cores > self.min_required_pipeline_cores:
+          self.min_required_pipeline_cores = num_cores
 
-@nki.jit(mode="simulation")
-def nki_tensor_scalar_cumulative_vector(
-  src_data,
-  op0,
-  op1,
-  imm0,
-  imm1=None,
-  reduce_cmd=nisa.reduce_cmd.reset_reduce):
-  """Example 2: Basic usage of tensor scalar cumulative with vector immediate values."""
-  result_tensor = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.hbm)
-  src = nl.load(src_data[...])
-  imm0 = nl.load(imm0[...])
-  imm1 = nl.load(imm1[...]) if imm1 else None
-  dst = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.sbuf)
-  
-  nisa.tensor_scalar_cumulative(
-    src=src,
-    dst=dst,
-    op0=op0,
-    op1=op1,
-    imm0=imm0,
-    imm1=imm1,
-    reduce_cmd=reduce_cmd
-  )
-  
-  nl.store(result_tensor, value=dst)
-  return result_tensor
+  def get_neuron_supported(self):
+    exec_cmd = ["neuron-cc", "list-operators", "--framework", self.framework]
+    oplist = subprocess.check_output(' '.join(exec_cmd), shell=True)
+    oplist = str(oplist, 'utf-8')
+    oplist = oplist.split("\n")
+    return oplist[:-1]
 
-@nki.jit(mode="simulation")
-def nki_tensor_scalar_cumulative_chain(
-  src_data,
-  op0,
-  op1,
-  imm0,
-  imm1=None,
-  reduce_cmd=nisa.reduce_cmd.reset_reduce):
-  """Example 3: Chain two tensor scalar cumulative operations together."""
-  result_tensor = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.hbm)
-  src = nl.load(src_data[...])
-  dst = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.sbuf)
-  
-  nisa.tensor_scalar_cumulative(
-    src=src,
-    dst=dst,
-    op0=op0,
-    op1=op1,
-    imm0=imm0,
-    imm1=imm1,
-    reduce_cmd=reduce_cmd
-  )
-  
-  nisa.tensor_scalar_cumulative(
-    src=src,
-    dst=dst,
-    op0=op0,
-    op1=op1,
-    imm0=imm0,
-    imm1=imm1,
-    reduce_cmd=nisa.reduce_cmd.reduce
-  )
-  
-  nl.store(result_tensor, value=dst)
-  return result_tensor
+  def get_tf_subgraph_types_names(self, node):
+    from tensorflow.core.framework import graph_pb2
+    graph_def = graph_pb2.GraphDef()
+    graph_def.ParseFromString(node.attr['graph_def'].s)
+    sg_nodes = graph_def.node
+    sg_nodes = [sg_node for sg_node in sg_nodes if sg_node.op not in self.excl_types]
+    nodetypes = [sg_node.op for sg_node in sg_nodes]
+    nodenames = [sg_node.name for sg_node in sg_nodes]
+    return nodetypes, nodenames
 
-@nki.jit(mode="simulation")
-def nki_tensor_scan(src_data, op, initial):
-  """Example 4: Perform tensor scan using tensor scalar cumulative."""
-  result_tensor = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.hbm)
-  src = nl.load(src_data[...])
-  dst = nl.ndarray(src_data.shape, dtype=nl.float32, buffer=nl.sbuf)
-  
-  nisa.tensor_scalar_cumulative(
-    src=src,
-    dst=dst,
-    op0=nl.add,
-    op1=op,
-    imm0=np.float32(0.0),
-    imm1=initial,
-    reduce_cmd=nisa.reduce_cmd.load_reduce
-  )
-  
-  nl.store(result_tensor, value=dst)
-  return result_tensor
+  def load_tensorflow_model(self, path):
+    import tensorflow as tf
+    import tensorflow_hub as hub
+    self.framework = 'TENSORFLOW'
+    self.neuron_optype = "NeuronOp"
+    self.excl_types = ['Placeholder', 'PlaceholderWithDefault', 'NoOp', 'Const', 'Identity', 'IdentityN', 'VarHandleOp', 'VarIsInitializedOp', 'AssignVariableOp', 'ReadVariableOp', 'StringJoin', 'ShardedFilename', 'SaveV2', 'MergeV2Checkpoints', 'RestoreV2']
+    self.addl_support = ['FusedBatchNormV3', 'BatchMatMulV2', 'AddV2', 'StopGradient', self.neuron_optype]
+    model = hub.load(path)
+    graph_def = model.graph.as_graph_def()
+    nodes = graph_def.node
+    nodes = [node for node in nodes if node.op not in self.excl_types]
+    self.nodetypes = [node.op for node in nodes]
+    self.nodenames = [node.name for node in nodes]
+    self.neuron_nodes = [(node.name, node.attr['executable'].s, self.get_tf_subgraph_types_names(node)) for node in nodes if node.op == self.neuron_optype]
+
+  def get_mx_subgraph_types_names(self, node):
+    nodetypes = []
+    nodenames = []
+    for sg in node['subgraphs']:
+      filtered_nodes = [sg_node for sg_node in sg['nodes'] if sg_node['op'] not in self.excl_types]
+      nodetypes.extend([sg_node['op'] for sg_node in filtered_nodes])
+      nodenames.extend([sg_node['name'] for sg_node in filtered_nodes])
+    return nodetypes, nodenames
+
+  def load_mxnet_model(self, path):      
+    import mxnet as mx
+    if mx.__version__ != "1.5.1":
+      try:
+        import mxnetneuron as mxn
+      except:
+        raise "Please install mxnetneuron package."
+    self.framework = 'MXNET'
+    self.neuron_optype = "_neuron_subgraph_op"
+    self.excl_types = ['null']
+    self.addl_support = [self.neuron_optype]
+    sym, args, auxs = mx.model.load_checkpoint(path, 0)
+    nodes = json.loads(sym.tojson())["nodes"]
+    nodes = [node for node in nodes if node['op'] not in self.excl_types]
+    self.nodetypes = [node['op'] for node in nodes]
+    self.nodenames = [node['name'] for node in nodes]
+    neuron_nodes_tmp = [node for node in nodes if node['op'] == self.neuron_optype]
+    self.neuron_nodes = [(node['name'], bytearray(args[node['name']+"_neuronbin"].asnumpy()), self.get_mx_subgraph_types_names(node)) for node in neuron_nodes_tmp]
+
+  @staticmethod
+  def get_cores_from_executable(executable):
+    _NC_HEADER_SIZE = 544
+    header = executable[:_NC_HEADER_SIZE]
+    info = list(struct.unpack('168xI304xI64B', header))
+    numCores = info.pop(0)
+    numCoresRequested = info.pop(0)
+    coresPerNode = info
+    return numCores, numCoresRequested, coresPerNode
 ```
 
-## how-to-use-fpem.rst
+## mx_neuron_check_model.py
 
 ```python
-import torch
-from torch import nn
-from neuronx_distributed_inference.models.encoder_base import NeuronEncoderBase
-from neuronx_distributed_inference.models.model_wrapper import ModelWrapper
-from neuronx_distributed_inference.models.application_base import NeuronApplicationBase
-from neuronx_distributed_inference.models.config import InferenceConfig, NeuronConfig
+import os
+import json
+import sys
+import struct
+import argparse
+import subprocess
+from collections import Counter
 
-# Vision Model Definition
-class VisionModel(NeuronEncoderBase):
-    def __init__(self, config: InferenceConfig):
-        super().__init__(config)
-        self.conv = nn.Conv2d(3, 64, kernel_size=3, padding=1)
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(64, config.vision_embedding_size)
+class neuron_parser:
+  def __init__(self):
+    self.parser = argparse.ArgumentParser()
+    self.parser.add_argument('model_path', type=str, help='path prefix to MXNet model (the part before -symbol.json).')
+    self.parser.add_argument('--show_names', action='store_true', help='list operation by name instead of summarizing by type (caution: this option will generate many lines of output for a large model).')
+    self.parser.add_argument('--expand_subgraph', action='store_true', help='show subgraph operations.')
+    self.parser_args = self.parser.parse_args()
+    self.neuronop_info = {}
+    self.total_pipeline_cores = 0
+    self.min_required_pipeline_cores = 0
+    path = self.parser_args.model_path
 
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.pool(x)
-        x = torch.flatten(x, 1)
-        return self.fc(x)
+    if os.path.exists(path + '-symbol.json'):
+      self.load_mxnet_model(path)
+    elif os.path.isdir(path):
+      self.load_tensorflow_model(path)
+    else:
+      raise RuntimeError('Cannot determine framework type from model path argument.')
+    self.supported = self.get_neuron_supported()
+    self.supported.extend(self.addl_support)
+    for name, executable, (sg_nodetypes, sg_nodenames) in self.neuron_nodes:
+      num_cores, requested_cores, _ = self.get_cores_from_executable(executable)
+      self.neuronop_info[name] = (num_cores, requested_cores, sg_nodetypes, sg_nodenames)
+      self.total_pipeline_cores += num_cores
+      if num_cores > self.min_required_pipeline_cores:
+          self.min_required_pipeline_cores = num_cores
 
-# Text Model Definition
-class TextModel(NeuronEncoderBase):
-    def __init__(self, config: InferenceConfig):
-        super().__init__(config)
-        self.embedding = nn.Linear(config.text_input_size, config.text_embedding_size)
-        self.fusion = nn.Linear(
-            config.vision_embedding_size + config.text_embedding_size,
-            config.output_size
-        )
+  def get_neuron_supported(self):
+    exec_cmd = ["neuron-cc", "list-operators", "--framework", self.framework]
+    oplist = subprocess.check_output(' '.join(exec_cmd), shell=True)
+    oplist = str(oplist, 'utf-8')
+    oplist = oplist.split("\n")
+    return oplist[:-1]
 
-    def forward(self, vision_features, text_input):
-        text_features = self.embedding(text_input)
-        combined = torch.cat([vision_features, text_features], dim=1)
-        return self.fusion(combined)
-```
+  def get_tf_subgraph_types_names(self, node):
+    from tensorflow.core.framework import graph_pb2
+    graph_def = graph_pb2.GraphDef()
+    graph_def.ParseFromString(node.attr['graph_def'].s)
+    sg_nodes = graph_def.node
+    sg_nodes = [sg_node for sg_node in sg_nodes if sg_node.op not in self.excl_types]
+    nodetypes = [sg_node.op for sg_node in sg_nodes]
+    nodenames = [sg_node.name for sg_node in sg_nodes]
+    return nodetypes, nodenames
 
-```python
-# Vision Model Wrapper - keeps output on device
-class VisionModelWrapper(ModelWrapper):
-    def __init__(self, config: InferenceConfig):
-        super().__init__(
-            config=config,
-            model_cls=VisionModel,
-            pipeline_execution=True,
-            return_ranked_to_cpu=False,  # Keep output ranked for efficient pipeline
-            tag="vision_model"
-        )
+  def load_tensorflow_model(self, path):
+    import tensorflow as tf
+    import tensorflow_hub as hub
+    self.framework = 'TENSORFLOW'
+    self.neuron_optype = "NeuronOp"
+    self.excl_types = ['Placeholder', 'PlaceholderWithDefault', 'NoOp', 'Const', 'Identity', 'IdentityN', 'VarHandleOp', 'VarIsInitializedOp', 'AssignVariableOp', 'ReadVariableOp', 'StringJoin', 'ShardedFilename', 'SaveV2', 'MergeV2Checkpoints', 'RestoreV2']
+    self.addl_support = ['FusedBatchNormV3', 'BatchMatMulV2', 'AddV2', 'StopGradient', self.neuron_optype]
+    model = hub.load(path)
+    graph_def = model.graph.as_graph_def()
+    nodes = graph_def.node
+    nodes = [node for node in nodes if node.op not in self.excl_types]
+    self.nodetypes = [node.op for node in nodes]
+    self.nodenames = [node.name for node in nodes]
+    self.neuron_nodes = [(node.name, node.attr['executable'].s, self.get_tf_subgraph_types_names(node)) for node in nodes if node.op == self.neuron_optype]
 
-    def input_generator(self):
-        # Generate sample input for compilation
-        x = torch.randn(
-            self.neuron_config.batch_size,
-            3,
-            224,
-            224
-        )
-        return [(x,)]
+  def get_mx_subgraph_types_names(self, node):
+    nodetypes = []
+    nodenames = []
+    for sg in node['subgraphs']:
+      filtered_nodes = [sg_node for sg_node in sg['nodes'] if sg_node['op'] not in self.excl_types]
+      nodetypes.extend([sg_node['op'] for sg_node in filtered_nodes])
+      nodenames.extend([sg_node['name'] for sg_node in filtered_nodes])
+    return nodetypes, nodenames
 
-# Text Model Wrapper - returns final output to CPU
-class TextModelWrapper(ModelWrapper):
-    def __init__(self, config: InferenceConfig):
-        super().__init__(
-            config=config,
-            model_cls=TextModel,
-            pipeline_execution=True,
-            return_ranked_to_cpu=True,  # Return final output to CPU
-            tag="text_model"
-        )
+  def load_mxnet_model(self, path):      
+    import mxnet as mx
+    if mx.__version__ != "1.5.1":
+      try:
+        import mx_neuron as mxn
+      except:
+        raise "Please install mxnetneuron package."
+    self.framework = 'MXNET'
+    self.neuron_optype = "_neuron_subgraph_op"
+    self.excl_types = ['null']
+    self.addl_support = [self.neuron_optype]
+    sym, args, auxs = mx.model.load_checkpoint(path, 0)
+    nodes = json.loads(sym.tojson())["nodes"]
+    nodes = [node for node in nodes if node['op'] not in self.excl_types]
+    self.nodetypes = [node['op'] for node in nodes]
+    self.nodenames = [node['name'] for node in nodes]
+    neuron_nodes_tmp = [node for node in nodes if node['op'] == self.neuron_optype]
+    self.neuron_nodes = [(node['name'], bytearray(args[node['name']+"_neuronbin"].asnumpy()), self.get_mx_subgraph_types_names(node)) for node in neuron_nodes_tmp]
 
-    def input_generator(self):
-        # Generate sample inputs for compilation
-        vision_features = torch.randn(
-            self.neuron_config.batch_size,
-            self.config.vision_embedding_size
-        )
-        text_input = torch.randn(
-            self.neuron_config.batch_size,
-            self.config.text_input_size
-        )
-        return [(vision_features, text_input)]
-```
-
-```python
-# Application Classes
-class VisionModelApp(NeuronApplicationBase):
-    def __init__(self, model_path: str, config: InferenceConfig):
-        super().__init__(model_path=model_path, config=config)
-        self.model = VisionModelWrapper(config)
-        self.models.append(self.model)
-
-    def forward(self, x):
-        return self.models[0].forward(x)
-
-class TextModelApp(NeuronApplicationBase):
-    def __init__(self, model_path: str, config: InferenceConfig):
-        super().__init__(model_path=model_path, config=config)
-        self.model = TextModelWrapper(config)
-        self.models.append(self.model)
-
-    def forward(self, vision_features, text_input):
-        return self.models[0].forward(vision_features, text_input)
-```
-
-## nki_block_dimension_migration_guide.rst
-
-```python
-import nki
-import nki.language as nl
-from nki.language import bfloat16, float32
-
-@nki.jit
-def exp_func(inp):
-    output = nl.ndarray((4, 8, 128, 2, 512), dtype=float32, 
-      buffer=nl.shared_hbm)
-    a = nl.ndarray((4, 8, nl.par_dim(128), 2, 512), dtype=float32, buffer=nl.sbuf)
-    for i in range(4):
-      for j in range(8):
-        a[i, j] = nl.load(inp[i, j])
-        a[i, j] = nl.exp(a[i, j])
-        nl.store(output[i, j], value=result)
-```
-
-```python
-@nki.jit
-def sb_blocks(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(8, nl.par_dim(128), 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[i] = nl.load(inp[i])
-    for i in range(8):
-        nl.store(res[i], add_buf[i])
-    return res
-
-@nki.jit
-def sb_blocks_migrated(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(128, 8, 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[0:128, i, 0:512] = nl.load(inp[i])
-    for i in range(8):
-        nl.store(res[i], add_buf[0:128, i, 0:512])
-    return res
-```
-
-```python
-@nki.jit
-def sb_blocks(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(8, nl.par_dim(128), 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[i] = nl.load(inp[i])
-        nl.store(res[i], add_buf[i])
-    return res
-
-@nki.jit
-def sb_blocks_migrated(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    for i in range(8):
-        add_buf = nl.ndarray(shape=(128, 512), dtype=inp.dtype, buffer=nl.sbuf)
-        add_buf[0:128, 0:512] = nl.load(inp[i])
-        nl.store(res[i], add_buf[0:128, 0:512])
-    return res
-
-@nki.jit
-def sb_blocks_migrated_incorrect(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(128, 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[0:128, 0:512] = nl.load(inp[i])
-        nl.store(res[i], add_buf[0:128, 0:512])
-    return res
-```
-
-```python
-def interleave_alloc_func(idx, pdim_size, fdim_size):
-    idx, = idx
-    start_partition = 0
-    return (start_partition, (idx % 2) * fdim_size)
-
-@nki.jit
-def copy_func(inp):
-    output = nl.ndarray((4, 128, 512), dtype=float32, buffer=nl.shared_hbm)
-    a = nl.ndarray((4, nl.par_dim(128), 512), dtype=float32, buffer=ncc.sbuf.alloc(interleave_alloc_func))
-    for i in range(4):
-        a[i] = nl.load(inp[i])
-        nl.store(output[i], value=a[i])
-```
-
-```python
-def interleave_alloc_func(idx, pdim_size, fdim_size):
-    assert idx == ()
-    start_partition = 0
-    return (start_partition, (idx % 2) * fdim_size)
-
-@nki.compiler.skip_middle_end_transformations
-@nki.jit
-def exp_func(inp):
-    output = nl.ndarray((4, 128, 512), dtype=nl.float32, buffer=nl.shared_hbm)
-    a = nl.ndarray((128, 2, 512), dtype=nl.float32, buffer=ncc.sbuf.alloc(interleave_alloc_func))
-    for i in range(4):
-        a[0:128, i % 2, 0:512] = nl.load(inp[i])
-        nl.store(output[i], value=a[0:128, i % 2, 0:512])
+  @staticmethod
+  def get_cores_from_executable(executable):
+    _NC_HEADER_SIZE = 544
+    header = executable[:_NC_HEADER_SIZE]
+    info = list(struct.unpack('168xI304xI64B', header))
+    numCores = info.pop(0)
+    numCoresRequested = info.pop(0)
+    coresPerNode = info
+    return numCores, numCoresRequested, coresPerNode
 ```
 
 ## torch-neuronx-profiling-dev-guide.rst
@@ -8769,8 +9865,14 @@ xm.mark_step()
 ## example_app.cpp
 
 ```cpp
-#include <vector>
-#include <torch/script.h>
+#include <atomic>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+#include "utils.hpp"
+#include "core_count.hpp"
+#include "../tokenizers_binding/remote_rust_tokenizer.h"
 
 typedef std::vector<std::vector<long>> Input;
 
@@ -8778,11 +9880,12 @@ typedef std::vector<std::vector<long>> Input;
 Input get_input(const std::string& sentence_1, const std::string& sentence_2)
 {
     const size_t seq_len = 128;
-    const long start_token = 101;
-    const long end_token = 102;
-
+    
     // ensure the concatenated sentences + separator tokens do not exceed the compiled sequence length
     assert(sentence_1.size() + sentence_2.size() + 3 <= seq_len);
+
+    const long start_token = 101;
+    const long end_token = 102;
 
     // tokenize the input sentence using the HuggingFace Tokenizers library
     std::vector<long> input_ids(seq_len, 0);
@@ -8829,7 +9932,7 @@ std::vector<torch::jit::IValue> get_batch(const std::vector<Input>& inputs)
 {
     const size_t batch_size = 6;
     const size_t seq_len = 128;
-
+    
     // must be given a full batch
     assert(inputs.size() == batch_size);
 
@@ -8846,134 +9949,210 @@ std::vector<torch::jit::IValue> get_batch(const std::vector<Input>& inputs)
 
     return {input_ids_tensor, attention_mask_tensor, token_type_ids_tensor};
 }
+
+int sanity_check(const std::string& model_filename)
+{
+    // load the model
+    auto model = get_model(model_filename);
+
+    // construct some example inputs
+    const std::string sentence_1 = "The company HuggingFace is based in New York City";
+    const std::string sentence_2 = "Apples are especially bad for your health";
+    const std::string sentence_3 = "HuggingFace's headquarters are situated in Manhattan";
+    const auto paraphrase = get_input(sentence_1, sentence_3);
+    const auto not_paraphrase = get_input(sentence_1, sentence_2);
+
+    const size_t batch_size = 6;
+
+    // batch the inputs 50/50 positive/negative
+    std::vector<Input> inputs(batch_size);
+    for (size_t i = 0; i < batch_size; ++i) {
+        if (i < batch_size / 2) {
+            inputs[i] = paraphrase;
+        } else {
+            inputs[i] = not_paraphrase;
+        }
+    }
+    const auto batch = get_batch(inputs);
+
+    // forward pass
+    const auto output = model.forward(batch);
+
+    // interpret output
+    const auto output_tensor = output.toTuple()->elements()[0].toTensor();
+    const auto paraphrase_probabilities = torch::softmax(output_tensor[0], 0);
+    const auto not_paraphrase_probabilities = torch::softmax(output_tensor[batch_size-1], 0);
+    const auto paraphrase_0 = std::round(paraphrase_probabilities[0].item<double>() * 100);
+    const auto paraphrase_1 = std::round(paraphrase_probabilities[1].item<double>() * 100);
+    const auto not_paraphrase_0 = std::round(not_paraphrase_probabilities[0].item<double>() * 100);
+    const auto not_paraphrase_1 = std::round(not_paraphrase_probabilities[1].item<double>() * 100);
+
+    if (paraphrase_0 >= paraphrase_1) return -1;
+    if (not_paraphrase_0 <= not_paraphrase_1) return -2;
+
+    return 0;
+}
 ```
 
 ## layernorm.rst
 
 ```python
-import neuron.nki as nki
-import neuron.nki.language as nl
+import neuron_nki as nki
+import neuron_nki.language as nl
+import neuron_nki.isa as nisa
 import math
 
-@nki.jit
-def nki_layernorm_kernel_v1(input_tensor, gamma, beta, epsilon):
-  """
-  LayerNorm kernel using nki.language APIs only.
-  
-  Args:
-    input_tensor: 2D input tensor of shape [sequence_length, hidden_size]
-    gamma: 1D affine parameter of shape [hidden_size]
-    beta: 1D affine parameter of shape [hidden_size]
-    epsilon: Small constant for numerical stability
-  
-  Returns:
-    Normalized output tensor of same shape as input_tensor
-  """
-  output_tensor = nl.zeros(input_tensor.shape, dtype=input_tensor.dtype)
-  
-  # Load gamma and beta, perform partition-axis broadcast
-  shift_scale_tensor = nl.load(gamma)
-  shift_scale_tensor = nl.broadcast_to(shift_scale_tensor, (nl.tile_size.pmax, input_tensor.shape[1]))
-  
-  beta_tensor = nl.load(beta)
-  beta_tensor = nl.broadcast_to(beta_tensor, (nl.tile_size.pmax, input_tensor.shape[1]))
-  
-  # Compute loop over partition axis
-  for i in range(math.ceil(input_tensor.shape[0] / nl.tile_size.pmax)):
-    for i_p_io in nl.affine_range(nl.tile_size.pmax):
-      # Load input tile with boundary guard
-      input_tile = nl.load(
-        input_tensor[i * nl.tile_size.pmax + i_p_io, :],
-        mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
-      )
-      
-      # Compute mean and variance
-      mean = nl.mean(input_tile, axis=1)
-      variance = nl.var(input_tile, axis=1)
-      
-      # Normalize: (x - mean) / sqrt(var + epsilon)
-      normalized = (input_tile - mean) / nl.rsqrt(variance + epsilon)
-      
-      # Scale and shift: normalized * gamma + beta
-      output_tile = normalized * shift_scale_tensor + beta_tensor
-      
-      # Store output with boundary guard
-      nl.store(
-        output_tensor[i * nl.tile_size.pmax + i_p_io, :],
-        output_tile,
-        mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
-      )
-  
-  return output_tensor
+# Version 1: nki.language APIs only
+def nki_layernorm_kernel_v1(
+    input_tensor: nl.ndarray,
+    gamma: nl.ndarray,
+    beta: nl.ndarray,
+    epsilon: float,
+) -> nl.ndarray:
+    """
+    LayerNorm kernel using nki.language APIs.
+    
+    Args:
+        input_tensor: Input tensor of shape (sequence_length, hidden_size)
+        gamma: Affine transform parameter of shape (hidden_size,)
+        beta: Affine transform parameter of shape (hidden_size,)
+        epsilon: Small constant for numerical stability
+    
+    Returns:
+        Normalized output tensor of same shape as input_tensor
+    """
+    output_tensor = nl.zeros(input_tensor.shape, dtype=input_tensor.dtype)
+    
+    # Load gamma and beta, perform partition-axis broadcast
+    shift_scale_tensor = nl.load(gamma)
+    shift_scale_tensor = nl.broadcast_to(shift_scale_tensor, (nl.tile_size.pmax, input_tensor.shape[1]))
+    
+    beta_tensor = nl.load(beta)
+    beta_tensor = nl.broadcast_to(beta_tensor, (nl.tile_size.pmax, input_tensor.shape[1]))
+    
+    # Compute loop over partition axis
+    for i in range(math.ceil(input_tensor.shape[0] / nl.tile_size.pmax)):
+        for i_p_io in range(nl.tile_size.pmax):
+            # Load one tile of input_tensor
+            input_tile = nl.load(
+                input_tensor,
+                indices=(i * nl.tile_size.pmax + i_p_io, 0),
+                mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
+            )
+            
+            # Compute mean and variance
+            mean = nl.mean(input_tile, axis=1)
+            variance = nl.var(input_tile, axis=1)
+            
+            # Normalize
+            normalized = (input_tile - mean) / nl.rsqrt(variance + epsilon)
+            
+            # Scale and shift
+            output_tile = normalized * shift_scale_tensor + beta_tensor
+            
+            # Store output
+            nl.store(
+                output_tensor,
+                indices=(i * nl.tile_size.pmax + i_p_io, 0),
+                value=output_tile,
+                mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
+            )
+    
+    return output_tensor
+
+
+# Version 2: nki.isa APIs for optimized mean/variance and shift/scale
+def nki_layernorm_kernel_v2(
+    input_tensor: nl.ndarray,
+    gamma: nl.ndarray,
+    beta: nl.ndarray,
+    epsilon: float,
+) -> nl.ndarray:
+    """
+    Optimized LayerNorm kernel using nki.isa APIs.
+    
+    Args:
+        input_tensor: Input tensor of shape (sequence_length, hidden_size)
+        gamma: Affine transform parameter of shape (hidden_size,)
+        beta: Affine transform parameter of shape (hidden_size,)
+        epsilon: Small constant for numerical stability
+    
+    Returns:
+        Normalized output tensor of same shape as input_tensor
+    """
+    output_tensor = nl.zeros(input_tensor.shape, dtype=input_tensor.dtype)
+    
+    # Load gamma and beta
+    gamma_loaded = nl.load(gamma)
+    beta_loaded = nl.load(beta)
+    
+    # Compute loop over partition axis
+    for i in range(math.ceil(input_tensor.shape[0] / nl.tile_size.pmax)):
+        for i_p_io in range(nl.tile_size.pmax):
+            # Load one tile of input_tensor
+            input_tile = nl.load(
+                input_tensor,
+                indices=(i * nl.tile_size.pmax + i_p_io, 0),
+                mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
+            )
+            
+            # Compute mean and variance using bn_stats and bn_aggr
+            mean = nl.zeros((nl.tile_size.pmax,), dtype=input_tensor.dtype)
+            variance = nl.zeros((nl.tile_size.pmax,), dtype=input_tensor.dtype)
+            
+            for j in range(math.ceil(input_tensor.shape[1] / nl.tile_size.bn_stats_fmax)):
+                start_idx = j * nl.tile_size.bn_stats_fmax
+                end_idx = min(start_idx + nl.tile_size.bn_stats_fmax, input_tensor.shape[1])
+                
+                input_slice = input_tile[:, start_idx:end_idx]
+                
+                # Use bn_stats to compute statistics
+                stats = nisa.bn_stats(input_slice)
+                mean, variance = nisa.bn_aggr(stats, mean, variance)
+            
+            # Perform shift and scale using tensor_scalar
+            normalized = nisa.tensor_scalar(
+                input_tile,
+                mean,
+                variance,
+                epsilon,
+                gamma_loaded,
+                beta_loaded
+            )
+            
+            # Store output
+            nl.store(
+                output_tensor,
+                indices=(i * nl.tile_size.pmax + i_p_io, 0),
+                value=normalized,
+                mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
+            )
+    
+    return output_tensor
 ```
 
 ```python
-import neuron.nki as nki
-import neuron.nki.language as nl
-import neuron.nki.isa as nisa
-import math
+import torch
+import torch.nn.functional as F
 
-@nki.jit
-def nki_layernorm_kernel_v2(input_tensor, gamma, beta, epsilon):
-  """
-  Optimized LayerNorm kernel using nki.isa APIs for mean/variance calculation
-  and shift/scale operations.
-  
-  Args:
-    input_tensor: 2D input tensor of shape [sequence_length, hidden_size]
-    gamma: 1D affine parameter of shape [hidden_size]
-    beta: 1D affine parameter of shape [hidden_size]
-    epsilon: Small constant for numerical stability
-  
-  Returns:
-    Normalized output tensor of same shape as input_tensor
-  """
-  output_tensor = nl.zeros(input_tensor.shape, dtype=input_tensor.dtype)
-  
-  # Load gamma and beta
-  gamma_loaded = nl.load(gamma)
-  beta_loaded = nl.load(beta)
-  
-  # Compute loop over partition axis
-  for i in range(math.ceil(input_tensor.shape[0] / nl.tile_size.pmax)):
-    for i_p_io in nl.affine_range(nl.tile_size.pmax):
-      # Load input tile
-      input_tile = nl.load(
-        input_tensor[i * nl.tile_size.pmax + i_p_io, :],
-        mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
-      )
-      
-      # Calculate mean and variance using bn_stats and bn_aggr
-      mean_accum = nl.zeros((nl.tile_size.pmax,), dtype=input_tensor.dtype)
-      var_accum = nl.zeros((nl.tile_size.pmax,), dtype=input_tensor.dtype)
-      
-      for j in range(math.ceil(input_tensor.shape[1] / nl.tile_size.bn_stats_fmax)):
-        start_idx = j * nl.tile_size.bn_stats_fmax
-        end_idx = min(start_idx + nl.tile_size.bn_stats_fmax, input_tensor.shape[1])
-        
-        input_slice = input_tile[:, start_idx:end_idx]
-        
-        # Use bn_stats to compute partial statistics
-        stats = nisa.bn_stats(input_slice)
-        mean_accum += stats[0]
-        var_accum += stats[1]
-      
-      # Aggregate statistics
-      mean = nisa.bn_aggr(mean_accum)
-      variance = nisa.bn_aggr(var_accum)
-      
-      # Normalize and apply shift/scale in single instruction
-      normalized = (input_tile - mean) / nl.rsqrt(variance + epsilon)
-      output_tile = nisa.tensor_scalar(normalized, gamma_loaded, beta_loaded, "shift_scale")
-      
-      # Store output
-      nl.store(
-        output_tensor[i * nl.tile_size.pmax + i_p_io, :],
-        output_tile,
-        mask=(i * nl.tile_size.pmax + i_p_io < input_tensor.shape[0])
-      )
-  
-  return output_tensor
+def pytorch_layernorm(input_tensor, gamma, beta, epsilon=1e-5):
+    """
+    PyTorch reference implementation of LayerNorm.
+    
+    Args:
+        input_tensor: Input tensor of shape (sequence_length, hidden_size)
+        gamma: Affine transform parameter of shape (hidden_size,)
+        beta: Affine transform parameter of shape (hidden_size,)
+        epsilon: Small constant for numerical stability
+    
+    Returns:
+        Normalized output tensor of same shape as input_tensor
+    """
+    mean = input_tensor.mean(dim=1, keepdim=True)
+    variance = input_tensor.var(dim=1, keepdim=True, unbiased=False)
+    normalized = (input_tensor - mean) / torch.sqrt(variance + epsilon)
+    output = normalized * gamma + beta
+    return output
 ```
 
 ## test_nki_isa_nc_match_replace8.py
@@ -9048,6 +10227,7 @@ def nki_nc_match_replace_indices8_mask(in_tensor: nt.tensor, imm: np.float32):
 @nki.jit(mode="simulation")
 def nki_nc_match_replace_indices8_3d(data_tensor: nt.tensor):
   n, b, m = data_tensor.shape
+
   out_tensor = nl.ndarray([n, b, m], dtype=data_tensor.dtype, buffer=nl.hbm)
   idx_tensor = nl.ndarray([n, 8], dtype=nl.uint32, buffer=nl.hbm)
 
@@ -9076,6 +10256,7 @@ def nki_nc_match_replace_indices8_3d(data_tensor: nt.tensor):
 @nki.jit(mode="simulation")
 def nki_nc_match_replace_indices8_3d_inplace(data_tensor: nt.tensor):
   n, b, m = data_tensor.shape
+
   out_tensor = nl.ndarray([n, b, m], dtype=data_tensor.dtype, buffer=nl.hbm)
   idx_tensor = nl.ndarray([n, 8], dtype=nl.uint32, buffer=nl.hbm)
 
@@ -9100,138 +10281,6 @@ def nki_nc_match_replace_indices8_3d_inplace(data_tensor: nt.tensor):
   return out_tensor, idx_tensor
 ```
 
-## torch-neuronx-graph-partitioner-app-note.rst
-
-```python
-import torch
-import torch_neuronx
-import torch.nn as nn
-
-import logging
-
-# adjust logger level to see what the partitioner is doing
-logger = logging.getLogger("Neuron")
-
-class MLP(nn.Module):
-    def __init__(
-        self, input_size=28 * 28, output_size=10, layers=[4096, 2048]
-    ):
-        super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, layers[0])
-        self.fc2 = nn.Linear(layers[0], layers[1])
-        self.fc3 = nn.Linear(layers[1], output_size)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        f1 = self.fc1(x)
-        r1 = self.relu(f1)
-        f2 = self.fc2(r1)
-        r2 = self.relu(f2)
-        f3 = self.fc3(r2)
-        out = torch.log_softmax(f3, dim=1)
-        sort_out,_ = torch.sort(out)
-        return sort_out
-
-n = MLP()
-n.eval()
-
-inputs = torch.rand(32,784)
-
-# Configure the graph partitioner with the default values
-partitioner_config = torch_neuronx.PartitionerConfig()
-
-# Trace a neural network with graph partitioner enabled
-neuron_net = torch_neuronx.trace(n, inputs, partitioner_config=partitioner_config)
-
-# Run inference on the partitioned model
-output = neuron_net(inputs)
-```
-
-```python
-import torch
-import torch_neuronx
-import torch.nn as nn
-
-import logging
-
-# adjust logger level to see what the partitioner is doing
-logger = logging.getLogger("Neuron")
-
-class MLP(nn.Module):
-    def __init__(
-        self, input_size=28 * 28, output_size=10, layers=[4096, 2048]
-    ):
-        super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, layers[0])
-        self.fc2 = nn.Linear(layers[0], layers[1])
-        self.fc3 = nn.Linear(layers[1], output_size)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        f1 = self.fc1(x)
-        r1 = self.relu(f1)
-        sort_r1,_ = torch.sort(r1)
-        f2 = self.fc2(sort_r1)
-        r2 = self.relu(f2)
-        f3 = self.fc3(r2)
-        out = torch.log_softmax(f3, dim=1)
-        return out
-
-n = MLP()
-n.eval()
-
-inputs = torch.rand(32,784)
-
-# Configure the graph partitioner with the default values
-partitioner_config = torch_neuronx.PartitionerConfig(max_subgraph_count=2)
-
-# This trace will fail since the min_subgraph_size requirement can't be satisfied by the graph partitioner
-neuron_net = torch_neuronx.trace(n, inputs, partitioner_config=partitioner_config)
-```
-
-```python
-import torch
-import torch_neuronx
-import torch.nn as nn
-
-import logging
-
-# adjust logger level to see what the partitioner is doing
-logger = logging.getLogger("Neuron")
-logger.setLevel(logging.INFO)
-
-class MLP(nn.Module):
-    def __init__(
-        self, input_size=28 * 28, output_size=10, layers=[4096, 2048]
-    ):
-        super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, layers[0])
-        self.fc2 = nn.Linear(layers[0], layers[1])
-        self.fc3 = nn.Linear(layers[1], output_size)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        f1 = self.fc1(x)
-        r1 = self.relu(f1)
-        f2 = self.fc2(r1)
-        r2 = self.relu(f2)
-        f3 = self.fc3(r2)
-        out = torch.log_softmax(f3, dim=1)
-        sort_out,_ = torch.sort(out)
-        return sort_out
-
-n = MLP()
-n.eval()
-
-inputs = torch.rand(32,784)
-
-# Configure the graph partitioner with the default values
-partitioner_config = torch_neuronx.PartitionerConfig(min_operator_percentage_threshold=0.8,ops_to_partition=set(["aten::log_softmax"]))
-
-# This trace succeeds
-neuron_net = torch_neuronx.trace(n, inputs, partitioner_config=partitioner_config)
-```
-
 ## sd2_inpainting_benchmark.py
 
 ```python
@@ -9239,12 +10288,13 @@ import torch
 import torch.nn as nn
 import torch_neuronx
 import os
-import copy
 from diffusers import StableDiffusionInpaintPipeline
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 from diffusers.models.attention_processor import Attention
+import copy
 
-
+# Have to do this double wrapper trick to compile the unet, because
+# of the special UNet2DConditionOutput output type.
 class UNetWrap(nn.Module):
     def __init__(self, unet):
         super().__init__()
@@ -9253,7 +10303,6 @@ class UNetWrap(nn.Module):
     def forward(self, sample, timestep, encoder_hidden_states, cross_attention_kwargs=None):
         out_tuple = self.unet(sample, timestep, encoder_hidden_states, return_dict=False)
         return out_tuple
-
 
 class NeuronUNet(nn.Module):
     def __init__(self, unetwrap):
@@ -9267,7 +10316,6 @@ class NeuronUNet(nn.Module):
         sample = self.unetwrap(sample, timestep.bfloat16().expand((sample.shape[0],)), encoder_hidden_states)[0]
         return UNet2DConditionOutput(sample=sample)
 
-
 class NeuronTextEncoder(nn.Module):
     def __init__(self, text_encoder):
         super().__init__()
@@ -9276,11 +10324,10 @@ class NeuronTextEncoder(nn.Module):
         self.dtype = text_encoder.dtype
         self.device = text_encoder.device
 
-    def forward(self, emb, attention_mask=None):
+    def forward(self, emb, attention_mask = None):
         return [self.neuron_text_encoder(emb)['last_hidden_state']]
 
-
-def get_attention_scores(self, query, key, attn_mask):
+def get_attention_scores(self, query, key, attn_mask):       
     dtype = query.dtype
 
     if self.upcast_attention:
@@ -9310,15 +10357,13 @@ def get_attention_scores(self, query, key, attn_mask):
 
         attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
         attention_probs = attention_probs.to(dtype)
-
+        
     return attention_probs
-
 
 def custom_badbmm(a, b):
     bmm = torch.bmm(a, b)
     scaled = bmm * 0.125
     return scaled
-
 
 def trace_vae_encoder(model_id, height, width, compiler_workdir_root):
     pipe = StableDiffusionInpaintPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
@@ -9337,7 +10382,6 @@ def trace_vae_encoder(model_id, height, width, compiler_workdir_root):
 
     del vae_encoder
     del vae_encoder_neuron
-
 
 def trace_unet(model_id, height, width, compiler_workdir_root):
     DTYPE = torch.bfloat16
@@ -9369,6 +10413,165 @@ def trace_unet(model_id, height, width, compiler_workdir_root):
     del unet_neuron
 ```
 
+## mrpc_feature.py
+
+```python
+import csv
+import numpy as np
+import tokenization
+
+
+class InputExample(object):
+  """A single training/test example for simple sequence classification."""
+
+  def __init__(self, guid, text_a, text_b=None, label=None):
+    """Constructs a InputExample.
+
+    Args:
+      guid: Unique id for the example.
+      text_a: string. The untokenized text of the first sequence. For single
+        sequence tasks, only this sequence must be specified.
+      text_b: (Optional) string. The untokenized text of the second sequence.
+        Only must be specified for sequence pair tasks.
+      label: (Optional) string. The label of the example. This should be
+        specified for train and dev examples, but not for test examples.
+    """
+    self.guid = guid
+    self.text_a = text_a
+    self.text_b = text_b
+    self.label = label
+
+
+class InputFeatures(object):
+  """A single set of features of data."""
+
+  def __init__(self,
+               input_ids,
+               input_mask,
+               segment_ids,
+               label_id,
+               is_real_example=True):
+    self.input_ids = input_ids
+    self.input_mask = input_mask
+    self.segment_ids = segment_ids
+    self.label_id = label_id
+    self.is_real_example = is_real_example
+
+
+def convert_single_example(ex_index, example, label_list, max_seq_length,
+                           tokenizer):
+  """Converts a single `InputExample` into a single `InputFeatures`."""
+
+  label_map = {}
+  for (i, label) in enumerate(label_list):
+    label_map[label] = i
+
+  tokens_a = tokenizer.tokenize(example.text_a)
+  tokens_b = None
+  if example.text_b:
+    tokens_b = tokenizer.tokenize(example.text_b)
+
+  if tokens_b:
+    _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+  else:
+    if len(tokens_a) > max_seq_length - 2:
+      tokens_a = tokens_a[0:(max_seq_length - 2)]
+
+  tokens = []
+  segment_ids = []
+  tokens.append("[CLS]")
+  segment_ids.append(0)
+  for token in tokens_a:
+    tokens.append(token)
+    segment_ids.append(0)
+  tokens.append("[SEP]")
+  segment_ids.append(0)
+
+  if tokens_b:
+    for token in tokens_b:
+      tokens.append(token)
+      segment_ids.append(1)
+    tokens.append("[SEP]")
+    segment_ids.append(1)
+
+  input_ids = tokenizer.convert_tokens_to_ids(tokens)
+  input_mask = [1] * len(input_ids)
+
+  while len(input_ids) < max_seq_length:
+    input_ids.append(0)
+    input_mask.append(0)
+    segment_ids.append(0)
+
+  assert len(input_ids) == max_seq_length
+  assert len(input_mask) == max_seq_length
+  assert len(segment_ids) == max_seq_length
+
+  label_id = label_map[example.label]
+
+  feature = InputFeatures(
+      input_ids=input_ids,
+      input_mask=input_mask,
+      segment_ids=segment_ids,
+      label_id=label_id,
+      is_real_example=True)
+  return feature
+
+
+def read_tsv(input_file, quotechar=None):
+    """Reads a tab separated value file."""
+    with open(input_file, "r") as f:
+        reader = csv.reader(f, delimiter="\t", quotechar=quotechar)
+        lines = []
+        for line in reader:
+            lines.append(line)
+        return lines
+
+
+def create_examples(lines, set_type):
+    """Creates examples for the training and dev sets."""
+    examples = []
+    for (i, line) in enumerate(lines):
+      if i == 0:
+        continue
+      guid = "%s-%s" % (set_type, i)
+      text_a = tokenization.convert_to_unicode(line[3])
+      text_b = tokenization.convert_to_unicode(line[4])
+      if set_type == "test":
+        label = "0"
+      else:
+        label = tokenization.convert_to_unicode(line[0])
+      examples.append(
+          InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+    return examples
+
+
+def _truncate_seq_pair(tokens_a, tokens_b, max_length):
+  """Truncates a sequence pair in place to the maximum length."""
+  while True:
+    total_length = len(tokens_a) + len(tokens_b)
+    if total_length <= max_length:
+      break
+    if len(tokens_a) > len(tokens_b):
+      tokens_a.pop()
+    else:
+      tokens_b.pop()
+
+
+def text_pair_to_model_feed_dict(text_a, text_b, tokenizer):
+    fake_tsv = [['index', '#1 ID', '#2 ID', '#1 String', '#2 String'],
+                ['', '', '', text_a, text_b]]
+    result = create_examples(fake_tsv, "test")
+    example = result[0]
+    label_list = ['0', '1']
+    feature = convert_single_example(ex_index=0, example=example, label_list=label_list,
+                                     max_seq_length=128, tokenizer=tokenizer)
+    return {
+        'input_ids': np.tile(np.int32(feature.input_ids), reps=[1, 1]),
+        'input_mask': np.tile(np.int32(feature.input_mask), reps=[1, 1]),
+        'segment_ids': np.tile(np.int32(feature.segment_ids), reps=[1, 1]),
+    }
+```
+
 ## test_nki_isa_range_select.py
 
 ```python
@@ -9378,17 +10581,17 @@ import neuronxcc.nki.language as nl
 import numpy as np
 
 @nki.jit(mode="simulation", platform_target="trn2")
-def nki_range_select_example(on_true, bound0, bound1, compare_op0, compare_op1, range_start, dtype):
+def nki_range_select_example(on_true, bound0, bound1, compare_op0, compare_op1, range_start):
     # Create output tensors
-    select_res = nl.ndarray(on_true.shape, dtype=dtype, buffer=nl.hbm)
-    reduce_result = nl.ndarray((on_true.shape[0], 1), dtype=dtype, buffer=nl.hbm)
+    select_res = nl.ndarray(on_true.shape, dtype=nl.float32, buffer=nl.hbm)
+    reduce_result = nl.ndarray((on_true.shape[0], 1), dtype=nl.float32, buffer=nl.hbm)
     
     on_true_tile = nl.load(on_true[...])
     bound0_tile = nl.load(bound0[...])
     bound1_tile = nl.load(bound1[...])
 
-    reduce_res_tile = nl.ndarray((on_true.shape[0], 1), dtype=dtype, buffer=nl.sbuf)
-    result = nl.ndarray(on_true.shape, dtype=dtype, buffer=nl.sbuf)
+    reduce_res_tile = nl.ndarray((on_true.shape[0], 1), dtype=nl.float32, buffer=nl.sbuf)
+    result = nl.ndarray(on_true.shape, dtype=nl.float32, buffer=nl.sbuf)
     
     result[...] = nisa.range_select(
         on_true_tile=on_true_tile,
@@ -9400,14 +10603,20 @@ def nki_range_select_example(on_true, bound0, bound1, compare_op0, compare_op1, 
         reduce_res=reduce_res_tile,
         reduce_op=np.max,
         range_start=range_start,
-        on_false_value=nl.fp32.min,
-        dtype=dtype
+        on_false_value=nl.fp32.min
     )
 
     nl.store(select_res[...], value=result[...])
     nl.store(reduce_result[...], value=reduce_res_tile[...])
 
     return result, reduce_result
+```
+
+```python
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+import numpy as np
 
 @nki.jit(mode="simulation", platform_target="trn2")
 def nki_range_select_chaining(on_true, bound0, bound1, compare_op0, compare_op1, range_start):
@@ -9474,58 +10683,188 @@ def nki_range_select_chaining(on_true, bound0, bound1, compare_op0, compare_op1,
     return select_res, reduce_result
 ```
 
-## flex-eg.rst
+## ptl_developer_guide.rst
 
 ```python
-import mxnet as mx
+from lightning.pytorch import LightningModule
+from neuronx_distributed.lightning import NeuronLTModule
+import torch_xla.core.xla_model as xm
+from neuronx_distributed import parallel_state
 
-# Load models (MXNet)
-# loaded into the 2 cores starting with core 0
-sym, args, aux = mx.model.load_checkpoint(mx_model0_file, 0)
-model0 = sym.bind(ctx=mx.neuron(0), args=args, aux_states=aux, grad_req='null')
-# loaded into the 4 cores starting with core 2
-sym, args, aux = mx.model.load_checkpoint(mx_model1_file, 0)
-model1 = sym.bind(ctx=mx.neuron(2), args=args, aux_states=aux, grad_req='null')
-# loaded into the 3 cores starting with core 6
-sym, args, aux = mx.model.load_checkpoint(mx_model2_file, 0)
-model2 = sym.bind(ctx=mx.neuron(6), args=args, aux_states=aux, grad_req='null')
-# loaded into the 4 cores starting with core 9
-sym, args, aux = mx.model.load_checkpoint(mx_model3_file, 0)
-model3 = sym.bind(ctx=mx.neuron(9), args=args, aux_states=aux, grad_req='null')
+class NeuronLlamaLTModule(NeuronLTModule):
+    def training_step(self, batch, batch_idx):
+        xm.mark_step()
+        for logger in self.trainer.loggers:
+            logger.print_step = -1
+        self.should_print = False
+        outputs = self.model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"],
+        )
+        loss = outputs.loss / self.grad_accum_steps
+        loss.backward()
+        self.averaged_loss += loss.detach()
+        xm.mark_step()
+        if not self.automatic_optimization and (batch_idx + 1) % self.grad_accum_steps == 0:
+            self.should_print = True
+            loss_div = self.averaged_loss / self.trainer.strategy.data_parallel_size
+            loss_reduced = xm.all_reduce(
+                xm.REDUCE_SUM,
+                loss_div,
+                groups=parallel_state.get_data_parallel_group(as_list=True),
+            )
+            loss_reduced_detached = loss_reduced.detach()
+            self.averaged_loss.zero_()
+            optimizer = self.optimizers()
+            scheduler = self.lr_schedulers()
+            optimizer.step()
+            optimizer.zero_grad()
+            scheduler.step()
+            xm.mark_step()
+            self.loss = loss_reduced_detached
+        return loss
 
-# run inference by simply calling the loaded model
-results0 = model0.forward(data=inputs0)
-results1 = model1.forward(data=inputs1)
-results2 = model2.forward(data=inputs2)
-results3 = model3.forward(data=inputs3)
+    def configure_optimizers(self):
+        param_groups = self.get_param_groups_by_weight_decay()
+        optimizer = initialize_parallel_optimizer(
+            self.nxd_config, self.opt_cls, param_groups, **self.opt_kwargs
+        )
+        optimizer.zero_grad()
+        scheduler = self.scheduler_cls(optimizer, *self.scheduler_args, **self.scheduler_kwargs)
+        return (
+            [optimizer],
+            [
+                {
+                    "scheduler": scheduler,
+                }
+            ],
+        )
+
+    def on_train_batch_end(self, *args, **kwargs):
+        if self.should_print:
+            if not self.automatic_optimization:
+                self.log(
+                    "loss",
+                    self.loss.detach().cpu().item() if self.loss is not None else torch.zeros(1, device="cpu", requires_grad=False),
+                    prog_bar=True,
+                )
+                self.log(
+                    "global_step",
+                    self.global_step,
+                    prog_bar=True,
+                    on_step=True,
+                    on_epoch=True,
+                )
+                for logger in self.trainer.loggers:
+                    logger.print_step = self.global_step
+
+    def get_param_groups_by_weight_decay(self):
+        """Get param groups. Customers can override this to have their own way of weight_decay"""
+        param_optimizer = list(self.model.named_parameters())
+        no_decay = ["bias", "LayerNorm"]
+
+        optimizer_grouped_parameters = [
+            {
+                "params": [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
+                "weight_decay": 0.01,
+            },
+            {
+                "params": [p for n, p in param_optimizer if any(nd in n for nd in no_decay)],
+                "weight_decay": 0.0,
+            },
+        ]
+        return optimizer_grouped_parameters
 ```
 
 ```python
-import os
-import mxnet as mx
+from lightning.pytorch.core.datamodule import LightningDataModule
+from typing import Callable, Tuple, Dict
 
-# Set Environment 
-os.environ['NEURONCORE_GROUP_SIZES']='2,4,3,4'
+class NeuronLightningDataModule(LightningDataModule):
+    def __init__(
+        self, 
+        dataloader_fn: Callable,
+        data_dir: str, 
+        batch_size: int,
+        data_args: Tuple = (), 
+        data_kwargs: Dict = {},
+    ):
+        super().__init__()
+        self.dataloader_fn = dataloader_fn
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.data_args = data_args
+        self.data_kwargs = data_kwargs
 
-# Load models (MXNet)
-# loaded into the first group of NC0-NC1
-sym, args, aux = mx.model.load_checkpoint(mx_model0_file, 0)
-model0 = sym.bind(ctx=mx.neuron(0), args=args, aux_states=aux, grad_req='null')
-# loaded into the second group of NC2-NC5
-sym, args, aux = mx.model.load_checkpoint(mx_model1_file, 0)
-model1 = sym.bind(ctx=mx.neuron(1), args=args, aux_states=aux, grad_req='null')
-# loaded into the third group of NC6-NC8
-sym, args, aux = mx.model.load_checkpoint(mx_model2_file, 0)
-model2 = sym.bind(ctx=mx.neuron(2), args=args, aux_states=aux, grad_req='null')
-# loaded into the fourth group of NC9-NC12
-sym, args, aux = mx.model.load_checkpoint(mx_model3_file, 0)
-model3 = sym.bind(ctx=mx.neuron(3), args=args, aux_states=aux, grad_req='null')
+    def setup(self, stage: str):
+        pass
 
-# run inference by simply calling the loaded model
-results0 = model0.forward(data=inputs0)
-results1 = model1.forward(data=inputs1)
-results2 = model2.forward(data=inputs2)
-results3 = model3.forward(data=inputs3)
+    def train_dataloader(self):
+        return self.dataloader_fn(
+            self.data_dir,
+            self.batch_size,
+            self.trainer.strategy.data_parallel_size,
+            self.trainer.strategy.data_parallel_rank,
+            *self.data_args,
+            **self.data_kwargs
+        )
+```
+
+```python
+from lightning.pytorch import Trainer
+from neuronx_distributed.lightning import NeuronXLAStrategy, NeuronXLAPrecisionPlugin, NeuronTQDMProgressBar, NeuronTensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
+
+model = NeuronLlamaLTModule(
+    model_fn=LlamaForCausalLM,
+    nxd_config=nxd_config,
+    model_args=(model_config,),
+    opt_cls=optimizer_cls,
+    scheduler_cls=configure_scheduler,
+    opt_kwargs={
+        "lr": flags.lr,
+    },
+    scheduler_args=(flags.warmup_steps, flags.max_steps),
+    grad_accum_steps=flags.grad_accum_usteps,
+    manual_opt=True,
+)
+
+dm = NeuronLightningDataModule(
+    create_llama_pretraining_dataset,
+    flags.data_dir,
+    flags.batch_size,
+    data_args=(flags.seed,),
+)
+
+strategy = NeuronXLAStrategy(
+    nxd_config=nxd_config
+)
+plugins = []
+plugins.append(NeuronXLAPrecisionPlugin())
+callbacks = []
+callbacks.append(NeuronTQDMProgressBar())
+
+callbacks.append(
+    ModelCheckpoint(
+        save_top_k=flags.num_kept_checkpoint,
+        monitor="global_step",
+        mode="max",
+        every_n_train_steps=flags.checkpoint_freq,
+        dirpath=flags.checkpoint_dir,
+    )
+)
+
+trainer = Trainer(
+    strategy=strategy,
+    max_steps=flags.steps_this_run,
+    plugins=plugins,
+    enable_checkpointing=flags.save_checkpoint,
+    logger=NeuronTensorBoardLogger(save_dir=flags.log_dir),
+    log_every_n_steps=1,
+    callbacks=callbacks,
+)
+trainer.fit(model=model, datamodule=dm, ckpt_path=ckpt_path)
 ```
 
 ## sd_4x_upscaler_compile.py
@@ -9667,36 +11006,44 @@ class NeuronTextEncoder(nn.Module):
 
     def forward(self, emb, attention_mask=None):
         return [self.neuron_text_encoder(emb)["last_hidden_state"]]
+```
 
-
-# Compile text encoder
+```python
+# Compile text encoder with torch_neuronx.trace
 text_encoder_neuron = torch_neuronx.trace(
     text_encoder.neuron_text_encoder,
     emb,
     compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder'),
 )
+torch.jit.save(text_encoder_neuron, text_encoder_filename)
+```
 
-# Compile VAE decoder
+```python
+# Compile VAE decoder with torch_neuronx.trace
+decoder_in = torch.randn([1, 4, 128, 128])
 decoder_neuron = torch_neuronx.trace(
     decoder,
     decoder_in,
     compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_decoder'),
 )
+torch.jit.save(decoder_neuron, decoder_filename)
+```
 
-# Compile UNet with compiler args
+```python
+# Compile UNet with torch_neuronx.trace and compiler arguments
+sample_1b = torch.randn([1, 7, 128, 128])
+timestep_1b = torch.tensor(999).float().expand((1,))
+encoder_hidden_states_1b = torch.randn([1, 77, 1024])
+class_labels = torch.tensor([20])
+example_inputs = sample_1b, timestep_1b, encoder_hidden_states_1b, class_labels
+
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
     compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'unet'),
     compiler_args=["--model-type=unet-inference"]
 )
-
-# Compile VAE post_quant_conv
-post_quant_conv_neuron = torch_neuronx.trace(
-    post_quant_conv,
-    post_quant_conv_in,
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_post_quant_conv'),
-)
+torch.jit.save(unet_neuron, unet_filename)
 ```
 
 ## customop-mlp-perf-opt.rst
@@ -9707,6 +11054,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import my_ops
 
+# Declare 3-layer MLP for MNIST dataset                                                                
 class MLP(nn.Module):
     def __init__(self, input_size = 28 * 28, output_size = 10, layers = [4096, 2048]):
         super(MLP, self).__init__()
@@ -9734,7 +11082,7 @@ custom_op.load(
 )
 ```
 
-```c++
+```cpp
 torch::Tensor relu_forward(const torch::Tensor& t_in) {
     size_t num_elem = t_in.numel();
     torch::Tensor t_out = torch::zeros(t_in.sizes(), torch::kFloat); 
@@ -9747,14 +11095,14 @@ torch::Tensor relu_forward(const torch::Tensor& t_in) {
         auto t_out_tcm_acc = t_out.tcm_accessor();
 
         for (size_t i = 0; i < num_elem; i += buffer_size) {
-            size_t remaining_elem = num_elem - i;
-            size_t copy_size = (remaining_elem > buffer_size) ? buffer_size : remaining_elem;
+        size_t remaining_elem = num_elem - i;
+        size_t copy_size = (remaining_elem > buffer_size) ? buffer_size : remaining_elem;
 
-            t_in_tcm_acc.tensor_to_tcm<float>(tcm_buffer, i, copy_size);
-            for (size_t j = 0; j < copy_size; j++) {
-                tcm_buffer[j] = tcm_buffer[j] > 0.0 ? tcm_buffer[j] : 0.0;
-            }
-            t_out_tcm_acc.tcm_to_tensor<float>(tcm_buffer, i, copy_size);
+        t_in_tcm_acc.tensor_to_tcm<float>(tcm_buffer, i, copy_size);
+        for (size_t j = 0; j < copy_size; j++) {
+            tcm_buffer[j] = tcm_buffer[j] > 0.0 ? tcm_buffer[j] : 0.0;
+        }
+        t_out_tcm_acc.tcm_to_tensor<float>(tcm_buffer, i, copy_size);
         }
     }
     torch::neuron::tcm_free(tcm_buffer);
@@ -9762,7 +11110,7 @@ torch::Tensor relu_forward(const torch::Tensor& t_in) {
 }
 ```
 
-```c++
+```cpp
 torch::Tensor relu_forward(const torch::Tensor& t_in) {
     size_t num_elem = t_in.numel();
     torch::Tensor t_out = get_dst_tensor();
@@ -9782,19 +11130,73 @@ torch::Tensor relu_forward(const torch::Tensor& t_in) {
         auto t_out_tcm_acc = t_out.tcm_accessor();
 
         for (size_t i = 0; i < partition; i += buffer_size) {
-            size_t remaining_elem = partition - i;
-            size_t copy_size = (remaining_elem > buffer_size) ? buffer_size : remaining_elem;
+        size_t remaining_elem = partition - i;
+        size_t copy_size = (remaining_elem > buffer_size) ? buffer_size : remaining_elem;
 
-            t_in_tcm_acc.tensor_to_tcm<float>(tcm_buffer, partition * cpu_id + i, copy_size);
-            for (size_t j = 0; j < copy_size; j++) {
-                tcm_buffer[j] = tcm_buffer[j] > 0.0 ? tcm_buffer[j] : 0.0;
-            }
-            t_out_tcm_acc.tcm_to_tensor<float>(tcm_buffer, partition * cpu_id + i, copy_size);
+        t_in_tcm_acc.tensor_to_tcm<float>(tcm_buffer, partition *cpu_id + i, copy_size);
+        for (size_t j = 0; j < copy_size; j++) {
+            tcm_buffer[j] = tcm_buffer[j] > 0.0 ? tcm_buffer[j] : 0.0;
+        }
+        t_out_tcm_acc.tcm_to_tensor<float>(tcm_buffer, partition *cpu_id + i, copy_size);
         }
     }
     torch::neuron::tcm_free(tcm_buffer);
     return t_out;
 }
+```
+
+## finetuning_llama2_7b_ptl.rst
+
+```python
+import torch
+from transformers.models.llama.modeling_llama import LlamaForCausalLM
+
+model = LlamaForCausalLM.from_pretrained("NousResearch/Llama-2-7b-hf")
+torch.save(model.state_dict(), "llama-7b-hf-pretrained.pt")
+```
+
+## finetuning_llama3_8B_ptl_lora.rst
+
+```python
+import neuronx_distributed as nxd
+
+nxd.save_checkpoint(
+    checkpoint_dir_str="lora_checkpoint", 
+    tag="lora", 
+    model=model
+)
+```
+
+```python
+from peft import LoraConfig
+
+target_modules = ["q_proj", "v_proj", "k_proj"] if flags.qkv_linear == 0 else ["qkv_proj"]      
+lora_config = LoraConfig(
+    enable_lora=flags.enable_lora,
+    lora_rank=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    lora_verbose=True,
+    target_modules=target_modules,
+)
+```
+
+```python
+from peft import LoraConfig
+
+lora_config = LoraConfig(
+    enable_lora=True,
+    lora_rank=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    lora_verbose=True,
+    target_modules=target_modules,
+    save_lora_base=False,
+    merge_lora=False,
+    save_lora_config_adapter=True,
+)
 ```
 
 ## layernorm_nki_kernel.py
@@ -9805,7 +11207,9 @@ import neuronxcc.nki.language as nl
 import neuronxcc.nki.isa as nisa
 import numpy as np
 import math
+```
 
+```python
 @nki.jit
 def nki_layernorm_kernel_v1(input_tensor, epsilon, gamma_vector, beta_vector):
   """Computes LayerNorm.
@@ -9858,12 +11262,6 @@ def nki_layernorm_kernel_v1(input_tensor, epsilon, gamma_vector, beta_vector):
 ```
 
 ```python
-import neuronxcc.nki as nki
-import neuronxcc.nki.language as nl
-import neuronxcc.nki.isa as nisa
-import numpy as np
-import math
-
 @nki.jit
 def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
   """Computes LayerNorm.
@@ -9953,10 +11351,6 @@ import torch
 import torch.nn as nn
 import torch_neuronx
 
-# Define datatype
-DTYPE = torch.bfloat16
-
-# Model wrapper for custom return types
 class UNetWrap(nn.Module):
     def __init__(self, unet):
         super().__init__()
@@ -9965,7 +11359,9 @@ class UNetWrap(nn.Module):
     def forward(self, sample, timestep, encoder_hidden_states, cross_attention_kwargs=None):
         out_tuple = self.unet(sample, timestep, encoder_hidden_states, return_dict=False)
         return out_tuple
+```
 
+```python
 class NeuronUNet(nn.Module):
     def __init__(self, unetwrap):
         super().__init__()
@@ -9977,8 +11373,22 @@ class NeuronUNet(nn.Module):
     def forward(self, sample, timestep, encoder_hidden_states, cross_attention_kwargs=None):
         sample = self.unetwrap(sample, timestep.to(dtype=DTYPE).expand((sample.shape[0],)), encoder_hidden_states)[0]
         return UNet2DConditionOutput(sample=sample)
+```
 
-# Optimized attention computation
+```python
+class NeuronTextEncoder(nn.Module):
+    def __init__(self, text_encoder):
+        super().__init__()
+        self.neuron_text_encoder = text_encoder
+        self.config = text_encoder.config
+        self.dtype = text_encoder.dtype
+        self.device = text_encoder.device
+
+    def forward(self, emb, attention_mask = None):
+        return [self.neuron_text_encoder(emb)['last_hidden_state']]
+```
+
+```python
 def get_attention_scores(self, query, key, attn_mask):       
     dtype = query.dtype
 
@@ -9987,31 +11397,40 @@ def get_attention_scores(self, query, key, attn_mask):
         key = key.float()
 
     if(query.size() == key.size()):
-        attention_scores = custom_badbmm(key, query.transpose(-1, -2))
+        attention_scores = custom_badbmm(
+            key,
+            query.transpose(-1, -2)
+        )
+
         if self.upcast_softmax:
             attention_scores = attention_scores.float()
+
         attention_probs = attention_scores.softmax(dim=1).permute(0,2,1)
         attention_probs = attention_probs.to(dtype)
+
     else:
-        attention_scores = custom_badbmm(query, key.transpose(-1, -2))
+        attention_scores = custom_badbmm(
+            query,
+            key.transpose(-1, -2)
+        )
+
         if self.upcast_softmax:
             attention_scores = attention_scores.float()
+
         attention_probs = attention_scores.softmax(dim=-1)
         attention_probs = attention_probs.to(dtype)
         
     return attention_probs
+```
 
+```python
 def custom_badbmm(a, b):
     bmm = torch.bmm(a, b)
     scaled = bmm * 0.125
     return scaled
+```
 
-# Compile UNet with torch_neuronx
-sample_1b = torch.randn([1, 4, 64, 64], dtype=DTYPE)
-timestep_1b = torch.tensor(999, dtype=DTYPE).expand((1,))
-encoder_hidden_states_1b = torch.randn([1, 77, 1024], dtype=DTYPE)
-example_inputs = sample_1b, timestep_1b, encoder_hidden_states_1b
-
+```python
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
@@ -10019,26 +11438,26 @@ unet_neuron = torch_neuronx.trace(
     compiler_args=["--model-type=unet-inference", "--enable-fast-loading-neuron-binaries"]
 )
 
-# Enable asynchronous and lazy loading
 torch_neuronx.async_load(unet_neuron)
 torch_neuronx.lazy_load(unet_neuron)
 
-# Save compiled model
 torch.jit.save(unet_neuron, unet_filename)
+```
 
-# Compile text encoder
+```python
 text_encoder_neuron = torch_neuronx.trace(
-    text_encoder.neuron_text_encoder, 
-    emb, 
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder'),
-    compiler_args=["--enable-fast-loading-neuron-binaries"]
-)
+        text_encoder.neuron_text_encoder, 
+        emb, 
+        compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder'),
+        compiler_args=["--enable-fast-loading-neuron-binaries"]
+        )
 
 torch_neuronx.async_load(text_encoder_neuron)
-torch.jit.save(text_encoder_neuron, text_encoder_filename)
 
-# Compile VAE decoder
-decoder_in = torch.randn([1, 4, 64, 64], dtype=torch.float32)
+torch.jit.save(text_encoder_neuron, text_encoder_filename)
+```
+
+```python
 decoder_neuron = torch_neuronx.trace(
     decoder, 
     decoder_in, 
@@ -10047,10 +11466,11 @@ decoder_neuron = torch_neuronx.trace(
 )
 
 torch_neuronx.async_load(decoder_neuron)
-torch.jit.save(decoder_neuron, decoder_filename)
 
-# Compile VAE post_quant_conv
-post_quant_conv_in = torch.randn([1, 4, 64, 64], dtype=torch.float32)
+torch.jit.save(decoder_neuron, decoder_filename)
+```
+
+```python
 post_quant_conv_neuron = torch_neuronx.trace(
     post_quant_conv, 
     post_quant_conv_in,
@@ -10058,6 +11478,7 @@ post_quant_conv_neuron = torch_neuronx.trace(
 )
 
 torch_neuronx.async_load(post_quant_conv_neuron)
+
 torch.jit.save(post_quant_conv_neuron, post_quant_conv_filename)
 ```
 
@@ -10166,6 +11587,11 @@ neuronx_distributed.parallel_layers.save({
 import torch
 import torch.nn as nn
 import torch_neuronx
+import copy
+from diffusers import StableDiffusionPipeline
+from diffusers.models.unet_2d_condition import UNet2DConditionOutput
+
+DTYPE = torch.float32
 
 class UNetWrap(nn.Module):
     def __init__(self, unet):
@@ -10185,8 +11611,7 @@ class NeuronUNet(nn.Module):
         self.device = unetwrap.unet.device
 
     def forward(self, sample, timestep, encoder_hidden_states, cross_attention_kwargs=None):
-        sample = self.unetwrap(sample, timestep.to(dtype=torch.float32).expand((sample.shape[0],)), encoder_hidden_states)[0]
-        from diffusers.models.unet_2d_condition import UNet2DConditionOutput
+        sample = self.unetwrap(sample, timestep.to(dtype=DTYPE).expand((sample.shape[0],)), encoder_hidden_states)[0]
         return UNet2DConditionOutput(sample=sample)
 
 class NeuronTextEncoder(nn.Module):
@@ -10199,9 +11624,12 @@ class NeuronTextEncoder(nn.Module):
 
     def forward(self, emb, attention_mask = None):
         return [self.neuron_text_encoder(emb)['last_hidden_state']]
-```
 
-```python
+def custom_badbmm(a, b):
+    bmm = torch.bmm(a, b)
+    scaled = bmm * 0.125
+    return scaled
+
 def get_attention_scores(self, query, key, attn_mask):       
     dtype = query.dtype
 
@@ -10234,71 +11662,191 @@ def get_attention_scores(self, query, key, attn_mask):
         attention_probs = attention_probs.to(dtype)
         
     return attention_probs
-
-def custom_badbmm(a, b):
-    bmm = torch.bmm(a, b)
-    scaled = bmm * 0.125
-    return scaled
 ```
 
 ```python
 # Compile UNet
-sample_1b = torch.randn([1, 4, 96, 96], dtype=torch.float32)
-timestep_1b = torch.tensor(999, dtype=torch.float32).expand((1,))
-encoder_hidden_states_1b = torch.randn([1, 77, 1024], dtype=torch.float32)
+unet = copy.deepcopy(pipe.unet.unetwrap)
+
+sample_1b = torch.randn([1, 4, 96, 96], dtype=DTYPE)
+timestep_1b = torch.tensor(999, dtype=DTYPE).expand((1,))
+encoder_hidden_states_1b = torch.randn([1, 77, 1024], dtype=DTYPE)
 example_inputs = sample_1b, timestep_1b, encoder_hidden_states_1b
 
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
-    compiler_workdir='sd2_compile_dir_768/unet',
+    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'unet'),
     compiler_args=["--model-type=unet-inference", "--enable-fast-loading-neuron-binaries"]
 )
 
 torch_neuronx.async_load(unet_neuron)
 torch_neuronx.lazy_load(unet_neuron)
-torch.jit.save(unet_neuron, 'sd2_compile_dir_768/unet/model.pt')
+
+torch.jit.save(unet_neuron, unet_filename)
 ```
 
 ```python
 # Compile text encoder
-emb = torch.tensor([[49406, 18376, 525, 7496, 49407] + [0]*72])
+emb = torch.tensor([[49406, 18376, 525, 7496, 49407, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0]])
+
 text_encoder_neuron = torch_neuronx.trace(
-    text_encoder.neuron_text_encoder, 
-    emb, 
-    compiler_workdir='sd2_compile_dir_768/text_encoder',
-    compiler_args=["--enable-fast-loading-neuron-binaries"]
-)
+        text_encoder.neuron_text_encoder, 
+        emb, 
+        compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'text_encoder'),
+        compiler_args=["--enable-fast-loading-neuron-binaries"]
+        )
 
 torch_neuronx.async_load(text_encoder_neuron)
-torch.jit.save(text_encoder_neuron, 'sd2_compile_dir_768/text_encoder/model.pt')
+
+torch.jit.save(text_encoder_neuron, text_encoder_filename)
 ```
 
 ```python
 # Compile VAE decoder
-decoder_in = torch.randn([1, 4, 96, 96], dtype=torch.float32)
+decoder_in = torch.randn([1, 4, 96, 96], dtype=DTYPE)
+
 decoder_neuron = torch_neuronx.trace(
     decoder, 
     decoder_in, 
-    compiler_workdir='sd2_compile_dir_768/vae_decoder',
+    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_decoder'),
     compiler_args=["--enable-fast-loading-neuron-binaries"]
 )
 
 torch_neuronx.async_load(decoder_neuron)
-torch.jit.save(decoder_neuron, 'sd2_compile_dir_768/vae_decoder/model.pt')
+
+torch.jit.save(decoder_neuron, decoder_filename)
 ```
 
 ```python
 # Compile VAE post_quant_conv
-post_quant_conv_in = torch.randn([1, 4, 96, 96], dtype=torch.float32)
+post_quant_conv_in = torch.randn([1, 4, 96, 96], dtype=DTYPE)
+
 post_quant_conv_neuron = torch_neuronx.trace(
     post_quant_conv, 
     post_quant_conv_in,
-    compiler_workdir='sd2_compile_dir_768/vae_post_quant_conv',
+    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_post_quant_conv'),
 )
 
 torch_neuronx.async_load(post_quant_conv_neuron)
-torch.jit.save(post_quant_conv_neuron, 'sd2_compile_dir_768/vae_post_quant_conv/model.pt')
+
+torch.jit.save(post_quant_conv_neuron, post_quant_conv_filename)
+```
+
+## migration-from-xla-downcast-bf16.rst
+
+```python
+import os
+import torch
+
+# Full BF16 with stochastic rounding enabled
+os.environ["NEURON_RT_STOCHASTIC_ROUNDING_EN"] = "1"
+model.to(torch.bfloat16)
+```
+
+```python
+import torch
+
+# Keep loss in FP32
+running_loss = torch.zeros(1, dtype=torch.float).to(device)
+```
+
+```python
+import torch
+
+# Convert gradients to FP32 before optimizer computations
+grad = p.grad.data.float()
+```
+
+```python
+import torch
+
+# BF16 in GPU-compatible mode: make FP32 copy of weights in optimizer initializer
+self.param_groups_highprec = []
+for group in self.param_groups:
+    params = group['params']
+    param_groups_highprec = [p.data.float() for p in params]
+    self.param_groups_highprec.append({'params': param_groups_highprec})
+```
+
+```python
+import torch
+
+# Update FP32 copy of weights in optimizer step
+for group, group_highprec in zip(self.param_groups, self.param_groups_highprec):
+    for p, p_highprec in zip(group['params'], group_highprec['params']):
+        grad = p.grad.data.float()
+        # compute the exponential average and denominator using grad
+        # ...
+        p_highprec.data.addcdiv_(exponential_avg, denominator, value=-step_size)
+```
+
+```python
+import os
+
+# BF16 automatic mixed precision: disable compiler auto-cast
+os.environ["NEURON_CC_FLAGS"] = "--auto-cast=none"
+```
+
+```python
+import torch
+
+# BF16 autocast in training loop
+def train_loop_fn(train_loader):
+    for i, data in enumerate(train_loader):
+        torch.cuda.is_bf16_supported = lambda: True
+        with torch.autocast(dtype=torch.bfloat16, device_type='xla'):
+            inputs = data[0]
+            labels = data[3]
+            outputs = model(inputs, labels=labels)
+        loss = outputs.loss / flags.grad_acc_steps
+        loss.backward()
+        optimizer.step()
+        xm.mark_step()
+```
+
+## zero1_gpt2.rst
+
+```python
+from torch_xla.distributed.zero_redundancy_optimizer import ZeroRedundancyOptimizer
+import torch
+import torch_xla.core.xla_model as xm
+from torch.optim import AdamW
+
+# Example 1: Basic ZeRO-1 optimizer setup
+device = xm.xla_device()
+model = model.to(device)
+
+optimizer = ZeroRedundancyOptimizer(model.parameters(), AdamW, lr=0.001)
+```
+
+```python
+# Example 2: Training loop with ZeRO-1
+loss.backward()
+xm.mark_step()
+optimizer.step()
+xm.mark_step()
+```
+
+```python
+# Example 3: ZeRO-1 optimizer with advanced configuration
+optimizer = ZeroRedundancyOptimizer(
+    model.parameters(),
+    AdamW,
+    lr=0.001,
+    optimizer_dtype=torch.float32,
+    grad_clipping=True,
+    max_norm=1.0,
+    use_grad_acc_hook=True,
+    higher_cc_precision=False
+)
 ```
 
 ## writing-tests.rst
@@ -10329,16 +11877,6 @@ class ExampleModule(torch.nn.Module):
 
     def forward(self, x):
         return self.linear(x)
-
-
-def test_validate_accuracy_basic_module():
-    inputs = [(torch.arange(0, SAMPLE_SIZE, dtype=torch.float32),)]
-    example_inputs = [(torch.zeros((SAMPLE_SIZE), dtype=torch.float32),)]
-
-    module_cpu = ExampleModule(distributed=False)
-    neuron_model = build_module(ExampleModule, example_inputs, module_init_kwargs={"distributed": True})
-
-    validate_accuracy(neuron_model, inputs, cpu_callable=module_cpu)
 ```
 
 ```python
@@ -10349,14 +11887,6 @@ from neuronx_distributed_inference.utils.testing import build_function, validate
 
 def example_sum(tensor):
     return torch.sum(tensor)
-
-
-def test_validate_accuracy_basic_function():
-    inputs = [(torch.tensor([1, 2, 3], dtype=torch.float32),)]
-    example_inputs = [(torch.zeros((3), dtype=torch.float32),)]
-
-    neuron_model = build_function(example_sum, example_inputs)
-    validate_accuracy(neuron_model, inputs, cpu_callable=example_sum)
 ```
 
 ```python
@@ -10381,6 +11911,7 @@ output = model(torch.rand(4))
 import torch
 import torch.nn as nn
 import torch_neuronx
+from diffusers import StableDiffusionInpaintPipeline
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 
 DTYPE = torch.bfloat16
@@ -10459,7 +11990,7 @@ def custom_badbmm(a, b):
 ```python
 # Loading compiled models with torch_neuronx
 pipe.unet = NeuronUNet(UNetWrap(pipe.unet))
-device_ids = [0,1]
+device_ids = [0, 1]
 pipe.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load(unet_filename), device_ids, set_dynamic_batching=False)
 
 pipe.text_encoder = NeuronTextEncoder(pipe.text_encoder)
@@ -10477,6 +12008,7 @@ import torch.nn as nn
 import torch_neuronx
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 from diffusers.models.attention_processor import Attention
+
 
 # Optimized attention
 def get_attention_scores_neuron(self, query, key, attn_mask):    
@@ -10496,7 +12028,7 @@ def get_attention_scores_neuron(self, query, key, attn_mask):
         attention_probs = attention_scores.softmax(dim=-1)
   
     return attention_probs
-
+ 
 
 def custom_badbmm(a, b, scale):
     bmm = torch.bmm(a, b)
@@ -10517,7 +12049,7 @@ class UNetWrap(nn.Module):
                               return_dict=False)
         return out_tuple
 
-
+    
 class NeuronUNet(nn.Module):
     def __init__(self, unetwrap):
         super().__init__()
@@ -10534,9 +12066,8 @@ class NeuronUNet(nn.Module):
                                added_cond_kwargs["text_embeds"],
                                added_cond_kwargs["time_ids"])[0]
         return UNet2DConditionOutput(sample=sample)
-```
 
-```python
+
 # Compile UNet with torch_neuronx.trace
 sample_1b = torch.randn([1, 4, 128, 128])
 timestep_1b = torch.tensor(999).float().expand((1,))
@@ -10548,7 +12079,7 @@ example_inputs = (sample_1b, timestep_1b, encoder_hidden_states_1b, added_cond_k
 unet_neuron = torch_neuronx.trace(
     unet,
     example_inputs,
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'unet_base'),
+    compiler_workdir='unet_base',
     compiler_args=["--model-type=unet-inference"]
 )
 
@@ -10557,62 +12088,31 @@ torch_neuronx.async_load(unet_neuron)
 torch_neuronx.lazy_load(unet_neuron)
 
 # Save compiled model
-torch.jit.save(unet_neuron, unet_filename)
-```
+torch.jit.save(unet_neuron, 'unet_base/model.pt')
 
-```python
+
 # Compile VAE decoder
-decoder_in = torch.randn([1, 4, 128, 128], dtype=DTYPE)
+decoder_in = torch.randn([1, 4, 128, 128], dtype=torch.float32)
 decoder_neuron = torch_neuronx.trace(
     decoder, 
     decoder_in, 
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_decoder')
+    compiler_workdir='vae_decoder'
 )
 
 torch_neuronx.async_load(decoder_neuron)
-torch.jit.save(decoder_neuron, decoder_filename)
-```
+torch.jit.save(decoder_neuron, 'vae_decoder/model.pt')
 
-```python
+
 # Compile VAE post_quant_conv
-post_quant_conv_in = torch.randn([1, 4, 128, 128], dtype=DTYPE)
+post_quant_conv_in = torch.randn([1, 4, 128, 128], dtype=torch.float32)
 post_quant_conv_neuron = torch_neuronx.trace(
     post_quant_conv, 
     post_quant_conv_in,
-    compiler_workdir=os.path.join(COMPILER_WORKDIR_ROOT, 'vae_post_quant_conv'),
+    compiler_workdir='vae_post_quant_conv',
 )
 
 torch_neuronx.async_load(post_quant_conv_neuron)
-torch.jit.save(post_quant_conv_neuron, post_quant_conv_filename)
-```
-
-## performance-tuning.rst
-
-```python
-import numpy as np
-import tensorflow.neuron as tfn
-
-# Compiling for batching optimization
-batch_size = 5
-example_input = np.zeros([batch_size,224,224,3], dtype='float16')
-
-tfn.saved_model.compile("rn50_fp16",
-                        "rn50_fp16_compiled/1",
-                        model_feed_dict={'input_1:0': example_input },
-                        dynamic_batch_size=True)
-```
-
-```python
-import numpy as np
-import tensorflow.neuron as tfn
-
-# Compiling for pipeline optimization
-compiler_args = ['--neuroncore-pipeline-cores', '16']
-example_input = np.zeros([1,224,224,3], dtype='float16')
-tfn.saved_model.compile("rn50_fp16",
-                        "rn50_fp16_compiled/1",
-                        model_feed_dict={'input_1:0': example_input },
-                        compiler_args=compiler_args)
+torch.jit.save(post_quant_conv_neuron, 'vae_post_quant_conv/model.pt')
 ```
 
 ## new_model_guide.rst
@@ -10738,17 +12238,94 @@ class TraceableTextEncoder(nn.Module):
         out_tuple = self.text_encoder(text_input_ids, output_hidden_states=True, return_dict=False)
         return out_tuple
 
-# Load compiled models and deploy to Trainium
-pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=DTYPE)
+# Load pipeline and compiled models
+model_id = "stabilityai/stable-diffusion-xl-base-1.0"
+pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=DTYPE)
 
+# Load the compiled UNet onto two neuron cores with DataParallel
 pipe.unet = NeuronUNet(UNetWrap(pipe.unet))
 device_ids = [0, 1]
-pipe.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load("unet_model.pt"), device_ids, set_dynamic_batching=False)
+pipe.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load(unet_filename), device_ids, set_dynamic_batching=False)
 
-pipe.vae.decoder = torch.jit.load("decoder_model.pt")
-pipe.vae.post_quant_conv = torch.jit.load("post_quant_conv_model.pt")
-pipe.text_encoder = TextEncoderOutputWrapper(torch.jit.load("text_encoder_model.pt"), pipe.text_encoder)
-pipe.text_encoder_2 = TextEncoderOutputWrapper(torch.jit.load("text_encoder_2_model.pt"), pipe.text_encoder_2)
+# Load other compiled models
+pipe.vae.decoder = torch.jit.load(decoder_filename)
+pipe.vae.post_quant_conv = torch.jit.load(post_quant_conv_filename)
+pipe.text_encoder = TextEncoderOutputWrapper(torch.jit.load(text_encoder_filename), pipe.text_encoder)
+pipe.text_encoder_2 = TextEncoderOutputWrapper(torch.jit.load(text_encoder_2_filename), pipe.text_encoder_2)
+```
+
+## yolo_v4_demo.rst
+
+```python
+import tensorflow as tf
+from functools import partial
+
+def decode_jpeg_resize(input_tensor, image_size):
+    tensor = tf.image.decode_png(input_tensor, channels=3)
+    shape = tf.shape(tensor)
+    tensor = tf.cast(tensor, tf.float32)
+    tensor = tf.image.resize(tensor, image_size)
+    tensor /= 255.0
+    return tf.cast(tensor, tf.float16), shape
+
+def preprocessor(input_tensor, image_size):
+    with tf.name_scope('Preprocessor'):
+        tensor = tf.map_fn(
+            partial(decode_jpeg_resize, image_size=image_size), input_tensor,
+            dtype=(tf.float16, tf.int32), back_prop=False, parallel_iterations=16)
+    return tensor
+```
+
+```python
+def filter_boxes_one_size(boxes, box_scores, conf_thresh):
+    box_class_scores = tf.reduce_max(box_scores, axis=-1)
+    keep = box_class_scores > conf_thresh
+    boxes = boxes[keep]
+    box_scores = box_scores[keep]
+    return boxes, box_scores
+
+def filter_boxes(outputs, conf_thresh, nms_thresh, nms_top_k):
+    boxes_l, boxes_m, boxes_s, box_scores_l, box_scores_m, box_scores_s, image_shape = outputs
+    boxes_l, box_scores_l = filter_boxes_one_size(boxes_l, box_scores_l, conf_thresh)
+    boxes_m, box_scores_m = filter_boxes_one_size(boxes_m, box_scores_m, conf_thresh)
+    boxes_s, box_scores_s = filter_boxes_one_size(boxes_s, box_scores_s, conf_thresh)
+    boxes = tf.concat([boxes_l, boxes_m, boxes_s], axis=0)
+    box_scores = tf.concat([box_scores_l, box_scores_m, box_scores_s], axis=0)
+    image_shape_wh = image_shape[1::-1]
+    image_shape_whwh = tf.concat([image_shape_wh, image_shape_wh], axis=-1)
+    image_shape_whwh = tf.cast(image_shape_whwh, tf.float32)
+    boxes *= image_shape_whwh
+    boxes = tf.expand_dims(boxes, 0)
+    box_scores = tf.expand_dims(box_scores, 0)
+    boxes = tf.expand_dims(boxes, 2)
+    nms_boxes, nms_scores, nms_classes, valid_detections = tf.image.combined_non_max_suppression(
+        boxes,
+        box_scores,
+        max_output_size_per_class=nms_top_k,
+        max_total_size=nms_top_k,
+        iou_threshold=nms_thresh,
+        score_threshold=conf_thresh,
+        pad_per_class=False,
+        clip_boxes=False,
+        name='CombinedNonMaxSuppression',
+    )
+    return nms_boxes[0], nms_scores[0], nms_classes[0]
+
+def batch_yolo_out(outputs, anchors, masks, conf_thresh, nms_thresh, nms_top_k, batch_process_feats):
+    with tf.name_scope('yolo_out'):
+        b_output_lr, b_output_mr, b_output_sr, b_image_shape = outputs
+        with tf.name_scope('process_feats'):
+            b_boxes_l, b_box_scores_l = batch_process_feats(b_output_lr, anchors, masks[0])
+        with tf.name_scope('process_feats'):
+            b_boxes_m, b_box_scores_m = batch_process_feats(b_output_mr, anchors, masks[1])
+        with tf.name_scope('process_feats'):
+            b_boxes_s, b_box_scores_s = batch_process_feats(b_output_sr, anchors, masks[2])
+        with tf.name_scope('filter_boxes'):
+            b_nms_boxes, b_nms_scores, b_nms_classes = tf.map_fn(
+                lambda x: filter_boxes(x, conf_thresh, nms_thresh, nms_top_k),
+                [b_boxes_l, b_boxes_m, b_boxes_s, b_box_scores_l, b_box_scores_m, b_box_scores_s, b_image_shape],
+                dtype=(tf.float32, tf.float32, tf.float32), back_prop=False, parallel_iterations=16)
+    return b_nms_boxes, b_nms_scores, b_nms_classes
 ```
 
 ## sdxl_base_and_refiner_1024_benchmark.py
@@ -10757,8 +12334,11 @@ pipe.text_encoder_2 = TextEncoderOutputWrapper(torch.jit.load("text_encoder_2_mo
 import torch
 import torch.nn as nn
 import torch_neuronx
+
+from diffusers import DiffusionPipeline
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 
+# Define datatype
 DTYPE = torch.float32
 
 class UNetWrap(nn.Module):
@@ -10773,7 +12353,8 @@ class UNetWrap(nn.Module):
                               added_cond_kwargs={"text_embeds": text_embeds, "time_ids": time_ids},
                               return_dict=False)
         return out_tuple
-
+    
+    
 class NeuronUNet(nn.Module):
     def __init__(self, unetwrap):
         super().__init__()
@@ -10790,59 +12371,283 @@ class NeuronUNet(nn.Module):
                                added_cond_kwargs["text_embeds"],
                                added_cond_kwargs["time_ids"])[0]
         return UNet2DConditionOutput(sample=sample)
-```
 
-```python
-# Load compiled UNet onto multiple neuron cores using DataParallel
+
+# Load base pipeline
+pipe_base = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=DTYPE, low_cpu_mem_usage=True)
+
+# Load the compiled UNet onto two neuron cores using DataParallel
 pipe_base.unet = NeuronUNet(UNetWrap(pipe_base.unet))
 device_ids = [0, 1]
-pipe_base.unet.unetwrap = torch_neuronx.DataParallel(
-    torch.jit.load(unet_base_filename), 
+pipe_base.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load("unet_base/model.pt"), device_ids, set_dynamic_batching=False)
+
+# Load other compiled models onto a single neuron core
+pipe_base.vae.decoder = torch.jit.load("vae_decoder/model.pt")
+pipe_base.vae.post_quant_conv = torch.jit.load("vae_post_quant_conv/model.pt")
+
+# Load refiner pipeline sharing components with base
+pipe_refiner = DiffusionPipeline.from_pretrained(
+    "stabilityai/stable-diffusion-xl-refiner-1.0",
+    text_encoder_2=pipe_base.text_encoder_2,
+    vae=pipe_base.vae,
+    torch_dtype=torch.float32,
+    low_cpu_mem_usage=True,
+)
+
+# Load refiner UNet onto two neuron cores
+pipe_refiner.unet = NeuronUNet(UNetWrap(pipe_refiner.unet))
+device_ids = [0, 1]
+pipe_refiner.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load("unet_refiner/model.pt"), device_ids, set_dynamic_batching=False)
+```
+
+## torch.py
+
+```python
+import functools
+import itertools
+import logging
+import math
+import os
+import types
+
+import torch
+from .. import benchmarking
+
+
+def _compile_fn(model, example_inputs, models_dir, model_name, **kwargs):
+    import torch_neuron
+
+    """Compiles a model for Neuron."""
+    model_filename = os.path.join(models_dir, "{}.pt".format(model_name))
+    model.eval()
+
+    # NeuronPerf provides compiler_args as a dictionary, but framework expects a different format.
+    compiler_args = kwargs.get("compiler_args", {})
+    compiler_args_flattened = list(itertools.chain.from_iterable(compiler_args.items()))
+    kwargs["compiler_args"] = compiler_args_flattened
+
+    model_neuron = torch.neuron.trace(
+        model,
+        example_inputs,
+        **kwargs,
+    )
+    model_neuron.save(model_filename)
+    return model_filename
+
+
+def _load_fn(model_filename, **kwargs):
+    import torch_neuron
+
+    model = torch.jit.load(model_filename)
+    model.eval()
+    return model
+
+
+def _class_load_fn(model_class, **kwargs):
+    model = model_class()
+    model.eval()
+    return model
+
+
+def compile(model, inputs, *args, **kwargs):
+    return benchmarking.compile(_compile_fn, model, inputs, *args, **kwargs)
+
+
+def _get_dataset_loader_fn(dataset, loop):
+    def _worker_init_fn(worker_id):
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id
+        num_workers = worker_info.num_workers
+        dataset = worker_info.dataset
+        per_worker = int(math.ceil(len(dataset) / float(num_workers)))
+        start = worker_id * per_worker
+        end = min(start + per_worker, len(dataset))
+
+        def _iter(self, start, end, loop):
+            if loop:
+                return itertools.cycle(range(start, end))
+            else:
+                return iter(range(start, end))
+
+        __iter__ = functools.partial(_iter, start, end, loop)
+        dataset.__iter__ = types.MethodType(__iter__, dataset)
+
+    def dataset_loader_fn(dataset, num_workers):
+        return iter(
+            torch.utils.data.DataLoader(
+                dataset, num_workers=num_workers, worker_init_fn=_worker_init_fn
+            )
+        )
+
+    return dataset_loader_fn
+
+
+def benchmark(model_filename, inputs, *args, dataset_inputs=False, loop_dataset=False, **kwargs):
+    load_fn = _load_fn
+    setup_fn = kwargs.get("setup_fn", lambda *args, **kwargs: None)
+    preprocess_fn = kwargs.get("preprocess_fn", lambda *args: (*args,))
+
+    device_type = kwargs.get("device_type", None)
+    use_cuda = device_type and ("cuda" in device_type.lower() or "gpu" == device_type.lower())
+    if use_cuda:
+        if not torch.cuda.is_available():
+            raise ValueError(
+                "You requested CUDA benchmarking, but torch is unable to locate a CUDA device."
+            )
+
+        if "multiinterpreter" in kwargs and not kwargs["multiinterpreter"]:
+            kwargs["multiinterpreter"] = True
+
+        if not isinstance(model_filename, str):
+            model_class = model_filename
+            if not isinstance(model_class, type):
+                raise TypeError("GPU benchmarking expects a model class to be provided instead of a filename.")
+
+            import inspect
+
+            try:
+                model_class_file = inspect.getfile(model_class)
+                kwargs["model_class_file"] = model_class_file
+                kwargs["model_class_name"] = model_class.__name__
+            except:
+                raise ValueError(
+                    (
+                        "Your model class must be defined in a Python module so that it can be serialized properly.\n"
+                        "Please add your model to a simple Python file along with any required imports."
+                    )
+                )
+
+            @functools.wraps(_class_load_fn)
+            def load_fn(*args, **kwargs):
+                return _class_load_fn(model_class, **kwargs)
+
+            model_filename = model_class.__name__
+
+        @functools.wraps(setup_fn)
+        def _setup_fn(id, config, model):
+            setup_fn(id, config, model)
+            model.to("cuda")
+
+        kwargs["setup_fn"] = _setup_fn
+
+        @functools.wraps(preprocess_fn)
+        def _preprocess_fn(*inputs):
+            inputs = preprocess_fn(*inputs)
+            for input in inputs:
+                input.to("cuda")
+            return (*inputs,)
+
+        kwargs["preprocess_fn"] = _preprocess_fn
+
+    dataset_loader_fn = None
+    if dataset_inputs:
+        dataset_loader_fn = _get_dataset_loader_fn(example_inputs, loop_dataset)
+    kwargs["dataset_loader_fn"] = dataset_loader_fn
+
+    with torch.no_grad():
+        return benchmarking.benchmark(
+            load_fn,
+            model_filename,
+            inputs,
+            *args,
+            **kwargs,
+        )
+```
+
+## pixart_sigma_benchmark.py
+
+```python
+import os
+os.environ["NEURON_FUSE_SOFTMAX"] = "1"
+os.environ["NEURON_CUSTOM_SILU"] = "1"
+
+import torch
+import torch_neuronx
+import torch.nn as nn
+from transformers.models.t5.modeling_t5 import T5EncoderModel
+from diffusers import Transformer2DModel, PixArtSigmaPipeline
+
+DTYPE = torch.bfloat16
+
+class InferenceTextEncoderWrapper(nn.Module):
+  def __init__(self, dtype, t: T5EncoderModel, seqlen: int):
+    super().__init__()
+    self.dtype = dtype
+    self.device = t.device
+    self.t = t
+  def forward(self, text_input_ids, attention_mask=None):
+    return [self.t(text_input_ids, attention_mask)['last_hidden_state'].to(self.dtype)]
+
+class InferenceTransformerWrapper(nn.Module):
+  def __init__(self, transformer: Transformer2DModel):
+    super().__init__()
+    self.transformer = transformer
+    self.config = transformer.config
+    self.dtype = transformer.dtype
+    self.device = transformer.device
+  def forward(self, hidden_states, encoder_hidden_states=None, timestep=None, 
+              encoder_attention_mask=None, added_cond_kwargs=None,
+              return_dict=False):
+    output = self.transformer(
+      hidden_states, 
+      encoder_hidden_states, 
+      timestep, 
+      encoder_attention_mask)
+    return output
+
+class SimpleWrapper(nn.Module):
+  def __init__(self, model):
+    super().__init__()
+    self.model = model
+  def forward(self, x):
+    output = self.model(x)
+    return output
+
+def get_pipe(resolution, dtype):
+  if resolution == 256:
+    transformer = Transformer2DModel.from_pretrained(
+      "PixArt-alpha/PixArt-Sigma-XL-2-256x256", 
+      subfolder='transformer', 
+      torch_dtype=dtype,
+    )
+    return PixArtSigmaPipeline.from_pretrained(
+      "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers",
+      transformer=transformer,
+      torch_dtype=dtype,
+    )
+  elif resolution == 512:
+    transformer = Transformer2DModel.from_pretrained(
+      "PixArt-alpha/PixArt-Sigma-XL-2-512-MS",
+      subfolder='transformer', 
+      torch_dtype=dtype,
+    )
+    return PixArtSigmaPipeline.from_pretrained(
+      "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers",
+      transformer=transformer,
+      torch_dtype=dtype,
+    )
+  else:
+    raise Exception(f"Unsupport resolution {resolution} for PixArt Sigma")
+
+# Load pipeline and wrap compiled models
+pipe = get_pipe(256, DTYPE)
+seqlen = 300
+
+_neuronTextEncoder = InferenceTextEncoderWrapper(DTYPE, pipe.text_encoder, seqlen)
+_neuronTextEncoder.t = torch.jit.load('pixart_sigma_compile_dir/text_encoder/model.pt')
+pipe.text_encoder = _neuronTextEncoder
+
+device_ids = [0, 1]
+_neuronTransformer = InferenceTransformerWrapper(pipe.transformer)
+_neuronTransformer.transformer = torch_neuronx.DataParallel(
+    torch.jit.load('pixart_sigma_compile_dir/transformer/model.pt'), 
     device_ids, 
     set_dynamic_batching=False
 )
+pipe.transformer = _neuronTransformer
 
-# Load other compiled models onto neuron core
-pipe_base.vae.decoder = torch.jit.load(decoder_filename)
-pipe_base.vae.post_quant_conv = torch.jit.load(post_quant_conv_filename)
-```
-
-## api-tracing-python-api.rst
-
-```python
-import tensorflow as tf
-import tensorflow.neuron as tfn
-
-input0 = tf.keras.layers.Input(3)
-dense0 = tf.keras.layers.Dense(3)(input0)
-model = tf.keras.Model(inputs=[input0], outputs=[dense0])
-example_inputs = tf.random.uniform([1, 3])
-model_neuron = tfn.trace(model, example_inputs)
-print(model_neuron.on_neuron_ratio)
-
-model_dir = './model_neuron'
-model_neuron.save(model_dir)
-model_neuron_reloaded = tf.keras.models.load_model(model_dir)
-```
-
-```python
-import tensorflow as tf
-import tensorflow.neuron as tfn
-
-input0 = tf.keras.layers.Input(3)
-dense0 = tf.keras.layers.Dense(3)(input0)
-reshape0 = tf.keras.layers.Reshape([1, 3])(dense0)
-output0 = tf.keras.layers.Dense(2)(reshape0)
-model = tf.keras.Model(inputs=[input0], outputs=[output0])
-example_inputs = tf.random.uniform([1, 3])
-
-def subgraph_builder_function(node):
-    return node.op == 'MatMul'
-
-model_neuron = tfn.trace(
-    model, example_inputs,
-    subgraph_builder_function=subgraph_builder_function,
-)
+pipe.vae.decoder = SimpleWrapper(torch.jit.load('pixart_sigma_compile_dir/vae_decoder/model.pt'))
+pipe.vae.post_quant_conv = SimpleWrapper(torch.jit.load('pixart_sigma_compile_dir/vae_post_quant_conv/model.pt'))
 ```
 
 ## neuronperf_evaluate_guide.rst
@@ -10875,13 +12680,17 @@ reports = npf.torch.evaluate(model_index_or_path, dataset, metrics='accuracy', e
 ```python
 import neuronperf as npf
 
+npf.list_metrics()
+```
+
+```python
+import neuronperf as npf
+
 npf.register_metric_from_existing("topk", "topk_3", k=3)
 ```
 
 ```python
 import neuronperf as npf
-from abc import ABC, abstractmethod
-from typing import Any, Iterable
 
 class MyCustomMetric(npf.BaseEvalMetric):
     def __init__(self):
@@ -10905,133 +12714,6 @@ class MyCustomMetric(npf.BaseEvalMetric):
 
 
 npf.register_metric("MyCustomMetric", MyCustomMetric)
-```
-
-## pixart_sigma_benchmark.py
-
-```python
-import os
-os.environ["NEURON_FUSE_SOFTMAX"] = "1"
-os.environ["NEURON_CUSTOM_SILU"] = "1"
-
-import torch
-import torch_neuronx
-import torch.nn as nn
-from transformers.models.t5.modeling_t5 import T5EncoderModel
-from diffusers import Transformer2DModel, PixArtSigmaPipeline
-
-
-class InferenceTextEncoderWrapper(nn.Module):
-  def __init__(self, dtype, t: T5EncoderModel, seqlen: int):
-    super().__init__()
-    self.dtype = dtype
-    self.device = t.device
-    self.t = t
-  def forward(self, text_input_ids, attention_mask=None):
-    return [self.t(text_input_ids, attention_mask)['last_hidden_state'].to(self.dtype)]
-
-
-class InferenceTransformerWrapper(nn.Module):
-  def __init__(self, transformer: Transformer2DModel):
-    super().__init__()
-    self.transformer = transformer
-    self.config = transformer.config
-    self.dtype = transformer.dtype
-    self.device = transformer.device
-  def forward(self, hidden_states, encoder_hidden_states=None, timestep=None, 
-              encoder_attention_mask=None, added_cond_kwargs=None,
-              return_dict=False):
-    output = self.transformer(
-      hidden_states, 
-      encoder_hidden_states, 
-      timestep, 
-      encoder_attention_mask)
-    return output
-
-
-class SimpleWrapper(nn.Module):
-  def __init__(self, model):
-    super().__init__()
-    self.model = model
-  def forward(self, x):
-    output = self.model(x)
-    return output
-
-
-# Load compiled models and integrate with pipeline
-DTYPE = torch.bfloat16
-text_encoder_filename = 'pixart_sigma_compile_dir/text_encoder/model.pt'
-transformer_filename = 'pixart_sigma_compile_dir/transformer/model.pt'
-decoder_filename = 'pixart_sigma_compile_dir/vae_decoder/model.pt'
-post_quant_conv_filename = 'pixart_sigma_compile_dir/vae_post_quant_conv/model.pt'
-
-pipe = PixArtSigmaPipeline.from_pretrained("PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers", torch_dtype=DTYPE)
-
-_neuronTextEncoder = InferenceTextEncoderWrapper(DTYPE, pipe.text_encoder, seqlen=300)
-_neuronTextEncoder.t = torch.jit.load(text_encoder_filename)
-pipe.text_encoder = _neuronTextEncoder
-
-device_ids = [0, 1]
-_neuronTransformer = InferenceTransformerWrapper(pipe.transformer)
-_neuronTransformer.transformer = torch_neuronx.DataParallel(torch.jit.load(transformer_filename), device_ids, set_dynamic_batching=False)
-pipe.transformer = _neuronTransformer
-
-pipe.vae.decoder = SimpleWrapper(torch.jit.load(decoder_filename))
-pipe.vae.post_quant_conv = SimpleWrapper(torch.jit.load(post_quant_conv_filename))
-```
-
-## tfneuronx-python-tracing-api.rst
-
-```python
-import tensorflow as tf
-import tensorflow_neuronx as tfnx
-
-input0 = tf.keras.layers.Input(3)
-dense0 = tf.keras.layers.Dense(3)(input0)
-model = tf.keras.Model(inputs=[input0], outputs=[dense0])
-example_inputs = tf.random.uniform([1, 3])
-model_neuron = tfnx.trace(model, example_inputs)
-print(model_neuron.on_neuron_ratio)
-
-model_dir = './model_neuron'
-model_neuron.save(model_dir)
-model_neuron_reloaded = tf.keras.models.load_model(model_dir)
-```
-
-```python
-import tensorflow as tf
-import tensorflow_neuronx as tfnx
-
-input0 = tf.keras.layers.Input(3)
-dense0 = tf.keras.layers.Dense(3)(input0)
-reshape0 = tf.keras.layers.Reshape([1, 3])(dense0)
-output0 = tf.keras.layers.Dense(2)(reshape0)
-model = tf.keras.Model(inputs=[input0], outputs=[output0])
-example_inputs = tf.random.uniform([1, 3])
-
-def subgraph_builder_function(node):
-    return node.op == 'MatMul'
-
-model_neuron = tfnx.trace(
-    model, example_inputs,
-    subgraph_builder_function=subgraph_builder_function,
-)
-```
-
-## indexing-overview.rst
-
-```python
-import neuronxcc.nki as nl
-
-# Basic integer indexing
-x = nl.ndarray((2, 2, 2), dtype=nl.float32, buffer=nl.hbm)
-assert x[1].shape == [2, 2]
-
-# Slicing syntax
-x = nl.ndarray((2, 128, 1024), dtype=nl.float32, buffer=nl.hbm)
-assert x[1, :, :].shape == [128, 1024]
-assert x[1, :, 0:512].shape == [128, 512]
-assert x[:, 1, 0:2].shape == [2, 2]
 ```
 
 ## test_nki_nl_load_store_indirect.py
@@ -11079,7 +12761,6 @@ def example_indirect_save_1(in_tensor, idx_tensor):
   i_p = nl.arange(64)[:, None]
   i_f = nl.arange(512)[None, :]
   idx_tile = nl.load(idx_tensor[i_p])
-
   nl.store(data_tensor[idx_tile[i_p, 0], i_f], value=data_tile[0:64, 0:512])
   return data_tensor
 
@@ -11092,10 +12773,8 @@ def example_indirect_save_2(in_tensor):
   i_f = nl.arange(m)[None, :]
   data_tile = nl.load(in_tensor)
   assert n == 64 and m == 512
-  
   idx_expr = 2*nl.arange(64)[:, None]
   idx_tile = nisa.iota(idx_expr, dtype=np.int32)
-  
   nl.store(data_tensor[idx_tile, i_f], value=data_tile[0:64, 0:512])
   return data_tensor
 ```
@@ -11113,6 +12792,7 @@ import torch.nn as nn
 from transformers.models.t5.modeling_t5 import T5EncoderModel
 from diffusers import Transformer2DModel
 
+# Define datatype
 DTYPE = torch.bfloat16
 
 class InferenceTextEncoderWrapper(nn.Module):
@@ -11149,14 +12829,18 @@ class SimpleWrapper(nn.Module):
     output = self.model(x)
     return output
 
-# Load compiled models
+# Load compiled models and integrate with pipeline
 _neuronTextEncoder = InferenceTextEncoderWrapper(DTYPE, pipe.text_encoder, seqlen)
 _neuronTextEncoder.t = torch.jit.load(text_encoder_filename)
 pipe.text_encoder = _neuronTextEncoder
 
 device_ids = [0, 1]
 _neuronTransformer = InferenceTransformerWrapper(pipe.transformer)
-_neuronTransformer.transformer = torch_neuronx.DataParallel(torch.jit.load(transformer_filename), device_ids, set_dynamic_batching=False)
+_neuronTransformer.transformer = torch_neuronx.DataParallel(
+    torch.jit.load(transformer_filename), 
+    device_ids, 
+    set_dynamic_batching=False
+)
 pipe.transformer = _neuronTransformer
 
 pipe.vae.decoder = SimpleWrapper(torch.jit.load(decoder_filename))
@@ -11256,6 +12940,7 @@ pipe.vae.post_quant_conv = torch.jit.load(post_quant_conv_filename)
 import torch
 import torch.nn as nn
 import torch_neuronx
+from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 
 DTYPE = torch.bfloat16
@@ -11299,15 +12984,15 @@ class NeuronTypeConversionWrapper(nn.Module):
 
     def forward(self, x):
         return self.network(x.float())
-```
 
-```python
-# Load compiled UNet with DataParallel across multiple neuron cores
+# Load compiled models
+pipe = StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-base", torch_dtype=DTYPE)
+pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+
 pipe.unet = NeuronUNet(UNetWrap(pipe.unet))
 device_ids = [0, 1]
 pipe.unet.unetwrap = torch_neuronx.DataParallel(torch.jit.load(unet_filename), device_ids, set_dynamic_batching=False)
 
-# Load compiled models onto neuron cores
 pipe.text_encoder = NeuronTextEncoder(pipe.text_encoder)
 pipe.text_encoder.neuron_text_encoder = torch.jit.load(text_encoder_filename)
 pipe.vae.decoder = NeuronTypeConversionWrapper(torch.jit.load(decoder_filename))
@@ -11324,14 +13009,22 @@ import neuronxcc.nki.language as nl
 
 @nki.jit(mode="simulation")
 def nki_select_reduce_basic(predicate_data, on_true_data):
-  """Example 1: Basic usage of select_reduce"""
+  """
+  Example 1: Basic usage of select_reduce
+  Create source data, predicate, and destination tensors
+  """
+  # Create output tensor for result
   result_tensor = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.hbm)
   
+  # Load input data to SBUF
   predicate = nl.load(predicate_data[...])
   on_true = nl.load(on_true_data[...])
   
+  # Create destination tensor
   dst = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.sbuf)
   
+  # Perform select operation - copy from on_true where predicate is true
+  # and set to fp32.min where predicate is false
   nisa.select_reduce(
       dst=dst,
       predicate=predicate,
@@ -11339,23 +13032,35 @@ def nki_select_reduce_basic(predicate_data, on_true_data):
       on_false=nl.fp32.min,
   )
   
+  # Store result to HBM
   nl.store(result_tensor, value=dst)
+
   return result_tensor
+```
 
-
+```python
 @nki.jit(mode="simulation")
 def nki_select_reduce_with_reduction(predicate_data, on_true_data, on_false_data):
-  """Example 2: Using select_reduce with reduction"""
+  """
+  Example 2: Using select_reduce with reduction
+  Perform selection and compute max reduction per partition
+  """
+  # Create output tensors for results
   result_tensor = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.hbm)
   reduce_tensor = nl.ndarray((on_true_data.shape[0], 1), dtype=nl.float32, buffer=nl.hbm)
   
+  # Load input data to SBUF
   predicate = nl.load(predicate_data)
   on_true = nl.load(on_true_data)
   on_false = nl.load(on_false_data)
 
+  # Create destination tensor
   dst = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.sbuf)
+  
+  # Create tensor for reduction results
   reduce_res = nl.ndarray((on_true_data.shape[0], 1), dtype=nl.float32, buffer=nl.sbuf)
   
+  # Perform select operation with reduction
   nisa.select_reduce(
       dst=dst,
       predicate=predicate,
@@ -11366,30 +13071,43 @@ def nki_select_reduce_with_reduction(predicate_data, on_true_data, on_false_data
       reduce_op=nl.max
   )
   
+  # Store results to HBM
   nl.store(result_tensor, value=dst)
   nl.store(reduce_tensor, value=reduce_res)
+
   return result_tensor, reduce_tensor
+```
 
-
+```python
 @nki.jit(mode="simulation")
 def nki_select_reduce_reverse_pred(predicate_data, on_true_data):
-  """Example 3: Using select_reduce with reverse_pred option"""
+  """
+  Example 3: Using select_reduce with reverse_pred option
+  Reverse the meaning of the predicate
+  """
+  # Create output tensor for result
   result_tensor = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.hbm)
   
+  # Load input data to SBUF
   predicate = nl.load(predicate_data[...])
   on_true = nl.load(on_true_data[...])
   
+  # Create destination tensor
   dst = nl.ndarray(on_true_data.shape, dtype=nl.float32, buffer=nl.sbuf)
   
+  # Perform select operation with reverse_pred=True
+  # This will select on_true where predicate is FALSE
   nisa.select_reduce(
       dst=dst,
       predicate=predicate,
       on_true=on_true,
       on_false=nl.fp32.min,
-      reverse_pred=True
+      reverse_pred=True  # Reverse the meaning of the predicate
   )
   
+  # Store result to HBM
   nl.store(result_tensor, value=dst)
+
   return result_tensor
 ```
 
@@ -11398,20 +13116,73 @@ def nki_select_reduce_reverse_pred(predicate_data, on_true_data):
 ```python
 import tensorflow as tf
 import tensorflow.neuron
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications import resnet50
+import numpy as np
 import os
 
-# Set environment variables for NeuronCore allocation
-os.environ['NEURON_MAX_NUM_INFERS'] = str(NUM_INFERS_IN_FLIGHT)
+# Load and preprocess image
+img_sgl = image.load_img('kitten_small.jpg', target_size=(224, 224))
+img_arr = image.img_to_array(img_sgl, dtype='float16')
+img_arr2 = np.expand_dims(img_arr, axis=0)
+img_arr3 = np.repeat(img_arr2, batch_size, axis=0)
+
+# Configure NeuronCore allocation
+os.environ['NEURON_MAX_NUM_INFERS'] = str(num_infers_in_flight)
 os.environ['NEURONCORE_GROUP_SIZES'] = ','.join(group_sizes)
 
-# Load compiled model from saved model directory
-pred = tf.contrib.predictor.from_saved_model(COMPILED_MODEL_DIR)
-
-# Prepare input data
-model_feed_dict = {'input_1:0': img_arr3}
+# Load compiled model
+compiled_model_dir = "./rn50_fp16_compiled_b{}_nc{}/1".format(batch_size, neuroncore_pipeline_cores)
+predictor = tf.contrib.predictor.from_saved_model(compiled_model_dir)
 
 # Run inference
-result = pred(model_feed_dict)
+model_feed_dict = {'input_1:0': img_arr3}
+result = predictor(model_feed_dict)
+```
+
+## tutorial-model-serving.rst
+
+```python
+from packaging import version
+import numpy as np
+import mxnet as mx
+
+mxnet_version = version.parse(mx.__version__)
+if mxnet_version >= version.parse("1.8"):
+    import mx_neuron as neuron
+else: 
+    from mxnet.contrib import neuron
+
+path='http://data.mxnet.io/models/imagenet/'
+mx.test_utils.download(path+'resnet/50-layers/resnet-50-0000.params')
+mx.test_utils.download(path+'resnet/50-layers/resnet-50-symbol.json')
+mx.test_utils.download(path+'synset.txt')
+
+nn_name = "resnet-50"
+
+# Load a model
+sym, args, auxs = mx.model.load_checkpoint(nn_name, 0)
+
+# Define compilation parameters
+#  - input shape and dtype
+inputs = {'data' : mx.nd.zeros([1,3,224,224], dtype='float32') }
+
+# compile graph to inferentia target
+csym, cargs, cauxs = neuron.compile(sym, args, auxs, inputs)
+
+# save compiled model
+mx.model.save_checkpoint(nn_name + "_compiled", 0, csym, cargs, cauxs)
+```
+
+```python
+from packaging import version
+import mxnet as mx
+
+mxnet_version = version.parse(mx.__version__)
+if mxnet_version >= version.parse("1.8"):
+    import mx_neuron as neuron
+
+self.mxnet_ctx = mx.neuron()
 ```
 
 ## sd_15_512_benchmark.py
@@ -11472,30 +13243,29 @@ class NeuronSafetyModelWrap(nn.Module):
         return list(self.safety_model(clip_inputs).values())
 
 
-# Load compiled models onto Neuron cores
+# Load compiled models and deploy to Trainium
 pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float32)
 
-# Load UNet with data parallelism across two Neuron cores
+# Load the compiled UNet onto two neuron cores with DataParallel
 pipe.unet = NeuronUNet(UNetWrap(pipe.unet))
 device_ids = [0, 1]
 pipe.unet.unetwrap = torch_neuronx.DataParallel(
-    torch.jit.load(unet_filename), 
+    torch.jit.load("unet/model.pt"), 
     device_ids, 
     set_dynamic_batching=False
 )
 
-# Load other models onto single Neuron cores
+# Load other compiled models onto neuron cores
 pipe.text_encoder = NeuronTextEncoder(pipe.text_encoder)
-pipe.text_encoder.neuron_text_encoder = torch.jit.load(text_encoder_filename)
-pipe.vae.decoder = torch.jit.load(decoder_filename)
-pipe.vae.post_quant_conv = torch.jit.load(post_quant_conv_filename)
-pipe.safety_checker.vision_model = NeuronSafetyModelWrap(torch.jit.load(safety_model_neuron_filename))
+pipe.text_encoder.neuron_text_encoder = torch.jit.load("text_encoder/model.pt")
+pipe.vae.decoder = torch.jit.load("vae_decoder/model.pt")
+pipe.vae.post_quant_conv = torch.jit.load("vae_post_quant_conv/model.pt")
+pipe.safety_checker.vision_model = NeuronSafetyModelWrap(torch.jit.load("safety_model/model.pt"))
 ```
 
 ## inference.rst
 
 ```python
-import os
 import torch
 import torch_neuronx
 import transformers
@@ -11549,10 +13319,9 @@ def get_model():
 
     io_aliases = {}
     return model, io_aliases
-```
 
-```python
-# Trace the model with tensor parallelism
+
+# Trace the parallel model
 model = neuronx_distributed.trace.parallel_model_trace(get_model, paraphrase, tp_degree=2)
 
 # Save the traced model
@@ -11576,13 +13345,16 @@ from tensorflow.core.framework import attr_value_pb2
 from tensorflow.python.framework import tensor_util
 from tensorflow.tools.graph_transforms import TransformGraph
 
+
 def clear_input(node):
   for i in range(len(node.input)):
     node.input.pop()
 
+
 def replace_name(node, name):
   node.name = name
-     
+
+
 def replace_input(node, input_name, new_name):
   temp = []
   for i in node.input:
@@ -11591,19 +13363,23 @@ def replace_input(node, input_name, new_name):
   for i in temp:
     node.input.extend([i])
 
+
 def swap_names(node1, node2):
   temp = node2.name
   node2.name = node1.name
   node1.name = temp
 
+
 def get_const_node(const_node_name, const_by_name):
   name = re.sub("/read$", "", const_node_name)
   return const_by_name[name]
+
 
 def get_const_ndarray(const_node_name, const_by_name):
   name = re.sub("/read$", "", const_node_name)
   node = const_by_name[name]
   return tf.make_ndarray(node.attr.get("value").tensor)
+
 
 def adjust_bias_values(bias_node, fbn_node, const_by_name):
   bias_val = get_const_ndarray(bias_node.input[1], const_by_name)  
@@ -11614,6 +13390,7 @@ def adjust_bias_values(bias_node, fbn_node, const_by_name):
   new_tensor = tensor_util.make_tensor_proto(new_bias, new_bias.dtype, new_bias.shape)
   bias_const_node = get_const_node(bias_node.input[1], const_by_name)
   bias_const_node.attr["value"].CopyFrom(attr_value_pb2.AttrValue(tensor=new_tensor))
+
 
 def MoveBiasAddAfterFusedBatchNorm(graphdef):
   """fold_batch_norm function of TransformGraph is unable to fold Keras ResNet50
@@ -11653,6 +13430,7 @@ def MoveBiasAddAfterFusedBatchNorm(graphdef):
       output_graph_def.node.extend([copied_node])
   return output_graph_def
 
+
 def FoldFusedBatchNorm(graph_def):
   """Optimize training graph for inference:
     - Remove Identity and CheckNumerics nodes
@@ -11676,6 +13454,7 @@ def FoldFusedBatchNorm(graph_def):
          ])
   return transformed_graph_def
 
+
 def load_graph(model_file):
   graph_def = tf.compat.v1.GraphDef()
   with open(model_file, "rb") as f:
@@ -11683,117 +13462,187 @@ def load_graph(model_file):
   return graph_def
 ```
 
-## test_nki_isa_dma_transpose.py
+## timing.py
 
 ```python
-import neuronxcc.nki as nki
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-from neuronxcc.nki.isa.constants import dge_mode
+from typing import Any, Callable
+import time
+import numpy as np
 
-@nki.jit(mode="simulation")
-def nki_dma_transpose_2d_hbm2sb(a):
-  b_sb = nisa.dma_transpose(a[:, :])
-  b = nl.ndarray(shape=b_sb.shape, dtype=b_sb.dtype, buffer=nl.hbm)
-  nl.store(dst=b, value=b_sb)
-  return b
+time_unit_ratios = {
+    'ns': { 'ns': 1, 'us': 1e-3, 'ms': 1e-6, 's': 1e-9 },
+    'us': { 'ns': 1e3, 'us': 1, 'ms': 1e-3, 's': 1e-6 },
+    'ms': { 'ns': 1e6, 'us': 1e3, 'ms': 1, 's': 1e-3 },
+    's': { 'ns': 1e9, 'us': 1e6, 'ms': 1e3, 's': 1 }
+}
 
-@nki.jit(mode="simulation")
-def nki_dma_transpose_2d_sb2sb(a):
-  a_sb = nl.load(a)
-  b_sb = nisa.dma_transpose(a_sb[:, :])
-  b = nl.ndarray(shape=b_sb.shape, dtype=b_sb.dtype, buffer=nl.hbm)
-  nl.store(dst=b, value=b_sb)
-  return b
+def timestamp_convert(timestamps,
+                      input_time_unit: str,
+                      output_time_unit: str):
+    """Convert timestamp(s) from one time unit to another.
 
-@nki.jit(mode="simulation", platform_target="trn2")
-def nki_dma_transpose_2d_hbm2sb_dge_xbar(a):
-  b_sb = nisa.dma_transpose(a[:, :], dge_mode=dge_mode.hwdge)
-  b = nl.ndarray(shape=b_sb.shape, dtype=b_sb.dtype, buffer=nl.hbm)
-  nl.store(dst=b, value=b_sb)
-  return b
+    :param ts: A timestamp or iterable of timestamps.
+    :param input_time_unit: A string specifying the input time unit.
+    :param output_time_unit: A string specifying the output time unit.
+    :returns: A single timestamp or container of timestamps in the output time unit.
+    """
+    try:
+        ratio = time_unit_ratios[input_time_unit][output_time_unit]
+    except:
+        raise ValueError(f"Can't convert {input_time_unit} to {output_time_unit}")
 
-@nki.jit(mode="simulation", platform_target="trn2")
-def nki_dma_transpose_2d_sb2sb_dge_xbar(a):
-  a_sb = nl.load(a)
-  b_sb = nisa.dma_transpose(a_sb[:, :], dge_mode=dge_mode.hwdge)
-  b = nl.ndarray(shape=b_sb.shape, dtype=b_sb.dtype, buffer=nl.hbm)
-  nl.store(dst=b, value=b_sb)
-  return b
+    return timestamps * ratio
 
-@nki.jit(mode="simulation", platform_target="trn2")
-def nki_dma_gather_transpose_3d_hbm2sb(src_tensor, idx_tensor):
-  i_p = nl.arange(32)[:, None]
-  idx = nl.load(idx_tensor)
 
-  _, dim1, dim2 = src_tensor.shape
+class Timer():
+    def __init__(self,
+                 timer_fn: Callable[[], Any] = time.perf_counter,
+                 timer_unit: str = 's'):
+        self.timer_fn = timer_fn
+        self.timer_unit = timer_unit
+        self._start = []
+        self._end = []
 
-  iy = nl.arange(dim1)[None, :, None]
-  iz = nl.arange(dim2)[None, None, :]
+    def __enter__(self):
+        self.start()
 
-  dst = nisa.dma_transpose(src_tensor[idx[i_p, 0], iy, iz], axes=(2, 1, 0))
-  dst_tensor = nl.ndarray(shape=(dim2, dim1, idx.shape[0]), dtype=src_tensor.dtype, buffer=nl.shared_hbm)
-    
-  nl.store(dst_tensor, dst)
-  return dst_tensor
+    def __exit__(self, type, value, traceback):
+        self.stop()
 
-@nki.jit(mode="simulation", platform_target="trn2")
-def nki_dma_gather_transpose_3d_sb2sb(src_tensor, idx_tensor):
-  src = nl.load(src_tensor)
-  idx = nl.load(idx_tensor)
+    def start(self):
+        if len(self._start) > len(self._end): self._start.pop()
+        self._start.append(self.timer_fn())
 
-  dim0, dim1, dim2 = src.shape
-  
-  iy = nl.arange(dim1)[None, :, None]
-  iz = nl.arange(dim2)[None, None, :]
+    def stop(self):
+        if 0 == len(self._start): return
+        self._end.append(self.timer_fn())
 
-  dst = nisa.dma_transpose(src[idx, iy, iz], axes=(2, 1, 0))
-  dst_tensor = nl.ndarray(shape=(dim2, dim1, dim0), dtype=src.dtype, buffer=nl.shared_hbm)
-  
-  nl.store(dst_tensor, dst)
-  return dst_tensor
+    def next(self):
+        """Manually advance the timer to the next timestamp measurement."""
+        self.stop()
+        self.start()
+
+    def reset(self):
+        self._start.clear()
+        self._end.clear()
+
+    def insert(self, timestamps: tuple, time_unit: str):
+        """Manually insert a timestamp pair. Does not affect ongoing timing.
+
+        :param timestamps: Timestamp pair to insert.
+        :param time_unit: The time unit of the incoming timestamps.
+        """
+        if len(timestamps) != 2 or not time_unit: raise ValueError()
+        timestamps = timestamp_convert(np.array(timestamps), time_unit, self.timer_unit)
+        self._start.insert(0, timestamps[0])
+        self._end.insert(0, timestamps[1])
+
+    def durations(self, time_unit: str = None):
+        """Returns an `ndarray` of timestamp deltas, optionally converted into a provided time unit.
+
+        :param time_unit: The time unit of the output timestamp(s). `None` will use the timer's native unit.
+        :returns: An `ndarray` of timestamp deltas.
+        """
+        starts, ends = self.start_timestamps(), self.end_timestamps()
+        return timestamp_convert(ends - starts[:len(ends)], self.timer_unit, time_unit)
+
+    def total_duration(self, time_unit: str = None):
+        """Returns total duration of all time measurements, optionally converted into a provided time unit.
+
+        :param time_unit: The time unit of the output timestamp(s). `None` will use the timer's native unit.
+        """
+        starts, ends = self.start_timestamps(), self.end_timestamps()
+        total = np.sum(ends - starts[:len(ends)])
+        return total if not time_unit else timestamp_convert(total, self.timer_unit, time_unit)
+
+    def avg(self, time_unit: str = None):
+        """Returns average duration, optionally converted into a provided time unit.
+
+        :param time_unit: The time unit of the output timestamp(s). `None` will use the timer's native unit.
+        :returns: The average duration.
+        """
+        return self.durations(time_unit).mean() if len(self._end) > 0 else 0
 ```
 
-## tf-neuronx-auto-replication-api.rst
+## tutorial-neuron-monitor-mnist.rst
 
 ```python
-import tensorflow as tf
-import tensorflow.neuron as tfn
-import tensorflow_neuronx as tfnx
-
-input0 = tf.keras.layers.Input(3)
-dense0 = tf.keras.layers.Dense(3)(input0)
-inputs = [input0]
-outputs = [dense0]
-model = tf.keras.Model(inputs=inputs, outputs=outputs)
-input0_tensor = tf.random.uniform([1, 3])
-model_neuron = tfnx.trace(model, input0_tensor)
-
-# a trn1.2xlarge has 2 neuron cores
-num_cores = 2
-multicore_model = tfn.auto_multicore(model_neuron, input0_tensor, num_cores=num_cores)
-multicore_model(input0_tensor)
+for run in range(0, 1000):
+    print(f'Run {run}')
+    model.train()
 ```
 
-```python
-from tensorflow.python import saved_model
-import tensorflow as tf
-import tensorflow.neuron as tfn
+## bert_benchmark_utils.py
 
-input0_tensor = tf.random.uniform([1, 3])
-num_cores = 4
-reload_model = saved_model.load(model_dir)
-multicore_model = tfn.auto_multicore(reload_model, input0_tensor, num_cores=num_cores)
+```python
+import torch
+import torch.neuron
+import os
+import sys
+import csv
+import math
+from collections import Counter
+
+import numpy as np
+
+class BertTestDataset(torch.utils.data.Dataset):
+    """Bert test dataset."""
+
+    def __init__(self, tsv_file, tokenizer, max_length=128, transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            tokenizer (callable = hugging face tokenizer):  Takes a string and encodes to standard input tensor set
+            max_length (int): Maximum length that all input tensors will be padded to
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        with open(tsv_file, "r") as f:
+            reader = csv.reader(f, delimiter="\t", quotechar=None)
+            self.lines = list(reader)
+
+        self.lines.pop(0)
+
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.lines)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        s1_raw = self.lines[idx][3]
+        if isinstance(s1_raw, bytes):
+            s1_raw = s1_raw.decode("utf-8", "ignore")
+        s2_raw = self.lines[idx][4]
+        if isinstance(s2_raw, bytes):
+            s2_raw = s2_raw.decode("utf-8", "ignore")
+
+        quality = self.lines[idx][0]
+
+        encoded = self.tokenizer.encode_plus(s1_raw, s2_raw, add_special_tokens=True,
+                                             return_tensors='pt', max_length=self.max_length, 
+                                             padding='max_length', truncation=True)
+
+        sample = {'encoded': encoded, 'quality': quality}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
 ```
 
 ## sd2_768_benchmark.py
 
 ```python
 import torch
+import torch.nn as nn
 import torch_neuronx
 from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.models.unet_2d_condition import UNet2DConditionOutput
-import torch.nn as nn
 
 DTYPE = torch.float32
 
@@ -11828,25 +13677,27 @@ class NeuronTextEncoder(nn.Module):
 
     def forward(self, emb, attention_mask = None):
         return [self.neuron_text_encoder(emb)['last_hidden_state']]
+```
 
+```python
 # Load compiled models and deploy to Trainium
-pipe = StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1", torch_dtype=DTYPE)
+pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=DTYPE)
 pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
 
-# Deploy UNet across multiple Neuron cores with data parallelism
+# Load the compiled UNet onto two neuron cores with DataParallel
 pipe.unet = NeuronUNet(UNetWrap(pipe.unet))
 device_ids = [0, 1]
 pipe.unet.unetwrap = torch_neuronx.DataParallel(
-    torch.jit.load('sd2_compile_dir_768/unet/model.pt'), 
+    torch.jit.load(unet_filename), 
     device_ids, 
     set_dynamic_batching=False
 )
 
-# Deploy other models to single Neuron core
+# Load other compiled models onto a single neuron core
 pipe.text_encoder = NeuronTextEncoder(pipe.text_encoder)
-pipe.text_encoder.neuron_text_encoder = torch.jit.load('sd2_compile_dir_768/text_encoder/model.pt')
-pipe.vae.decoder = torch.jit.load('sd2_compile_dir_768/vae_decoder/model.pt')
-pipe.vae.post_quant_conv = torch.jit.load('sd2_compile_dir_768/vae_post_quant_conv/model.pt')
+pipe.text_encoder.neuron_text_encoder = torch.jit.load(text_encoder_filename)
+pipe.vae.decoder = torch.jit.load(decoder_filename)
+pipe.vae.post_quant_conv = torch.jit.load(post_quant_conv_filename)
 ```
 
 ## test_nki_isa_nc_matmul.py
@@ -11938,9 +13789,11 @@ def add_tensors(a_tensor, b_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:512])
   b = nl.load(b_tensor[0:128, 0:512])
+  # add a and b element-wise and store in c[128, 512]
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+
 
 @nki.jit(mode="simulation")
 def add_tensor_scalar(a_tensor):
@@ -11948,9 +13801,11 @@ def add_tensor_scalar(a_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:512])
   b = 2.2
+  # add constant b to each element in a
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+
 
 @nki.jit(mode="simulation")
 def add_broadcast_free_dim(a_tensor, b_tensor):
@@ -11958,9 +13813,11 @@ def add_broadcast_free_dim(a_tensor, b_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:512])
   b = nl.load(b_tensor[0:128, 0:1])
+  # broadcast on free dimension -- [128, 1] is broadcasted to [128, 512]
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+
 
 @nki.jit(mode="simulation")
 def add_broadcast_par_dim(a_tensor, b_tensor):
@@ -11968,9 +13825,11 @@ def add_broadcast_par_dim(a_tensor, b_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:512])
   b = nl.load(b_tensor[0:1, 0:512])
+  # broadcast on partition dimension -- [1, 512] is broadcasted to [128, 512]
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+
 
 @nki.jit(mode="simulation")
 def add_broadcast_both_dims(a_tensor, b_tensor):
@@ -11978,9 +13837,11 @@ def add_broadcast_both_dims(a_tensor, b_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:512])
   b = nl.load(b_tensor[0:1, 0:1])
+  # broadcast on both dimensions -- [1, 1] is broadcasted to [128, 512]
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+
 
 @nki.jit(mode="simulation")
 def add_broadcast_each_dims(a_tensor, b_tensor):
@@ -11988,9 +13849,71 @@ def add_broadcast_each_dims(a_tensor, b_tensor):
                         buffer=nl.shared_hbm)
   a = nl.load(a_tensor[0:128, 0:1])
   b = nl.load(b_tensor[0:1, 0:512])
+  # broadcast on each dimensions -- [128, 1] and [1, 512] are broadcasted to [128, 512]
   c = nl.add(a, b)
   nl.store(c_tensor[0:128, 0:512], c)
   return c_tensor
+```
+
+## ssd300_evaluation.py
+
+```python
+import tensorflow as tf
+import tensorflow.neuron as tfn
+
+def get_val_dataset(val_annotate, val_coco_root):
+    dboxes = dboxes300_coco()
+    val_trans = SSDTransformer(dboxes, (300, 300), val=True)
+    val_coco = COCODetection(val_coco_root, val_annotate, val_trans)
+    return val_coco
+```
+
+```python
+# Load SavedModel and create predictor
+predictor_list = [tf.contrib.predictor.from_saved_model(args.saved_model) for _ in range(args.num_sessions)]
+
+# Run inference
+def predict(pred, model_feed_dict):
+    start = time.time()
+    result = pred(model_feed_dict)
+    latency_list.append(time.time() - start)
+    return result
+
+# Invoke predictor with feed dictionary
+result = predictor_list[0]({'batch_image': [img_jpg_bytes]})
+```
+
+## ssd300_evaluation.py
+
+```python
+import tensorflow as tf
+import tensorflow.neuron as tfn
+
+def get_val_dataset(val_annotate, val_coco_root):
+    dboxes = dboxes300_coco()
+    val_trans = SSDTransformer(dboxes, (300, 300), val=True)
+    val_coco = COCODetection(val_coco_root, val_annotate, val_trans)
+    return val_coco
+```
+
+```python
+# Load SavedModel and create predictor
+predictor_list = [tf.contrib.predictor.from_saved_model(args.saved_model) for _ in range(args.num_sessions)]
+
+# Run inference
+def predict(pred, model_feed_dict):
+    start = time.time()
+    result = pred(model_feed_dict)
+    latency_list.append(time.time() - start)
+    return result
+
+# Execute prediction with feed dict
+result = predict(predictor_list[0], {'batch_image': [img_jpg_bytes]})
+
+# Access results
+boxes = result['boxes']
+classes = result['classes']
+scores = result['scores']
 ```
 
 ## neuronperf_examples.rst
@@ -12013,81 +13936,27 @@ npf.write_json(reports)
 ```
 
 ```python
+import neuronperf as npf
+
 reports = npf.torch.benchmark(filename, inputs, batch_sizes, n_models=1, workers_per_model=[1, 2], duration=15)
 ```
 
 ```python
+import neuronperf as npf
+
 reports = npf.torch.benchmark(..., model_name="MyFancyModel")
 ```
 
 ```python
+import neuronperf as npf
+
 cpu_reports = npf.cpu.benchmark(YourModelClass, ...)
 ```
 
 ```python
+import neuronperf as npf
+
 gpu_reports = npf.torch.benchmark(YourModelClass, ..., device_type="gpu")
-```
-
-## index.rst
-
-```python
-# this is a Python function that calls 'kernel', which is a NKI kernel
-def a_function(x, y, z):
-    kernel(x, y, z)
-
-# this is a NKI kernel that will be compiled by the NKI compiler and 
-# integrated back into the overall model by the Neuron Graph compiler
-@nki.jit
-def kernel(x, y, z):
-    # this is kernel code
-    pass
-```
-
-## tutorial-tensorflowx-serving-NeuronRT-Visible-Cores.rst
-
-```python
-import tensorflow as tf
-import tensorflow_neuronx as tfnx
-import numpy as np
-
-tf.keras.backend.set_learning_phase(0)
-tf.keras.backend.set_image_data_format('channels_last')
-image_sizes = [224, 224]
-model = tf.keras.applications.ResNet50(weights='imagenet')
-example_inputs = tf.random.uniform([1, *image_sizes, 3], dtype=tf.float32)
-
-model_neuron = tfnx.trace(model, example_inputs)
-# run the model once to define the forward pass and allow for saving
-model_neuron(example_inputs)
-tf.keras.models.save_model(model_neuron, './resnet50_neuron/1')
-```
-
-```python
-import numpy as np
-import grpc
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.applications.resnet50 import preprocess_input
-from tensorflow_serving.apis import predict_pb2
-from tensorflow_serving.apis import prediction_service_pb2_grpc
-from tensorflow.keras.applications.resnet50 import decode_predictions
-
-tf.keras.backend.set_image_data_format('channels_last')
-
-channel = grpc.insecure_channel('localhost:8500')
-stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
-img_file = tf.keras.utils.get_file(
-    "./kitten_small.jpg",
-    "https://raw.githubusercontent.com/awslabs/mxnet-model-server/master/docs/images/kitten_small.jpg")
-img = image.load_img(img_file, target_size=(224, 224))
-img_array = preprocess_input(image.img_to_array(img)[None, ...])
-request = predict_pb2.PredictRequest()
-request.model_spec.name = 'resnet50_neuron'
-request.inputs['input_1'].CopyFrom(
-    tf.make_tensor_proto(img_array, shape=img_array.shape))
-result = stub.Predict(request)
-prediction = tf.make_ndarray(result.outputs['output_1'])
-print(decode_predictions(prediction))
 ```
 
 ## pb2sm_compile.py
@@ -12518,11 +14387,14 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
 import numpy as np
-```
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_nc_stream_shuffle(in_tensor):
+  """
+  Example 1: Apply cross-partition data movement to a 32-partition tensor,
+  in-place shuffling the data in partition[i] to partition[(i+1)%32].
+  """
   out_tensor = nl.ndarray(shape=(32, 128), dtype=np.float32, buffer=nl.shared_hbm)
   a: tensor[32, 128] = nl.load(in_tensor)
   a_mgrid = nl.mgrid[0:32, 0:128]
@@ -12530,11 +14402,13 @@ def nki_nc_stream_shuffle(in_tensor):
   nisa.nc_stream_shuffle(src=a[a_mgrid.p, a_mgrid.x], dst=a[a_mgrid.p, a_mgrid.x], shuffle_mask=shuffle_mask)
   nl.store(out_tensor, value=a)
   return out_tensor
-```
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_nc_stream_shuffle_broadcast_partition(in_tensor):
+  """
+  Example 2: Broadcast data in 1 partition to 32 partitions.
+  """
   out_tensor = nl.ndarray(shape=(32, 128), dtype=np.float32, buffer=nl.shared_hbm)
   a: tensor[1, 128] = nl.load(in_tensor)
   b = nl.ndarray(shape=(32, 128), dtype=np.float32)
@@ -12544,11 +14418,14 @@ def nki_nc_stream_shuffle_broadcast_partition(in_tensor):
   nisa.nc_stream_shuffle(src=a[0, src_mgrid.x], dst=b[dst_mgrid.p, dst_mgrid.x], shuffle_mask=shuffle_mask)
   nl.store(out_tensor, value=b)
   return out_tensor
-```
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_nc_stream_shuffle_broadcast_mask(in_tensor):
+  """
+  Example 3: When src and dst access more than one quadrant (32 partitions),
+  the shuffle is applied to each quadrant independently with the same shuffle_mask.
+  """
   out_tensor = nl.ndarray(shape=(128, 128), dtype=np.float32, buffer=nl.shared_hbm)
   a: tensor[128, 128] = nl.load(in_tensor)
   b = nl.ndarray(shape=(128, 128), dtype=np.float32)
@@ -12559,26 +14436,13 @@ def nki_nc_stream_shuffle_broadcast_mask(in_tensor):
   return out_tensor
 ```
 
-## api-compilation-python-api.rst
-
-```python
-import shutil
-import tensorflow.neuron as tfn
-
-saved_model_path = "<saved model path>"
-compiled_saved_model_path = "<compiled saved model path>"
-shutil.rmtree(compiled_saved_model_path, ignore_errors=True)
-tfn.saved_model.compile(saved_model_path, compiled_saved_model_path)
-```
-
 ## model_optimizer_wrapper_developer_guide.rst
 
 ```python
 import neuronx_distributed as nxd
 import torch
 
-# Create training config with tensor parallel, pipeline parallel, ZeRO-1 optimizer,
-# sequence parallel and activation checkpointing
+# Create training config
 nxd_config = nxd.neuronx_distributed_config(
     tensor_parallel_size=args.tensor_parallel_size,
     pipeline_parallel_size=args.pipeline_parallel_size,
@@ -12616,12 +14480,12 @@ loss = model(*inputs)
 loss.backward()
 
 # Access wrapped model
-model.local_module()
+wrapped_model = model.local_module()
 
 # Access model properties
-model.dtype
-model.config
-model.name_or_path
+dtype = model.dtype
+config = model.config
+name_or_path = model.name_or_path
 
 # Initialize parallel optimizer
 optimizer = nxd.initialize_parallel_optimizer(
@@ -12743,6 +14607,78 @@ def nki_iota():
   e: tensor[128, 512] = nisa.iota(expr_a + expr_b, dtype=nl.int32)
 ```
 
+## fp32tofp16.py
+
+```python
+import tensorflow as tf
+import numpy as np
+
+from google.protobuf import text_format
+from tensorflow.core.framework import graph_pb2
+from tensorflow.core.framework import node_def_pb2
+from tensorflow.python.platform import gfile
+
+from tensorflow.core.framework import attr_value_pb2
+from tensorflow.python.framework import tensor_util
+
+
+def ConvertFP32ToOther(graphdef):
+  """Converts an FP32 network by casting all constants (weights) to a lower
+     precision floating point type (FP16) and updating the dtypes
+     everywhere."""
+  cast_type = "float16"
+  sess = tf.Session(graph=tf.import_graph_def(graphdef))
+  output_graph_def = graph_pb2.GraphDef()
+  dummy_tensor = sess.run(tf.constant([0.1]))
+  dummy_tensor_proto = tensor_util.make_tensor_proto(dummy_tensor, \
+      dtype=cast_type, shape=dummy_tensor.shape)
+  dummy_tensor32 = sess.run(tf.constant([0.1]))
+  dummy_tensor_proto32 = tensor_util.make_tensor_proto(dummy_tensor, \
+      dtype=tf.float32, shape=dummy_tensor.shape)
+  dt_float_type_attr = attr_value_pb2.AttrValue(type=dummy_tensor_proto32.dtype)
+  dt_half_type_attr = attr_value_pb2.AttrValue(type=dummy_tensor_proto.dtype)
+  for node in graphdef.node:
+    output_node = node_def_pb2.NodeDef()
+    output_node.CopyFrom(node)
+    if (node.op == "Const"):
+      if (node.attr["dtype"] == dt_float_type_attr):
+        a = tensor_util.MakeNdarray(node.attr["value"].tensor)
+        a = tf.cast(a, cast_type)
+        a = sess.run(a)
+        output_node.attr["dtype"].CopyFrom(dt_half_type_attr)
+        output_node.attr["value"].CopyFrom(
+            attr_value_pb2.AttrValue(
+              tensor=tensor_util.make_tensor_proto(a,\
+                dtype=cast_type, shape=a.shape)))
+    else:
+      if ("T" in node.attr.keys()):
+        if (output_node.attr["T"] == dt_float_type_attr):
+          output_node.attr["T"].CopyFrom(dt_half_type_attr)
+      if ("Tparams" in node.attr.keys()):
+        if (output_node.attr["Tparams"] == dt_float_type_attr):
+          output_node.attr["Tparams"].CopyFrom(dt_half_type_attr)
+      if ("dtype" in node.attr.keys()):
+        if (node.attr["dtype"] == dt_float_type_attr):
+          output_node.attr["dtype"].CopyFrom(dt_half_type_attr)
+      if ("SrcT" in node.attr.keys()):
+        if (node.attr["SrcT"] == dt_float_type_attr):
+          output_node.attr["SrcT"].CopyFrom(dt_half_type_attr)
+      if ("DstT" in node.attr.keys()):
+        if (node.attr["DstT"] == dt_float_type_attr):
+          output_node.attr["DstT"].CopyFrom(dt_half_type_attr)
+    output_graph_def.node.extend([output_node])
+  return output_graph_def
+
+
+def load_graph(model_file):
+  graph_def = tf.GraphDef()
+
+  with open(model_file, "rb") as f:
+    graph_def.ParseFromString(f.read())
+
+  return graph_def
+```
+
 ## cpu_mode_developer_guide.rst
 
 ```python
@@ -12817,27 +14753,31 @@ def nki_tensor_scalar(a_tensor, c_tensor, e_tensor, f_tensor):
   g_tensor = nl.ndarray(e_tensor.shape, dtype=e_tensor.dtype,
                         buffer=nl.shared_hbm)
   
-  # Example 1: subtract 1.0 from all elements of tile a of shape (128, 512)
+  # Example 1: subtract 1.0 from all elements of tile a of
+  # shape (128, 512) and get the output tile in b
   i_p = nl.arange(128)[:, None]
   i_f = nl.arange(512)[None, :]
   a = nl.load(a_tensor[i_p, i_f])
   b = nisa.tensor_scalar(a[i_p, i_f], np.subtract, 1.0)
   nl.store(b_tensor[i_p, i_f], b)
 
-  # Example 2: broadcast 1.0 into shape (128, 512) and subtract with tile c
+  # Example 2: broadcast 1.0 into a shape of (128, 512) and subtract
+  # it with tile c to get output tile d
   i_p = nl.arange(128)[:, None]
   i_f = nl.arange(512)[None, :]
   c = nl.load(c_tensor[i_p, i_f])
   d = nisa.tensor_scalar(c[i_p, i_f], np.subtract, 1.0, reverse0=True)
   nl.store(d_tensor[i_p, i_f], d)
 
-  # Example 3: broadcast multiply tile e with vector f, then broadcast add with scalar 2.5
+  # Example 3: broadcast multiply tile e with vector f and
+  # then broadcast add with scalar 2.5;
+  # tile e has a shape of (64, 1024) and vector f has a shape of (64, 1)
   i_p_ef = nl.arange(64)[:, None]
   i_f_e = nl.arange(1024)[None, :]
   i_f_f = nl.arange(1)[None, :]
   e = nl.load(e_tensor[i_p_ef, i_f_e])
-  f = nl.load(f_tensor[i_p_ef, i_f_f])
-  g = nisa.tensor_scalar(e[i_p_ef, i_f_e], op0=np.multiply, operand0=f[i_p_ef, i_f_f], op1=np.add, operand1=2.5)
+  f = nl.load(f_tensor[i_p_ef, i_f_f]) 
+  g = nisa.tensor_scalar(e[i_p_ef, i_f_e], op0=np.multiply, operand0=f[i_p_ef, i_f_f], op1=np.add, operand1=2.5)  
   nl.store(g_tensor[i_p_ef, i_f_e], g)
   
   return b_tensor, d_tensor, g_tensor
@@ -12888,7 +14828,9 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.compiler as ncc
 import numpy as np
 
-@nki.trace
+nki_jit = nki.trace
+
+@nki_jit
 def allocated_loop_transpose(a_ptr, tp_ptr):
   
   N, M = a_ptr.shape
@@ -12931,13 +14873,19 @@ def allocated_loop_transpose(a_ptr, tp_ptr):
 ```python
 import os
 import json
-import torch
-import torch_neuronx
-from transformers import AutoTokenizer
-from ts.torch_handler.base_handler import BaseHandler
+import logging
 from abc import ABC
 
+import torch
+import torch_neuronx
+
+from transformers import AutoTokenizer
+from ts.torch_handler.base_handler import BaseHandler
+
+
 os.environ['NEURON_RT_NUM_CORES'] = '1'
+
+logger = logging.getLogger(__name__)
 
 class BertEmbeddingHandler(BaseHandler, ABC):
     """
@@ -12969,6 +14917,9 @@ class BertEmbeddingHandler(BaseHandler, ABC):
         self.initialized = True
 
     def preprocess(self, input_data):
+        """
+        Tokenization pre-processing
+        """
         input_ids = []
         attention_masks = []
         token_type_ids = []
@@ -12996,6 +14947,9 @@ class BertEmbeddingHandler(BaseHandler, ABC):
         return batch
 
     def inference(self, inputs):
+        """
+        Predict the class of a text using a trained transformer model.
+        """
         assert(len(inputs) == 3)
         num_inferences = len(inputs[0])
         assert(num_inferences <= self.batch_size)
@@ -13021,13 +14975,14 @@ class BertEmbeddingHandler(BaseHandler, ABC):
 ```python
 import os
 import json
+import logging
+from abc import ABC
+
 import torch
 import torch_neuron
 from transformers import AutoTokenizer
 from ts.torch_handler.base_handler import BaseHandler
-from abc import ABC
 
-os.environ['NEURON_RT_NUM_CORES'] = '1'
 
 class BertEmbeddingHandler(BaseHandler, ABC):
     """
@@ -13119,9 +15074,8 @@ import neuronxcc.nki as nki
 import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
-```
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_bn_stats_bn_aggr_1(a_tensor):
   mean_a_tensor = nl.ndarray([a_tensor.shape[0], 1], dtype=a_tensor.dtype, buffer=nl.shared_hbm)
@@ -13137,9 +15091,8 @@ def nki_bn_stats_bn_aggr_1(a_tensor):
   nl.store(var_a_tensor, var_a)
 
   return mean_a_tensor, var_a_tensor
-```
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_bn_stats_bn_aggr_2(b_tensor):
   mean_b_tensor = nl.ndarray([b_tensor.shape[0], 1], dtype=b_tensor.dtype, buffer=nl.shared_hbm)
@@ -13169,6 +15122,7 @@ def nki_bn_stats_bn_aggr_2(b_tensor):
 ## test_attention.py
 
 ```python
+from attention_kernels import *
 import neuronxcc.nki as nki
 from neuronxcc.nki import benchmark, baremetal, simulate_kernel
 import neuronxcc.nki.language as nl
@@ -13206,60 +15160,6 @@ def numpy_attention(q, k, v):
     attn_out = np.matmul(scores, v_t)  # Shape: (seqlen_q, d_head)
     
     return attn_out
-```
-
-## neuronperf_compile_guide.rst
-
-```python
-import neuronperf as npf
-import neuronperf.torch
-
-npf.torch.compile(model, inputs)  # compile for current instance type
-npf.torch.compile(model, inputs, compiler_target="inf2")  # compile for inf2
-```
-
-```python
-import torch
-import neuronperf as npf
-import neuronperf.torch
-
-# Select a few batch sizes and pipeline configurations to test
-batch_sizes = [1, 5, 10]
-pipeline_sizes = [1, 2, 4]
-
-# Construct example inputs
-example_inputs = [torch.zeros([batch_size, 3, 224, 224], dtype=torch.float16) for batch_size in batch_sizes]
-
-# Compile all configurations
-index = npf.torch.compile(
-    model,
-    example_inputs,
-    batch_sizes=batch_sizes,
-    pipeline_sizes=pipeline_sizes,
-)
-```
-
-```python
-import neuronperf as npf
-
-# Compile with pipeline size 1 and vary batch dimension
-batch_index = npf.torch.compile(
-    model,
-    example_inputs,
-    batch_sizes=batch_sizes,
-    pipeline_sizes=1,
-)
-
-# Compile with batch size 1 and vary pipeline dimension
-pipeline_index = npf.torch.compile(
-    model,
-    example_inputs[0],
-    batch_sizes=1,
-    pipeline_sizes=pipeline_sizes,
-)
-
-index = npf.model_index.append(batch_index, pipeline_index)
-npf.model_index.save(index, 'model_index.json')
 ```
 
 ## test_nki_isa_local_gather.py
@@ -13327,7 +15227,9 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.compiler as ncc
 import numpy as np
 
-@nki.trace
+nki_jit = nki.trace
+
+@nki_jit
 def allocated_loop_transpose(a_ptr, tp_ptr):
   
   N, M = a_ptr.shape
@@ -13384,6 +15286,37 @@ std::string get_visible_cores_str(size_t num_neuron_cores, size_t cores_per_mode
     return oss.str();
 }
 
+std::string get_uuid()
+{
+    // xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
+    // M = version = 4, (4 bits, 0100 = 0x4)
+    // N = variant = 1, (2 bits, 10XX = 0x{8, 9, A, B})
+
+    static const char *chars = "0123456789abcdef";
+    static std::random_device rd;
+    static std::mt19937 mt(rd());
+    static std::uniform_int_distribution<> dist(0, 15);
+
+    std::stringstream ss;
+    for (size_t i = 0; i < 37; i++) {
+        const int index = dist(mt);
+        ss << chars[index];
+    }
+
+    // variant bits are 10XX
+    std::stringstream variant_ss;
+    size_t variant;
+    variant_ss << std::hex << chars[dist(mt)];
+    variant_ss >> variant;
+    variant = 0x8 | (0x3 & variant);
+
+    ss.seekp(9); ss << "-";
+    ss.seekp(14); ss << "-4";
+    ss.seekp(19); ss << "-" << std::hex << variant;
+    ss.seekp(24); ss << "-";
+    return ss.str();
+}
+
 torch::jit::script::Module get_model(const std::string& filename)
 {
     torch::jit::script::Module model = torch::jit::load(filename);
@@ -13414,17 +15347,15 @@ class MLP(nn.Module):
 ```
 
 ```python
-# XLA: Specify XLA device (defaults to a NeuronCore on Trn1 instance)
+# XLA device setup for Trainium
 device = 'xla'
-
-# Move model to device and declare optimizer and loss function
 model = MLP().to(device)
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 loss_fn = torch.nn.NLLLoss()
 ```
 
 ```python
-# Training loop with XLA
+# Training loop with XLA mark_step
 model.train()
 for idx, (train_x, train_label) in enumerate(train_loader):
     optimizer.zero_grad()
@@ -13435,13 +15366,128 @@ for idx, (train_x, train_label) in enumerate(train_loader):
     loss = loss_fn(output, train_label)
     loss.backward()
     optimizer.step()
-    xm.mark_step() # XLA: collect ops and run them in XLA runtime
+    xm.mark_step()  # XLA: collect ops and run them in XLA runtime
 ```
 
 ```python
-# XLA: use xm.save instead of torch.save to ensure states are moved back to cpu
+# Checkpoint saving with XLA
 checkpoint = {'state_dict': model.state_dict()}
 xm.save(checkpoint, 'checkpoints/checkpoint.pt')
+```
+
+## benchmark_utils.py
+
+```python
+import math
+from collections import Counter
+
+import numpy as np
+
+class Results():
+
+    def __init__(self, batch_size, num_cores=1):
+        self.latency_array = []
+        self.end_times = []
+        self.start_times = []
+        self.batch_size = batch_size
+        self.num_cores = num_cores
+
+    def add_result(self, latency_array, end_times, start_times):
+        self.latency_array.extend(latency_array)
+        self.end_times.extend(end_times)
+        self.start_times.extend(start_times)
+
+    def report(self, f, window_size=1):
+        assert(len(self.latency_array) != 0)
+        p50_latency = np.percentile(self.latency_array, 50)
+        p90_latency = np.percentile(self.latency_array, 90)
+        p95_latency = np.percentile(self.latency_array, 95)
+        p99_latency = np.percentile(self.latency_array, 99)
+        p100_latency = np.percentile(self.latency_array, 100)
+
+        def get_bucket(start, end):
+            bucketed_start = math.floor(start / window_size) * window_size
+            bucketed_end = math.ceil(end / window_size) * window_size
+            if bucketed_end - bucketed_start == window_size:
+                return bucketed_start
+            else:
+                return None
+            
+        bucketed_timestamps = [get_bucket(start, end)
+                            for start, end in zip(self.start_times, self.end_times)]
+        counted_buckets = Counter(
+            item for item in bucketed_timestamps if item is not None)
+        bucket_throughputs = [(key, value / window_size)
+                            for key, value in sorted(counted_buckets.items())]
+        
+        busy_throughputs = [value for _, value in bucket_throughputs]
+        max_throughput = max(busy_throughputs) * self.batch_size
+        avg_throughput = sum(busy_throughputs) * self.batch_size / len(busy_throughputs)
+```
+
+## standard_mixed_precision.rst
+
+```python
+mixed_precision_config = {
+    "use_master_weights": True,
+    "use_fp32_grad_acc": True,
+    "use_master_weights_in_ckpt": False,
+}
+
+config = {
+    "mixed_precision_config": mixed_precision_config,
+}
+```
+
+```python
+# same as `mixed_precision_config = None`
+mixed_precision_config = {
+    "use_master_weights": optimizer_config["zero_one_enabled"],
+    "use_fp32_grad_acc": optimizer_config["zero_one_enabled"],
+    "use_master_weights_in_ckpt": False,
+}
+
+config = {
+    "mixed_precision_config": mixed_precision_config,
+}
+```
+
+```python
+mixed_precision_config = {
+    "use_master_weights": False,
+    "use_fp32_grad_acc": False,
+    "use_master_weights_in_ckpt": False,
+}
+
+config = {
+    "mixed_precision_config": mixed_precision_config,
+}
+```
+
+## ssd300_detection.py
+
+```python
+import tensorflow as tf
+import tensorflow.neuron as tfn
+
+predictor = tf.contrib.predictor.from_saved_model(args.saved_model)
+results = predictor(model_feed_dict)
+boxes_np = results['boxes']
+scores_np = results['scores']
+classes_np = results['classes']
+```
+
+## ssd300_detection.py
+
+```python
+import tensorflow as tf
+import tensorflow.neuron as tfn
+
+predictor = tf.contrib.predictor.from_saved_model(args.saved_model)
+results = predictor(model_feed_dict)
+boxes_np = results['boxes']
+scores_np = results['scores']
+classes_np = results['classes']
 ```
 
 ## layernorm_torch.py
@@ -13474,6 +15520,11 @@ xm.mark_step()
 output_nki = nki_layernorm_kernel(input_tensor, epsilon, gamma_vector, beta_vector)
 xm.mark_step()
 output_nki = output_nki.to(device='cpu')
+```
+
+```python
+# Accuracy check: Compare the output tensors
+allclose = torch.allclose(output_torch, output_nki, atol=1e-3, rtol=1e-2)
 ```
 
 ## average_pool2d_nki_kernels.py
@@ -13527,6 +15578,137 @@ def tensor_avgpool_kernel(in_tensor, pool_size):
   nl.store(out_tensor, value=out_tile)
 
   # Transfer the ownership of `out_tensor` to the caller
+  return out_tensor
+```
+
+## transpose2d_nki_kernels.py
+
+```python
+import numpy as np
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+
+
+@nki.jit
+def tensor_transpose2D_kernel_(in_tensor, shape2D):
+  """
+  NKI kernel to reorder the elements on axis[1] of the input tensor.
+
+  Every row of the input tensor is a flattened row-major 2D matrix.
+  The shape2D argument defines the dimensions of the flattened matrices (#rows,#cols).
+  Our goal in this kernel is to transpose these flattened 2D matrices, i.e. make them (#cols,#rows).
+
+  Example:
+      in_tensor = [a0,a1,a2,a3,b0,b1,b2,b3,c0,c1,c2,c3]
+      shape2D = (3,4)
+  this means that in_tensor has 3 rows and 4 columns, i.e. can be represented as:
+      [a0,a1,a2,a3]
+      [b0,b1,b2,b3]
+      [c0,c1,c2,c3]
+  after transpose, we expect to get:
+      [a0,b0,c0]
+      [a1,b1,c1]
+      [a2,b2,c2]
+      [a3,b3,c3]
+  Thus, out_tensor is expected to be [a0,b0,c0,a1,b1,c1,a2,b2,c2,a3,b3,c3]
+
+  Args:
+    in_tensor: an input tensor
+    shape2D: tuple representing the dimensions to be transposed: (#rows, #cols)
+    out_tensor: an output (transposed) tensor
+  """
+  out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+  # Gather input shapes
+  sz_p, _ = in_tensor.shape
+
+  # Load input data from external memory to on-chip memory
+  in_tile = nl.load(in_tensor)
+
+  # Performing f1/f2 transpose
+  # ==========================
+  # The desired transpose pattern is provided as an input:
+  sz_f1, sz_f2 = shape2D
+
+  # We're going to need 3 indices to perform f1:f2 transpose.
+  # - i_p0 is the parallel index
+  # - i_f1 and i_f2 are both free-dim indices, and will be used to transpose between the f1/f2 axes
+  i_p0 = nl.arange(sz_p)[:, None, None]
+  i_f1 = nl.arange(sz_f1)[None, :, None]
+  i_f2 = nl.arange(sz_f2)[None, None, :]
+
+  # Perform the transposition via a SBUF-to-SBUF copy, with access-pattern manipulation
+  # Note that we have 2D tensors and 3 indices, since we need to represent a 2D access pattern *per partition*
+  # RHS traverses an F1 x F2 matrix in a row major manner
+  # LHS traverses an F2 x F1 (new) matrix in a row major manner
+  out_tile = nl.ndarray(shape=(sz_p, sz_f2*sz_f1), dtype=out_tensor.dtype)
+  out_tile[i_p0, i_f2*sz_f1+i_f1] = nl.copy(in_tile[i_p0, i_f1*sz_f2+i_f2])
+
+  # Finally, we store out_tile to external memory
+  nl.store(out_tensor, value=out_tile)
+
+  return out_tensor
+```
+
+## index-case-3.py
+
+```python
+from neuronxcc import nki
+import neuronxcc.nki.language as nl
+
+@nki.jit
+def tensor_maxpool_kernel_(in_tensor, pool_size):
+  """NKI kernel to compute a 2D max-pool operation
+
+  Args:
+      in_tensor: an input tensor, of dimensions C x H x W
+      pool_size: integer P representing a (square) pool-window size
+  Returns:
+      out_tensor: the resulting output tensor, of dimensions C x (H/P) x (W/P)
+  """
+
+  # Get input/output dimensions
+  sz_cin, sz_hin, sz_win = in_tensor.shape
+  sz_hout, sz_wout = sz_hin // pool_size, sz_win // pool_size
+  out_tensor = nl.ndarray((sz_cin, sz_hout, sz_wout), dtype=in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+
+  # Set relevant sizes
+  sz_p = sz_cin
+  sz_pool = pool_size
+
+  # Generate tensor h/w index patterns
+  # 3D indexing according to [C, H, W]
+  i_p = nl.arange(sz_p)[:, None, None] # 3D for
+  i_win = nl.arange(sz_win)[None, None, :]
+  i_hin = nl.arange(sz_hin)[None, :, None]
+
+  i_wout = nl.arange(sz_wout)[None, None, :]
+  i_hout = nl.arange(sz_hout)[None, :, None]
+
+  # Generate pool index patterns (requires two extra dimensions, for the pool window)
+  i_0 = nl.arange(sz_p)[:, None, None, None, None] #
+  i_1 = nl.arange(sz_hin//sz_pool)[None, :, None, None, None] # y_outer
+  i_2 = nl.arange(sz_pool)[None, None, :, None, None] # y_inner
+  i_3 = nl.arange(sz_win//sz_pool)[None, None, None, :, None] # x_outer
+  i_4 = nl.arange(sz_pool)[None, None, None, None, :] # x_inner
+
+  # Load input data from external memory to on-chip memory
+  # Declare ndarray to force a 3D tensor (temporary requirement)
+  in_tile = nl.ndarray([sz_p, sz_hin, sz_win], dtype=in_tensor.dtype)
+  in_tile[:,:,:] = nl.load(in_tensor[i_p, i_hin, i_win])
+
+  # Perform the pooling operation:
+  # We use numpy's advanced indexing, in order to extend in_tile to 5D, and then reduce-max two dimension.
+  # axis[0] is the index for p_dim, and thus doesn't participate in the reduction operation.
+  # axis[1] and axis[2] together index the rows, with axis[2] responsible for inner strides
+  # (i.e. inside a pooling window), and axis[1] responsible for the outer strides. As such, we reduce over axis[2].
+  # Similarly, axis[3] and axis[4] together index the columns, and we thus reduce over axis[4].
+  out_tile = nl.max(in_tile[i_0, sz_pool*i_1+i_2, sz_pool*i_3+i_4], axis=[2,4])
+
+  # Store the results back to external memory
+  nl.store(out_tensor[i_p, i_hout, i_wout], value=out_tile)
+
   return out_tensor
 ```
 
@@ -13600,116 +15782,95 @@ def nki_rmsnorm_kernel(a_tensor, g_tensor):
   return out_tensor
 ```
 
-## test_nki_nl_load_store.py
+## parallel.py
 
 ```python
-import numpy as np
-import neuronxcc.nki as nki
-import neuronxcc.nki.language as nl
+import mxnet as mx
+import mx_neuron
+from multiprocessing import Process, Manager
+from time import time
 
 
-@nki.jit(mode="simulation")
-def example_kernel(in_tensor, use_scalar=False):
-  out_tensor = nl.ndarray(in_tensor.shape, in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-  # load from in_tensor[P, F] that is on HBM
-  # copy into data_tile[P, F] that is on SBUF
-  data_tile = nl.load(in_tensor)
-  
-  if use_scalar:
-    scalar = 100
-    # store scalar into out_tensor on HBM (effectively a memset)
-    nl.store(out_tensor, scalar)
-  else:
-    # store into out_tensor[P, F] that is on HBM
-    # from data_tile[P, F] that is on SBUF
-    nl.store(out_tensor, data_tile)
-  return out_tensor
+def consumer(model_file, sample_input, input_queue, result_queue):
+    sym, args, aux = mx.model.load_checkpoint(model_file, 0)
+    sample_input = {key: mx.nd.array(v) for key, v in sample_input.items()}
+    args.update(sample_input)
+    model = sym.bind(mx.cpu(), args=args, aux_states=aux, grad_req="null")
+
+    while True:
+        inputs, input_id = input_queue.get()
+        input_queue.task_done()
+        # Stop execution if stopping condition is recieved
+        if inputs == "stop":
+            break
+        inputs = {key: mx.nd.array(v) for key, v in inputs.items()}
+        start = time()
+        results = model.forward(**inputs)
+        results[0].wait_to_read()
+
+        # Make the output iterable - if it is not already a tuple or list
+        if not isinstance(results, tuple) or isinstance(results, list):
+            results = [results]
+        end = time()
+
+        if input_id != -1:
+            result_queue.put((results, start, end, input_id))
 
 
-@nki.jit(mode="simulation")
-def example_load_store_b(in_tensor):
-  out_tensor = nl.ndarray(in_tensor.shape, in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-  for i_b in nl.affine_range(4):
-    data_tile = nl.zeros((128, 512), dtype=in_tensor.dtype) 
-    # load from in_tensor[4, 128, 512] one batch at a time
-    # copy into data_tile[128, 512]
-    i_p, i_f = nl.mgrid[0:128, 0:512]
-    data_tile[i_p, i_f] = nl.load(in_tensor[i_b, i_p, i_f])
-    
-    # store into out_tensor[4, 128, 512] one batch at a time
-    # from data_tile[128, 512] 
-    i_p, i_f = nl.mgrid[0:128, 0:512]
-    nl.store(out_tensor[i_b, i_p, i_f], value=data_tile[i_p, i_f]) 
-  return out_tensor
-```
+class NeuronSimpleDataParallel:
+    def __init__(self, model_file, num_neuron_cores, sample_input):
+        self.num_neuron_cores = num_neuron_cores
+        self.sample_input = sample_input
+        self.model_path = model_file
+        # Create shared input queue and output queue
+        manager = Manager()
+        self.input_queue = manager.Queue(maxsize=num_neuron_cores * 16)
+        self.result_queue = manager.Queue(maxsize=num_neuron_cores * 16)
 
-## transpose2d_nki_kernels.py
+        self.processes = [
+            Process(
+                target=consumer,
+                args=(
+                    self.model_path,
+                    self.sample_input,
+                    self.input_queue,
+                    self.result_queue,
+                ),
+            )
+            for _ in range(num_neuron_cores)
+        ]
+        self.input_id = 0
+        self.input_dict = set()
 
-```python
-import numpy as np
-import neuronxcc.nki as nki
-import neuronxcc.nki.language as nl
+    def start_continuous_inference(self):
+        for p in self.processes:
+            p.start()
 
+    def warmup(self, batch):
+        self.input_queue.put((batch, -1))
 
-@nki.jit
-def tensor_transpose2D_kernel_(in_tensor, shape2D):
-  """
-  NKI kernel to reorder the elements on axis[1] of the input tensor.
+    def infer(self, batch):
+        self.input_id += 1
+        self.input_dict.add(self.input_id)
+        self.input_queue.put((batch, self.input_id))
 
-  Every row of the input tensor is a flattened row-major 2D matrix.
-  The shape2D argument defines the dimensions of the flattened matrices (#rows,#cols).
-  Our goal in this kernel is to transpose these flattened 2D matrices, i.e. make them (#cols,#rows).
+    def stop(self):
+        for _ in range(self.num_neuron_cores):
+            self.input_queue.put(("stop", -1))
 
-  Example:
-      in_tensor = [a0,a1,a2,a3,b0,b1,b2,b3,c0,c1,c2,c3]
-      shape2D = (3,4)
-  this means that in_tensor has 3 rows and 4 columns, i.e. can be represented as:
-      [a0,a1,a2,a3]
-      [b0,b1,b2,b3]
-      [c0,c1,c2,c3]
-  after transpose, we expect to get:
-      [a0,b0,c0]
-      [a1,b1,c1]
-      [a2,b2,c2]
-      [a3,b3,c3]
-  Thus, out_tensor is expected to be [a0,b0,c0,a1,b1,c1,a2,b2,c2,a3,b3,c3]
+    def add_result(self, callback_fn):
+        if not self.result_queue.empty():
+            result, start, end, input_id = self.result_queue.get()
+            self.input_dict.remove(input_id)
+            self.result_queue.task_done()
+            callback_fn(result, start, end)
 
-  Args:
-    in_tensor: an input tensor
-    shape2D: tuple representing the dimensions to be transposed: (#rows, #cols)
-    out_tensor: an output (transposed) tensor
-  """
-  out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-  # Gather input shapes
-  sz_p, _ = in_tensor.shape
-
-  # Load input data from external memory to on-chip memory
-  in_tile = nl.load(in_tensor)
-
-  # Performing f1/f2 transpose
-  # ==========================
-  # The desired transpose pattern is provided as an input:
-  sz_f1, sz_f2 = shape2D
-
-  # We're going to need 3 indices to perform f1:f2 transpose.
-  # - i_p0 is the parallel index
-  # - i_f1 and i_f2 are both free-dim indices, and will be used to transpose between the f1/f2 axes
-  i_p0, i_f1, i_f2 = nl.mgrid[:sz_p, :sz_f1, :sz_f2]
-
-  # Perform the transposition via a SBUF-to-SBUF copy, with access-pattern manipulation
-  # Note that we have 2D tensors and 3 indices, since we need to represent a 2D access pattern *per partition*
-  # RHS traverses an F1 x F2 matrix in a row major manner
-  # LHS traverses an F2 x F1 (new) matrix in a row major manner
-  out_tile = nl.ndarray(shape=(sz_p, sz_f2*sz_f1), dtype=out_tensor.dtype)
-  out_tile[i_p0, i_f2*sz_f1+i_f1] = nl.copy(in_tile[i_p0, i_f1*sz_f2+i_f2])
-
-  # Finally, we store out_tile to external memory
-  nl.store(out_tensor, value=out_tile)
-
-  return out_tensor
+    def add_all_results(self, callback_fn):
+        results = []
+        while len(self.input_dict):
+            self.add_result(callback_fn)
+        for p in self.processes:
+            p.join()
 ```
 
 ## test_nki_isa_sequence_bounds.py
@@ -13719,9 +15880,9 @@ import neuronxcc.nki as nki
 import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
-```
+import numpy as np
 
-```python
+
 @nki.jit(mode="simulation")
 def nki_sequence_bounds(segment_ids):
   output = nl.ndarray([1, 2, 32], dtype=segment_ids.dtype, buffer=nl.shared_hbm)
@@ -13738,21 +15899,49 @@ def nki_sequence_bounds(segment_ids):
   return output
 ```
 
+```python
+def compute_sequence_bounds(sequence):
+  n = len(sequence)
+
+  min_bounds = np.zeros(n, dtype=sequence.dtype)
+  max_bounds = np.zeros(n, dtype=sequence.dtype)
+
+  min_bound_pad = n
+  max_bound_pad = -1
+
+  min_bounds[0] = 0 if sequence[0] != 0 else min_bound_pad
+  for i in range(1, n):
+    if sequence[i] == 0:
+      min_bounds[i] = min_bound_pad
+    elif sequence[i] == sequence[i - 1]:
+      min_bounds[i] = min_bounds[i - 1]
+    else:
+      min_bounds[i] = i
+
+  max_bounds[-1] = n if sequence[-1] != 0 else max_bound_pad
+  for i in range(n - 2, -1, -1):
+    if sequence[i] == 0:
+      max_bounds[i] = max_bound_pad
+    elif sequence[i] == sequence[i + 1]:
+      max_bounds[i] = max_bounds[i + 1]
+    else:
+      max_bounds[i] = i + 1
+
+  return np.vstack((min_bounds, max_bounds))
+```
+
 ## compile.py
 
 ```python
 import torch
-from torch_neuron import trace
-# or for trainium:
-# from torch_neuronx.xla_impl.trace import trace
-
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from torch_neuron import trace
 
-# Load model and tokenizer
+# Load tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained("bert-base-cased-finetuned-mrpc")
 model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased-finetuned-mrpc", return_dict=False)
 
-# Prepare example inputs for tracing
+# Prepare example inputs
 sequence_0 = "The company HuggingFace is based in New York City"
 sequence_2 = "HuggingFace's headquarters are situated in Manhattan"
 max_length = 128
@@ -13760,17 +15949,17 @@ batch_size = 6
 
 paraphrase = tokenizer.encode_plus(sequence_0, sequence_2, max_length=max_length, padding='max_length', truncation=True, return_tensors="pt")
 
-example_inputs = (
+example_inputs_paraphrase = (
     torch.cat([paraphrase['input_ids']] * batch_size, 0),
     torch.cat([paraphrase['attention_mask']] * batch_size, 0),
     torch.cat([paraphrase['token_type_ids']] * batch_size, 0)
 )
 
-# Compile model with torch.neuron.trace
-model_neuron = trace(model, example_inputs)
+# Trace model for Neuron compilation
+model_neuron = trace(model, example_inputs_paraphrase)
 
-# Run inference
-output = model_neuron(*example_inputs)
+# Run inference with compiled model
+paraphrase_classification_logits_neuron = model_neuron(*example_inputs_paraphrase)
 
 # Save compiled model
 model_neuron.save(f'bert_neuron_b{batch_size}.pt')
@@ -13809,6 +15998,7 @@ def nki_tensor_add_kernel_(a_input, b_input):
   iy = offset_i_y + nl.arange(512)[None, :]
 
   # Load input data from device memory (HBM) to on-chip memory (SBUF)
+  # We refer to an indexed portion of a tensor as an intermediate tensor
   a_tile = nl.load(a_input[ix, iy])
   b_tile = nl.load(b_input[ix, iy])
 
@@ -13820,9 +16010,8 @@ def nki_tensor_add_kernel_(a_input, b_input):
 
   # Transfer the ownership of `c_output` to the caller
   return c_output
-```
 
-```python
+
 def nki_tensor_add(a_input, b_input):
   """NKI kernel caller to compute element-wise addition of two input tensors
 
@@ -13842,6 +16031,46 @@ def nki_tensor_add(a_input, b_input):
   grid_y = a_input.shape[1] // 512
 
   return nki_tensor_add_kernel_[grid_x, grid_y](a_input, b_input)
+```
+
+## gen_resnet50_keras.py
+
+```python
+import tensorflow as tf
+from tensorflow.keras.applications.resnet50 import ResNet50
+
+# Set Keras global configurations
+tf.keras.backend.set_learning_phase(0)
+tf.keras.backend.set_image_data_format('channels_last')
+tf.keras.backend.set_floatx('float32')
+
+# Load pre-trained model using Keras
+model = ResNet50(weights='imagenet')
+
+# Obtain model metadata
+model_input = model.input.name.replace(':0', '')
+model_output = model.output.name.replace(':0', '')
+batch, height, width, channels = model.input.shape
+
+# Obtain the TF session
+sess = tf.compat.v1.keras.backend.get_session()
+
+# Save checkpoint files
+ckpt_file = '/tmp/resnet50_fp32_keras/resnet50_fp32_keras.ckpt'
+graph_file = '/tmp/resnet50_fp32_keras/resnet50_fp32_keras.pb'
+tf.compat.v1.train.Saver().save(sess, ckpt_file)
+tf.io.write_graph(sess.graph.as_graph_def(), logdir='.', name=graph_file, as_text=False)
+
+# Freeze graph and convert variables to constants
+with tf.compat.v1.Session(graph=tf.Graph()) as sess:
+    saver = tf.compat.v1.train.import_meta_graph(ckpt_file + '.meta')
+    saver.restore(sess, ckpt_file)
+    output_graph_def = tf.compat.v1.graph_util.convert_variables_to_constants(
+        sess, tf.compat.v1.get_default_graph().as_graph_def(), [model_output])
+    output_graph_def = tf.compat.v1.graph_util.remove_training_nodes(
+        output_graph_def, protected_nodes=[model_output])
+    with open('frozen_model.pb', 'wb') as f:
+        f.write(output_graph_def.SerializeToString())
 ```
 
 ## test_nki_isa_nc_transpose.py
@@ -13890,13 +16119,6 @@ import neuronperf as npf
 import torch
 from transformers import AutoTokenizer
 
-BATCH_SIZE = 2
-TP_DEGREE = 2
-SEQ_LEN = 2048
-TOKENIZER = AutoTokenizer.from_pretrained("facebook/opt-13b")
-MODEL_DIR = "./opt-13b-split"
-
-
 class Wrapper(torch.nn.Module):
     def __init__(self, filename):
         super().__init__()
@@ -13909,23 +16131,19 @@ class Wrapper(torch.nn.Module):
     def forward(self, *inputs):
         return self.neuron_model.sample(torch.concat(inputs), sequence_length=SEQ_LEN)
 
-
 def load_fn(filename, **kwargs):
     return Wrapper(filename)
-
 
 def env_setup_fn(*_):
     del os.environ["NEURON_RT_VISIBLE_CORES"]
 
-
 def preprocess_fn(inputs):
     return [TOKENIZER.encode(text, return_tensors="pt") for text in inputs]
-
 
 def postprocess_fn(outputs):
     return [TOKENIZER.decode(seq) for seq in outputs]
 
-
+# NeuronPerf benchmark API usage
 reports = npf.benchmark(
     load_fn,
     MODEL_DIR,
@@ -13945,13 +16163,86 @@ npf.print_report(report)
 npf.write_json(report)
 ```
 
+## index-case-1.py
+
+```python
+from neuronxcc import nki
+import neuronxcc.nki.language as nl
+import math
+
+@nki.jit
+def tensor_split_kernel_(in_tensor):
+  """NKI kernel to split an input tensor into two output tensors, along the column axis.
+
+  The even columns of the input tensor will be gathered into the first output tensor,
+  and the odd columns of the input tensor will be gathered into the second output tensor.
+
+  Args:
+      in_tensor: an input tensor
+  Returns:
+      out_tensor_even: a first output tensor (will hold the even columns of the input tensor)
+      out_tensor_odd: a second output tensor (will hold the odd columns of the input tensor)
+  """
+
+  # Extract tile sizes.
+  sz_p, sz_f = in_tensor.shape
+  sz_fout_even = sz_f - sz_f // 2
+  sz_fout_odd = sz_f // 2
+  out_tensor_even = nl.ndarray((sz_p, sz_fout_even), dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+  out_tensor_odd = nl.ndarray((sz_p, sz_fout_odd), dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+
+  # We assume that all three tensors have the same partition dimension size
+  # and it does not exceed pmax
+  assert in_tensor.shape[0] == out_tensor_even.shape[0] == out_tensor_odd.shape[0]
+  assert in_tensor.shape[0] <= nl.tile_size.pmax
+
+  # Make sure even/odd output tensors have correct free dimension size
+  assert sz_fout_even == math.ceil(sz_f / 2)
+  assert sz_fout_odd == math.floor(sz_f / 2)
+
+  # Generate tensor indices for the input/output tensors
+  i_p = nl.arange(sz_p)[:, None]
+  i_f = nl.arange(sz_f)[None, :]
+  i_fout_even = nl.arange(sz_fout_even)[None, :]
+  i_fout_odd = nl.arange(sz_fout_odd)[None, :]
+
+  # Split pattern:
+  i_f_even = (2 * i_fout_even)
+  i_f_odd = (2 * i_fout_odd + 1)
+
+  # Load input data from external memory to on-chip memory
+  in_tile = nl.load(in_tensor[i_p, i_f])
+
+  # Perform the split
+  # these assignments invoke copy instructions under the hood
+  # which can execute on either Scalar or Vector Engine
+  # (decided by compiler instruction scheduler)
+  out_tile_even = in_tile[i_p, i_f_even]
+  out_tile_odd = in_tile[i_p, i_f_odd]
+
+  # Store the results back to external memory
+  nl.store(out_tensor_even[i_p, i_fout_even], value=out_tile_even)
+  nl.store(out_tensor_odd[i_p, i_fout_odd], value=out_tile_odd)
+
+  return out_tensor_even, out_tensor_odd
+```
+
 ## train_monitor.py
 
 ```python
+import os
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from torchvision.datasets import mnist
+from torch.optim import SGD
+from torch.utils.data import DataLoader
+from torchvision.transforms import ToTensor
+
 import torch_xla.core.xla_model as xm
+
 
 class MLP(nn.Module):
     def __init__(self, input_size = 28 * 28, output_size = 10, layers = [120, 84]):
@@ -13966,33 +16257,40 @@ class MLP(nn.Module):
         x = self.fc3(x)
         return F.log_softmax(x, dim=1)
 
-# Move model to XLA device
-device = 'xla'
-model = MLP().to(device)
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-loss_fn = torch.nn.NLLLoss()
 
-# Training loop with XLA
-model.train()
-for idx, (train_x, train_label) in enumerate(train_loader):
-    optimizer.zero_grad()
-    train_x = train_x.view(train_x.size(0), -1)
-    train_x = train_x.to(device)
-    train_label = train_label.to(device)
-    output = model(train_x)
-    loss = loss_fn(output, train_label)
-    loss.backward()
-    optimizer.step()
-    xm.mark_step()  # Collect ops and run them in XLA runtime
+def training_loop():
+    # Specify XLA device (defaults to a NeuronCore on Trn1 instance)
+    device = 'xla'
 
-# Save checkpoint using XLA
-checkpoint = {'state_dict': model.state_dict()}
-xm.save(checkpoint, 'checkpoints/checkpoint.pt')
+    # Move model to device and declare optimizer and loss function
+    model = MLP().to(device)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    loss_fn = torch.nn.NLLLoss()
+
+    model.train()
+    for idx, (train_x, train_label) in enumerate(train_loader):
+        optimizer.zero_grad()
+        train_x = train_x.view(train_x.size(0), -1)
+        train_x = train_x.to(device)
+        train_label = train_label.to(device)
+        output = model(train_x)
+        loss = loss_fn(output, train_label)
+        loss.backward()
+        optimizer.step()
+        xm.mark_step()  # Collect ops and run them in XLA runtime
+
+
+def save_checkpoint(model):
+    os.makedirs("checkpoints", exist_ok=True)
+    checkpoint = {'state_dict': model.state_dict()}
+    # Use xm.save instead of torch.save to ensure states are moved back to cpu
+    xm.save(checkpoint, 'checkpoints/checkpoint.pt')
 ```
 
 ## test_nki_spmd_grid.py
 
 ```python
+import numpy as np
 import neuronxcc.nki as nki
 import neuronxcc.nki.language as nl
 
@@ -14007,27 +16305,18 @@ def nki_spmd_kernel(a):
   nl.store(b[i, j], a_tile)
 
   return b
-```
 
-```python
+
 # Example 1: Let compiler decide how to distribute the instances of spmd kernel
 dst = nki_spmd_kernel[4, 2](src)
-```
 
-```python
 # Example 2: Distribute SPMD kernel instances to physical NeuronCores with
-# explicit annotations. Expected physical NeuronCore assignments:
-#   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[1, 0], kernel[1, 1]
-#   Physical NC [1]: kernel[2, 0], kernel[2, 1], kernel[3, 0], kernel[3, 1]
+# explicit annotations using spmd_dim
 dst = nki_spmd_kernel[nl.spmd_dim(nl.nc(2), 2), 2](src)
 dst = nki_spmd_kernel[nl.nc(2) * 2, 2](src)  # syntactic sugar
-```
 
-```python
 # Example 3: Distribute SPMD kernel instances to physical NeuronCores with
-# explicit annotations. Expected physical NeuronCore assignments:
-#   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[2, 0], kernel[2, 1]
-#   Physical NC [1]: kernel[1, 0], kernel[1, 1], kernel[3, 0], kernel[3, 1]
+# explicit annotations using spmd_dim with different dimension ordering
 dst = nki_spmd_kernel[nl.spmd_dim(2, nl.nc(2)), 2](src)
 dst = nki_spmd_kernel[2 * nl.nc(2), 2](src)  # syntactic sugar
 ```
@@ -14091,6 +16380,60 @@ import torch
 import torch_neuronx
 from typing import Optional
 
+INSTANCETYPE_TO_NEURONCORES = {
+    "inf1.xlarge": 4,
+    "inf1.2xlarge": 4,
+    "inf1.6xlarge": 16,
+    "inf2.xlarge": 2,
+    "inf2.8xlarge": 2,
+    "inf2.24xlarge": 12,
+    "inf2.48xlarge": 24,
+    "inf1.24xlarge": 64,
+    "trn1.2xlarge": 2,
+    "trn1.32xlarge": 32,
+}
+
+def get_instance_type() -> str:
+    """Try to obtain the instance type."""
+    try:
+        from urllib.request import Request, urlopen
+
+        req = Request("http://169.254.169.254/latest/api/token", method="PUT")
+        req.add_header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+        with urlopen(req) as response:
+            token = response.read().decode("utf-8")
+
+        req = Request("http://169.254.169.254/latest/meta-data/instance-type")
+        req.add_header("X-aws-ec2-metadata-token", token)
+        with urlopen(req) as response:
+            instance_type = response.read().decode("utf-8")
+
+        return instance_type
+    except:  # noqa: E722, there are various ways above code can fail and we don't care
+        return None
+
+
+def get_num_neuroncores(instance_type: Optional[str] = None) -> int:
+    """
+    Try to obtain the maximum number of NeuronCores available on this instance.
+
+    Args:
+        instance_type: The Neuron instance type. Autodetermined from current instance
+            if not provided.
+
+    Returns:
+        The number of NeuronCores (or 2 if the type is unknown).
+    """
+
+    try:
+        if not instance_type:
+            instance_type = get_instance_type()
+        return INSTANCETYPE_TO_NEURONCORES[instance_type]
+    except KeyError:
+        num_cores = get_num_neuroncores_v3()
+        return num_cores
+
+
 def get_num_neuroncores_v3() -> int:
     """
     Retrieve the number of NeuronCores visible to this process.
@@ -14109,9 +16452,49 @@ def get_num_neuroncores_v3() -> int:
         nc_count = runtime.get_visible_nc_count()
     except RuntimeError as e:
         raise RuntimeError(
-            "Neuron runtime cannot be initialized; cannot determine the number of available NeuronCores"
+            "Neuron runtime cannot be initialized; cannot determine the number of available NeuronCores"  # noqa: E501
         ) from e
     return nc_count
+```
+
+## test_nki_nl_load_store.py
+
+```python
+import numpy as np
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+
+
+@nki.jit(mode="simulation")
+def example_kernel(in_tensor):
+  out_tensor = nl.ndarray(in_tensor.shape, in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+  # load from in_tensor[P, F] that is on HBM
+  # copy into data_tile[P, F] that is on SBUF
+  data_tile = nl.load(in_tensor)
+  
+  # store into out_tensor[P, F] that is on HBM
+  # from data_tile[P, F] that is on SBUF
+  nl.store(out_tensor, data_tile)
+  return out_tensor
+
+
+@nki.jit(mode="simulation")
+def example_load_store_b(in_tensor):
+  out_tensor = nl.ndarray(in_tensor.shape, in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+  for i_b in nl.affine_range(4):
+    data_tile = nl.zeros((128, 512), dtype=in_tensor.dtype) 
+    # load from in_tensor[4, 128, 512] one batch at a time
+    # copy into data_tile[128, 512]
+    i_p, i_f = nl.mgrid[0:128, 0:512]
+    data_tile[i_p, i_f] = nl.load(in_tensor[i_b, i_p, i_f])
+    
+    # store into out_tensor[4, 128, 512] one batch at a time
+    # from data_tile[128, 512] 
+    i_p, i_f = nl.mgrid[0:128, 0:512]
+    nl.store(out_tensor[i_b, i_p, i_f], value=data_tile[i_p, i_f]) 
+  return out_tensor
 ```
 
 ## mlp_train.py
@@ -14119,7 +16502,7 @@ def get_num_neuroncores_v3() -> int:
 ```python
 import torch
 import torch_xla.core.xla_model as xm
-from model import MLP
+from torch.utils.data import DataLoader
 
 # XLA: Specify XLA device (defaults to a NeuronCore on Trn1 instance)
 device = 'xla'
@@ -14129,7 +16512,7 @@ model = MLP().to(device)
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 loss_fn = torch.nn.NLLLoss()
 
-# Training loop
+# Run the training loop
 model.train()
 for epoch in range(EPOCHS):
     for idx, (train_x, train_label) in enumerate(train_loader):
@@ -14195,71 +16578,26 @@ import numpy as np
 
 @nki.trace
 def nki_par_reduce(a_tensor, b_tensor):
-  """
-  Example 1: reduce add tile a of shape (128, 32, 4)
-  in the partition dimension and return
-  reduction result in tile b of shape (1, 32, 4)
-  """
+  ##################################################################
+  # Example 1: reduce add tile a of shape (128, 32, 4)
+  # in the partition dimension and return
+  # reduction result in tile b of shape (1, 32, 4)
+  ##################################################################
   a = nl.load(a_tensor[0:128, 0:32, 0:4])  
   b = nisa.tensor_partition_reduce(np.add, a)
   nl.store(b_tensor[0:1, 0:32, 0:4], b)
 
 @nki.trace
 def nki_par_reduce_nd_b(a_tensor, b_tensor):
-  """
-  Example 2: reduce add tile a of shape (b, p, f1, ...)
-  in the partition dimension p and return
-  reduction result in tile b of shape (b, 1, f1, ...)
-  """
+  ##################################################################
+  # Example 2: reduce add tile a of shape (b, p, f1, ...)
+  # in the partition dimension p and return
+  # reduction result in tile b of shape (b, 1, f1, ...)
+  ##################################################################
   for i in nl.affine_range(a_tensor.shape[0]):
     a = nl.load(a_tensor[i])
     b = nisa.tensor_partition_reduce(np.add, a)
     nl.store(b_tensor[i], b)
-```
-
-## index-case-3.py
-
-```python
-from neuronxcc import nki
-import neuronxcc.nki.language as nl
-
-@nki.jit
-def tensor_maxpool_kernel_(in_tensor, sz_pool):
-  """NKI kernel to compute a 2D max-pool operation
-
-  Args:
-      in_tensor: an input tensor, of dimensions C x H x W
-      sz_pool: integer P representing a (square) pool-window size
-  Returns:
-      out_tensor: the resulting output tensor, of dimensions C x (H/P) x (W/P)
-  """
-
-  # Get input/output dimensions
-  sz_p, sz_hin, sz_win = in_tensor.shape
-  sz_hout, sz_wout = sz_hin // sz_pool, sz_win // sz_pool
-  out_tensor = nl.ndarray((sz_p, sz_hout, sz_wout), dtype=in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-
-  # Generate pool index patterns (requires two extra dimensions, for the pool window)
-  i_0, i_1, i_2, i_3, i_4 = nl.mgrid[:sz_p, :sz_hout, :sz_pool, :sz_wout, :sz_pool]
-
-  # Load input data from external memory to on-chip memory
-  # Declare ndarray to force a 3D tensor (temporary requirement)
-  in_tile = nl.ndarray((sz_p, sz_hin, sz_win), dtype=in_tensor.dtype)
-  in_tile[...] = nl.load(in_tensor)
-
-  # Perform the pooling operation:
-  # We use advanced indexing, in order to extend in_tile to 5D, and then reduce-max two dimension.
-  # axis[0] is the index for p_dim, and thus doesn't participate in the reduction operation.
-  # axis[1] and axis[2] together index the rows, with axis[2] responsible for inner strides
-  # (i.e. inside a pooling window), and axis[1] responsible for the outer strides. As such, we reduce over axis[2].
-  # Similarly, axis[3] and axis[4] together index the columns, and we thus reduce over axis[4].
-  out_tile = nl.max(in_tile[i_0, sz_pool*i_1+i_2, sz_pool*i_3+i_4], axis=[2,4])
-
-  # Store the results back to external memory
-  nl.store(out_tensor, value=out_tile)
-
-  return out_tensor
 ```
 
 ## mm-nisa-spmd.py
@@ -14308,65 +16646,48 @@ def matmul_128x128x512_spmd(A_T, B):
   return result
 ```
 
-## EVRF016.rst
+## lora_finetune_developer_guide.rst
 
 ```python
-def forward(self, input_tensor, indices_tensor, src_tensor):
-    output = input_tensor.clone()
-    
-    output.scatter_reduce_(
-        dim=1,
-        index=indices_tensor,
-        src=src_tensor,
-        reduce='sum',
-    )
-    return output
-```
+import nxd
 
-## EOOM001.rst
+# Enable LoRA finetuning - Configuration setup
+lora_config = nxd.modules.lora.LoraConfig(
+    enable_lora=True,
+    lora_rank=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    lora_verbose=True,
+    target_modules=["q_proj", "v_proj", "k_proj"],
+    save_lora_base=False,
+    merge_lora=False,
+)
 
-```python
-class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAttention):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__(config, position_embedding_type)
-        self.query = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.key = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.value = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        # Since we shard the number of attention heads across tensor parallel
-        # ranks, each rank would have a subset of heads, hence, we update
-        # the num_attention_heads here.
-        tp_size = parallel_state.get_tensor_parallel_size()
-        self.num_attention_heads = self.num_attention_heads // tp_size
-        self.all_head_size = self.all_head_size // tp_size
-```
+# Initialize NxD model with LoRA enabled
+nxd_config = nxd.neuronx_distributed_config(
+    lora_config=lora_config,
+)
+model = nxd.initialize_parallel_model(nxd_config)
 
-## EOOM002.rst
+# Save LoRA checkpoint
+nxd.save_checkpoint(
+    checkpoint_dir_str=checkpoint_dir,
+    tag=tag,
+    model=model
+)
 
-```python
-class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAttention):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__(config, position_embedding_type)
-        self.query = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.key = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.value = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        # Since we shard the number of attention heads across tensor parallel
-        # ranks, each rank would have a subset of heads, hence, we update
-        # the num_attention_heads here.
-        tp_size = parallel_state.get_tensor_parallel_size()
-        self.num_attention_heads = self.num_attention_heads // tp_size
-        self.all_head_size = self.all_head_size // tp_size
+# Load LoRA checkpoint
+lora_config = nxd.modules.lora.LoraConfig(
+    enable_lora=True,
+    load_lora_from_ckpt=True,
+    lora_save_dir=checkpoint_dir,
+    lora_load_tag=tag,
+)
+nxd_config = nxd.neuronx_distributed_config(
+    lora_config=lora_config,
+)
+model = nxd.initialize_parallel_model(nxd_config)
 ```
 
 ## spmd_multiple_nc_tensor_addition_nki_kernels.py
@@ -14525,15 +16846,28 @@ def matmul_128x128x512_spmd(A, B):
 ```python
 import os
 import json
+import tensorflow  # to workaround a protobuf version conflict issue
 import torch
 import torch.neuron
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+
+JSON_CONTENT_TYPE = 'application/json'
+
 
 def model_fn(model_dir):
     tokenizer_init = AutoTokenizer.from_pretrained("bert-base-cased-finetuned-mrpc")
     model_file = os.path.join(model_dir, 'neuron_compiled_model.pt')
     model_neuron = torch.jit.load(model_file)
     return (model_neuron, tokenizer_init)
+
+
+def input_fn(serialized_input_data, content_type=JSON_CONTENT_TYPE):
+    if content_type == JSON_CONTENT_TYPE:
+        input_data = json.loads(serialized_input_data)
+        return input_data
+    else:
+        raise Exception('Requested unsupported ContentType in Accept: ' + content_type)
+
 
 def predict_fn(input_data, models):
     model_bert, tokenizer = models
@@ -14543,40 +16877,20 @@ def predict_fn(input_data, models):
     max_length = 128
     paraphrase = tokenizer.encode_plus(sequence_0, sequence_1, max_length=max_length, padding='max_length', truncation=True, return_tensors="pt")
     example_inputs_paraphrase = paraphrase['input_ids'], paraphrase['attention_mask'], paraphrase['token_type_ids']  
-    
+
     paraphrase_classification_logits_neuron = model_bert(*example_inputs_paraphrase)
     classes = ['not paraphrase', 'paraphrase']
     paraphrase_prediction = paraphrase_classification_logits_neuron[0][0].argmax().item()
     out_str = 'BERT says that "{}" and "{}" are {}'.format(sequence_0, sequence_1, classes[paraphrase_prediction])
     
     return out_str
+
+
+def output_fn(prediction_output, accept=JSON_CONTENT_TYPE):
+    if accept == JSON_CONTENT_TYPE:
+        return json.dumps(prediction_output), accept
+    raise Exception('Requested unsupported ContentType in Accept: ' + accept)
 ```
-
-## EXSP001.rst
-
-```python
-class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAttention):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__(config, position_embedding_type)
-
-        self.query = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.key = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.value = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        # Since we shard the number of attention heads across tensor parallel
-        # ranks, each rank would have a subset of heads, hence, we update
-        # the num_attention_heads here.
-        tp_size = parallel_state.get_tensor_parallel_size()
-        self.num_attention_heads = self.num_attention_heads // tp_size
-        self.all_head_size = self.all_head_size // tp_size
-```
-
-**Note:** This example demonstrates tensor parallelism for memory optimization on Trainium, but is not specific to NKI kernel optimization. For NKI-specific kernel optimization examples, additional documentation would be needed.
 
 ## test_nki_isa_tensor_tensor_scan.py
 
@@ -14608,24 +16922,6 @@ def nki_tensor_tensor_scan(a_tensor, b_tensor):
   return c_tensor
 ```
 
-## tokenizer_test.cpp
-
-```cpp
-#include <cstring>
-#include <vector>
-
-#include "remote_rust_tokenizer.h"
-
-// Tokenizer API usage example
-const uint32_t seq_len = 128;
-const char *input_arr = "If everything goes smoothly, this text will be tokenized inside Rust.";
-uint32_t* output_arr = new uint32_t[seq_len];
-std::memset(output_arr, 0, sizeof(uint32_t) * seq_len);
-
-// Call tokenizer
-remote_rust_encode(input_arr, output_arr, seq_len);
-```
-
 ## matrix_multiplication_torch.py
 
 ```python
@@ -14650,9 +16946,14 @@ output_small_torch = torch.matmul(lhs_small, rhs_small)
 # Compare results
 if torch.allclose(output_small_torch, output_small, atol=1e-4, rtol=1e-2):
     print("NKI and Torch match")
+else:
+    print("NKI and Torch differ")
 ```
 
 ```python
+device = xm.xla_device()
+cpu = torch.device('cpu')
+
 # Test the large workload with tiled kernels
 lhs = torch.rand((4096, 1024), dtype=torch.bfloat16, device=device)
 rhs = torch.rand((1024, 2048), dtype=torch.bfloat16, device=device)
@@ -14660,15 +16961,52 @@ rhs = torch.rand((1024, 2048), dtype=torch.bfloat16, device=device)
 # Run torch reference
 output_torch = torch.matmul(lhs, rhs).to(device=cpu)
 
-# Run NKI kernels
-output_tiled = nki_matmul_tiled_(lhs.T, rhs).to(device=cpu)
-output_hoist = nki_matmul_hoist_load_(lhs.T, rhs).to(device=cpu)
-output_block_free = nki_matmul_block_free_dimension_(lhs.T, rhs).to(device=cpu)
-output_optimized = nki_matmul_fully_optimized_(lhs.T, rhs).to(device=cpu)
+def check_match(nki_func):
+    output = nki_func(lhs.T, rhs)
+    output_nki = output.to(device=cpu)
+    if torch.allclose(output_torch, output_nki, atol=1e-4, rtol=1e-2):
+        print("NKI and Torch match")
+    else:
+        print("NKI and Torch differ")
 
-# Compare results
-if torch.allclose(output_torch, output_tiled, atol=1e-4, rtol=1e-2):
-    print("NKI and Torch match")
+check_match(nki_matmul_tiled_)
+check_match(nki_matmul_hoist_load_)
+check_match(nki_matmul_block_free_dimension_)
+check_match(nki_matmul_fully_optimized_)
+```
+
+## infer_resnet50_keras.py
+
+```python
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications import resnet50
+
+def pb_to_saved_model(pb_path, input_names, output_names, model_dir):
+    graph_def = tf.compat.v1.GraphDef()
+    graph_def.ParseFromString(open(pb_path, 'rb').read())
+    with tf.compat.v1.Session(graph=tf.Graph()) as sess:
+        tf.import_graph_def(graph_def, name='')
+        inputs = {name: sess.graph.get_tensor_by_name(ts_name) for name, ts_name in input_names.items()}
+        outputs = {name: sess.graph.get_tensor_by_name(ts_name) for name, ts_name in output_names.items()}
+        tf.saved_model.simple_save(sess, model_dir, inputs, outputs)
+```
+
+```python
+# Load and preprocess image
+img_sgl = image.load_img('kitten_small.jpg', target_size=(224, 224))
+img_arr = image.img_to_array(img_sgl)
+img_arr2 = np.expand_dims(img_arr, axis=0)
+img_arr3 = resnet50.preprocess_input(np.repeat(img_arr2, 1, axis=0))
+
+# Load model
+predictor_host = tf.contrib.predictor.from_saved_model(SAVED_MODEL_DIR)
+
+# Run inference
+model_feed_dict = {'input_1:0': img_arr3}
+infa_rslts = predictor_host(model_feed_dict)
+predictions = resnet50.decode_predictions(infa_rslts[output_tname], top=5)[0]
 ```
 
 ## test_nki_isa_activation.py
@@ -14703,60 +17041,6 @@ def nki_activation(a_tensor, b_tensor, c_tensor):
   return a_act_tensor, b_act_tensor
 ```
 
-## EVRF009.rst
-
-```python
-class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAttention):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__(config, position_embedding_type)
-
-        self.query = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.key = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.value = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        # Since we shard the number of attention heads across tensor parallel
-        # ranks, each rank would have a subset of heads, hence, we update
-        # the num_attention_heads here.
-        tp_size = parallel_state.get_tensor_parallel_size()
-        self.num_attention_heads = self.num_attention_heads // tp_size
-        self.all_head_size = self.all_head_size // tp_size
-```
-
-## EVRF015.rst
-
-```python
-def lowering(ctx, x_val):
-    result_type = ir.RankedTensorType(x_val.type)
-    return hlo.CustomCallOp(
-        [result_type],
-        [x_val],
-        call_target_name="AwsNeuronSilu",
-        has_side_effect=ir.BoolAttr.get(False),
-        backend_config=ir.StringAttr.get(""),
-        api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
-    ).results
-```
-
-## EHCA005.rst
-
-```python
-def lowering(ctx, x_val):
-    result_type = ir.RankedTensorType(x_val.type)
-    return hlo.CustomCallOp(
-        [result_type],
-        [x_val],
-        call_target_name="AwsNeuronSilu",
-        has_side_effect=ir.BoolAttr.get(False),
-        backend_config=ir.StringAttr.get(""),
-        api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
-    ).results
-```
-
 ## parallel.py
 
 ```python
@@ -14764,6 +17048,7 @@ from concurrent import futures
 import torch
 import torch.neuron
 import os
+from time import time
 from queue import Queue
 
 def consumer(model, input_queue):
@@ -14773,12 +17058,14 @@ def consumer(model, input_queue):
         # Stop execution if stopping condition is recieved
         if inputs == "stop":
             break
+        start = time()
         results = model(*inputs)
         # Make the output iterable - if it is not already a tuple or list
         if not isinstance(results, tuple) or isinstance(results, list):
             results = [results]
+        end = time()
         if callback_fn is not None:
-            callback_fn(results, input_id)
+            callback_fn(results, input_id, start, end)
               
 class NeuronSimpleDataParallel():
 
@@ -14853,6 +17140,9 @@ def nki_copy_predicated(predicate, on_true_tensor, on_false_tensor):
 ## distilbert-base-uncased-finetuned-sst-2-english_compile.py
 
 ```python
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import numpy as np
 import neuronperf as npf
 import neuronperf.tensorflow
@@ -14875,47 +17165,22 @@ def get_batch(tokenizer, sequence_length, batch_size):
     return inputs
 
 
-# Compile a TensorFlow model for AWS Trainium
-tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
-model = TFAutoModelForSequenceClassification.from_pretrained(
-    "distilbert-base-uncased-finetuned-sst-2-english", 
-    return_dict=False
-)
+# Load model and tokenizer
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = TFAutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
 
-inputs = [get_batch(tokenizer, sequence_length=128, batch_size=bs) for bs in [128]]
+# Prepare inputs
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
 
+# Compile for Trainium
 npf.tensorflow.compile(
     model,
     inputs,
-    batch_sizes=[128],
-    pipeline_sizes=[1],
-    filename="distilbert_compiled.json",
-    model_name="distilbert-base-uncased-finetuned-sst-2-english",
+    batch_sizes=batch_sizes,
+    pipeline_sizes=pipeline_sizes,
+    filename=filename,
+    model_name=model_name,
 )
-```
-
-## EVRF024.rst
-
-```python
-class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAttention):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__(config, position_embedding_type)
-
-        self.query = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.key = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        self.value = ColumnParallelLinear(config.hidden_size,
-                                        self.all_head_size,
-                                        gather_output=False)
-        # Since we shard the number of attention heads across tensor parallel
-        # ranks, each rank would have a subset of heads, hence, we update
-        # the num_attention_heads here.
-        tp_size = parallel_state.get_tensor_parallel_size()
-        self.num_attention_heads = self.num_attention_heads // tp_size
-        self.all_head_size = self.all_head_size // tp_size
 ```
 
 ## test_nki_nl_gather_flattened.py
@@ -14923,6 +17188,7 @@ class ParallelSelfAttention(transformers.models.bert.modeling_bert.BertSelfAtten
 ```python
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
+import neuronxcc.nki as nki
 
 @nki.jit(mode="simulation")
 def nki_gather_flattened():
@@ -14942,56 +17208,8 @@ def nki_gather_flattened():
 
     # Gather values from data according to indices
     result = nl.gather_flattened(data=data, indices=indices)
-```
-
-## EVRF031.rst
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Erroneous code example
-operand = jnp.zeros((3, 4), dtype=jnp.float32)
-indices = lax.iota(jnp.int32, 10)
-indices = indices.reshape(10, 1)
-updates = jnp.ones((10, 4), dtype=jnp.float32)
-
-result = lax.scatter(
-    operand,
-    indices,
-    updates,
-    lax.ScatterDimensionNumbers(
-        update_window_dims=(1,),
-        inserted_window_dims=(0,),
-        scatter_dims_to_operand_dims=(0,)
-    )
-)
-```
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Fixed code example
-N = 3
-D = 4
-operand = jnp.zeros((N, D), dtype=jnp.float32)
-
-indices = lax.iota(jnp.int32, N)
-indices = indices.reshape(N, 1)
-
-updates = jnp.ones((N, D), dtype=jnp.float32)
-
-result = lax.scatter(
-    operand,
-    indices,
-    updates,
-    lax.ScatterDimensionNumbers(
-        update_window_dims=(1,),
-        inserted_window_dims=(0,),
-        scatter_dims_to_operand_dims=(0,)
-    )
-)
+    
+    return result
 ```
 
 ## test_nki_nl_mgrid.py
@@ -15021,46 +17239,51 @@ def example_kernel_1(in_tensor):
   return out_tensor
 ```
 
-## index-case-1.py
+## distilbert-base-uncased-finetuned-sst-2-english_benchmark.py
 
 ```python
-from neuronxcc import nki
-import neuronxcc.nki.language as nl
+import torch
+import torch.neuron
 
-@nki.jit
-def tensor_split_kernel_(in_tensor):
-  """NKI kernel to split an input tensor into two output tensors, along the column axis.
+import neuronperf
+import neuronperf.torch
 
-  The even columns of the input tensor will be gathered into the first output tensor,
-  and the odd columns of the input tensor will be gathered into the second output tensor.
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-  Args:
-      in_tensor: an input tensor
-  Returns:
-      out_tensor_even: a first output tensor (will hold the even columns of the input tensor)
-      out_tensor_odd: a second output tensor (will hold the odd columns of the input tensor)
-  """
 
-  # This example only works for tensors with a partition dimension that fits in the SBUF
-  assert in_tensor.shape[0] <= nl.tile_size.pmax
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
 
-  # Extract tile sizes.
-  sz_p, sz_f = in_tensor.shape
-  sz_fout_even = sz_f - sz_f // 2
-  sz_fout_odd = sz_f // 2
+```python
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
+```
 
-  # create output tensors
-  out_tensor_even = nl.ndarray((sz_p, sz_fout_even), dtype=in_tensor.dtype, buffer=nl.shared_hbm)
-  out_tensor_odd = nl.ndarray((sz_p, sz_fout_odd), dtype=in_tensor.dtype, buffer=nl.shared_hbm)
+```python
+inputs = [
+    get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes
+]
 
-  # Load input data from external memory to on-chip memory
-  in_tile = nl.load(in_tensor)
+reports = neuronperf.torch.benchmark(filename, inputs)
 
-  # Store the results back to external memory
-  nl.store(out_tensor_even, value=in_tile[:, 0:sz_f:2])
-  nl.store(out_tensor_odd,  value=in_tile[:, 1:sz_f:2])
-
-  return out_tensor_even, out_tensor_odd
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
 ```
 
 ## test_nki_isa_nc_find_index8.py
@@ -15070,10 +17293,15 @@ import neuronxcc.nki as nki
 import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
+import numpy as np
 
 
 @nki.jit(mode="simulation")
 def nki_max_index8():
+  ##################################################################
+  # Example 1: Generate tile b of 32 * 128 random floating point values,
+  # find the 8 largest values in each row, then find their indices:
+  ##################################################################
   # Generate random data
   data = nl.rand((32, 128))
 
@@ -15090,6 +17318,214 @@ def nki_max_index8():
   nl.store(indices_tensor, value=indices)
 
   return indices_tensor
+```
+
+## distilbert-base-uncased_benchmark.py
+
+```python
+import torch
+import torch.neuron
+
+import neuronperf
+import neuronperf.torch
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+```
+
+```python
+reports = neuronperf.torch.benchmark(filename, inputs)
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
+```
+
+## distilroberta-base_benchmark.py
+
+```python
+import torch
+import torch.neuron
+
+import neuronperf
+import neuronperf.torch
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+# Load model and tokenizer
+model_name = "distilroberta-base"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
+
+# Prepare inputs
+sequence_length = 128
+batch_size = 6
+inputs = get_batch(tokenizer, sequence_length, batch_size)
+
+# Benchmark
+filename = f"{model_name}_sl{sequence_length}.json"
+reports = neuronperf.torch.benchmark(filename, [inputs])
+
+# View and save results
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
+```
+
+## bert-base-uncased_benchmark.py
+
+```python
+import torch
+import torch.neuron
+
+import neuronperf
+import neuronperf.torch
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", return_dict=False)
+```
+
+```python
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+reports = neuronperf.torch.benchmark(filename, inputs)
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
+```
+
+## distilbert-base-uncased-finetuned-sst-2-english_benchmark.py
+
+```python
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import numpy as np
+import neuronperf as npf
+import neuronperf.tensorflow
+from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence = "I am sorry. I really want to like it, but I just can not stand sushi."
+    paraphrase = tokenizer.encode_plus(
+        sequence,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="np",
+    )
+    inputs = {
+        "input_ids": np.concatenate([paraphrase["input_ids"]] * batch_size, axis=0),
+        "attention_mask": np.concatenate([paraphrase["attention_mask"]] * batch_size, axis=0),
+    }
+    return inputs
+```
+
+## bert-base-cased_benchmark.py
+
+```python
+import torch
+import torch.neuron
+
+import neuronperf
+import neuronperf.torch
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased", return_dict=False)
+```
+
+```python
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+reports = neuronperf.torch.benchmark(filename, inputs)
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
 ```
 
 ## getting_started_baremetal.py
@@ -15205,22 +17641,18 @@ def get_batch(tokenizer, sequence_length, batch_size):
 ```
 
 ```python
-model_name = "distilbert-base-uncased"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name, return_dict=False)
-
-sequence_length = 128
-batch_sizes = [9]
-pipeline_sizes = [1]
-
-inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+inputs = [
+    get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes
+]
 
 neuronperf.torch.compile(
     model,
     inputs,
     batch_sizes=batch_sizes,
     pipeline_sizes=pipeline_sizes,
-    filename=f"{model_name}_sl{sequence_length}.json",
+    filename=filename,
     model_name=model_name,
 )
 ```
@@ -15259,43 +17691,123 @@ def get_batch(tokenizer, sequence_length, batch_size):
 tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
 model = AutoModelForSequenceClassification.from_pretrained("distilroberta-base", return_dict=False)
 
-inputs = [get_batch(tokenizer, sequence_length=128, batch_size=bs) for bs in [6]]
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
 
 neuronperf.torch.compile(
     model,
     inputs,
-    batch_sizes=[6],
-    pipeline_sizes=[1],
-    filename="distilroberta-base_sl128.json",
-    model_name="distilroberta-base",
+    batch_sizes=batch_sizes,
+    pipeline_sizes=pipeline_sizes,
+    filename=filename,
+    model_name=model_name,
 )
 ```
 
-## EVRF019.rst
+## bert-base-uncased_compile.py
 
 ```python
-import jax.lax as lax
-import jax.numpy as jnp
+import torch
+import torch.neuron
 
-# Correct usage: max pooling with reduce_window
-max_pool = lax.reduce_window(
-    x,         # single input tensor
-    -jnp.inf,  # single initial value
-    lax.max,
-    window_dimensions=(1, 2, 2, 1),
-    window_strides=(1, 2, 2, 1),
-    padding='VALID'
-)
+import neuronperf
+import neuronperf.torch
 
-# Correct usage: min pooling with reduce_window
-min_pool = lax.reduce_window(
-    x,        # single input tensor
-    jnp.inf,  # single initial value
-    lax.min,
-    window_dimensions=(1, 2, 2, 1),
-    window_strides=(1, 2, 2, 1),
-    padding='VALID'
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", return_dict=False)
+
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+
+neuronperf.torch.compile(
+    model,
+    inputs,
+    batch_sizes=batch_sizes,
+    pipeline_sizes=pipeline_sizes,
+    filename=filename,
+    model_name=model_name,
 )
+```
+
+## bert-base-cased_compile.py
+
+```python
+import torch
+import torch.neuron
+
+import neuronperf
+import neuronperf.torch
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def get_batch(tokenizer, sequence_length, batch_size):
+    sequence_0 = "The company HuggingFace is based in New York City"
+    sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+    paraphrase = tokenizer.encode_plus(
+        sequence_0,
+        sequence_1,
+        max_length=sequence_length,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+    )
+    inputs = (
+        torch.cat([paraphrase["input_ids"]] * batch_size, 0),
+        torch.cat([paraphrase["attention_mask"]] * batch_size, 0),
+    )
+    return inputs
+```
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased", return_dict=False)
+
+inputs = [get_batch(tokenizer, sequence_length, batch_size) for batch_size in batch_sizes]
+
+neuronperf.torch.compile(
+    model,
+    inputs,
+    batch_sizes=batch_sizes,
+    pipeline_sizes=pipeline_sizes,
+    filename=filename,
+    model_name=model_name,
+)
+```
+
+## neuronperf_overview.rst
+
+```python
+import neuronperf
+import neuronperf.torch
+```
+
+```python
+reports = neuronperf.torch.benchmark(model, inputs, ...)
+```
+
+```python
+model_index = neuronperf.torch.compile(model, inputs, ...)
 ```
 
 ## test_nki_isa_reduce.py
@@ -15306,18 +17818,20 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 import numpy as np
 
+
 @nki.jit(mode="simulation")
 def nki_reduce(a_tensor):
   b_tensor = nl.ndarray([a_tensor.shape[0], 1], dtype=a_tensor.dtype,
                         buffer=nl.shared_hbm)
   
-  # Example: reduce add tile a of shape (128, 512)
+  # Example 1: reduce add tile a of shape (128, 512)
   # in the free dimension and return
   # reduction result in tile b of shape (128, 1)
   i_p_a = nl.arange(128)[:, None]
   i_f_a = nl.arange(512)[None, :]
   
   a = nl.load(a_tensor[i_p_a, i_f_a])  
+
   b = nisa.tensor_reduce(np.add, a[i_p_a, i_f_a], axis=[1])
 
   i_p_b, i_f_b = nl.mgrid[0:128, 0:1]
@@ -15372,14 +17886,38 @@ def tensor_exp_kernel_(in_tensor):
 
 ```python
 import torch
+import neuronperf
+import neuronperf.torch
 import torch_neuronx
+import os
+
+from torchvision.datasets import CIFAR100
 from transformers import CLIPProcessor, CLIPModel
 
-# Trace the model for AWS Trainium
-model.eval()
-traced = torch_neuronx.trace(model, inputs, compiler_args='--enable-saturate-infinity')
-filename = 'model.pt'
-torch.jit.save(traced, filename)
+def benchmark(model_name, batch_size):
+    # Build the model, preprocessor, and dataset
+    cifar100 = CIFAR100(root=os.path.expanduser("~/.cache"), download=True, train=False)
+    processor = CLIPProcessor.from_pretrained(model_name)
+    model = CLIPModel.from_pretrained(model_name, return_dict=False)
+
+    # Prepare a sample input
+    image = cifar100[0][0]
+    text = []
+    for c in cifar100.classes:
+        text.append(f'a photo of a {c}')
+
+    inputs = processor(text=text, images=image, return_tensors="pt", padding=True)
+    image = inputs['pixel_values']
+    # (b, c, h, w)
+    image = image.repeat(batch_size, 1, 1, 1)
+    inputs = (inputs['input_ids'], image)
+
+    # Trace the model
+    model.eval()
+    traced = torch_neuronx.trace(model, inputs, compiler_args='--enable-saturate-infinity')
+    filename = 'model.pt'
+    torch.jit.save(traced, filename)
+    reports = neuronperf.torch.benchmark(filename, [inputs], batch_sizes=[batch_size])
 ```
 
 ## test_nki_isa_tensor_tensor.py
@@ -15396,7 +17934,7 @@ def nki_tensor_tensor(a_tensor, b_tensor):
   c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype,
                         buffer=nl.shared_hbm)
 
-  # Example: add two tiles, a and b, of the same
+  # Example 1: add two tiles, a and b, of the same
   # shape (128, 512) element-wise and get
   # the addition result in tile c
   a: tensor[128, 512] = nl.load(a_tensor)
@@ -15419,11 +17957,57 @@ def test_nl_broadcast(in_tensor):
   out_tensor = nl.ndarray([128, 64], in_tensor.dtype,
                           buffer=nl.shared_hbm)
   
+  # Load from in_tensor and broadcast into out_tile
   in_tile = nl.load(in_tensor, dtype=in_tensor.dtype)
   out_tile = nl.broadcast_to(in_tile, shape=(128, in_tensor.shape[1]))
 
+  # Store output
   nl.store(out_tensor, out_tile)
   return out_tensor
+```
+
+## inf2_benchmark.py
+
+```python
+import torch
+import neuronperf
+import neuronperf.torch
+import torch_neuronx
+from transformers import AutoModel
+
+class GPT2Neuron(torch.nn.Module):
+    def __init__(self, model) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, attention_mask):
+        return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+# Load and prepare model
+model = AutoModel.from_pretrained('gpt2', torchscript=True)
+model = GPT2Neuron(model)
+model.eval()
+
+# Create example inputs
+example = (
+    torch.zeros(16, 256, dtype=torch.int),  # input_ids
+    torch.zeros(16, 256, dtype=torch.int),  # attention_mask
+)
+
+# Trace model for Neuron
+traced = torch_neuronx.trace(model, example)
+
+# Save traced model
+filename = 'model.pt'
+torch.jit.save(traced, filename)
+
+# Benchmark the model
+reports = neuronperf.torch.benchmark(filename, [example])
+
+# View results
+neuronperf.print_reports(reports)
+neuronperf.write_csv(reports)
+neuronperf.write_json(reports)
 ```
 
 ## prof-kernel-profile.py
@@ -15485,7 +18069,7 @@ def force_fuse_condition(op_name):
             return False
     return op_name.startswith('bert/encoder') or op_name.startswith('bert/pooler')
 
-# Compile SavedModel with selective operator fusion
+# Compile SavedModel for Trainium
 compilation_result = tfn.saved_model.compile(
     input_saved_model_dir,
     output_saved_model_dir,
@@ -15568,7 +18152,7 @@ def nki_tensor_copy(in_tensor):
   out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
                           buffer=nl.shared_hbm)
 
-  # Example: Copy over the tensor to another tensor using the Vector engine.
+  # Example 1: Copy over the tensor to another tensor using the Vector engine.
   x = nl.load(in_tensor)
   x_copy = nisa.tensor_copy(x, engine=nisa.vector_engine)
   nl.store(out_tensor, value=x_copy)
@@ -15584,8 +18168,6 @@ import torch_neuronx
 from datasets import load_dataset
 from transformers import Wav2Vec2Processor, Wav2Vec2ConformerForCTC
 
-BATCH_SIZE = 1
-
 # Load processor and model
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-conformer-rel-pos-large-960h-ft")
 model = Wav2Vec2ConformerForCTC.from_pretrained("facebook/wav2vec2-conformer-rel-pos-large-960h-ft")
@@ -15594,18 +18176,18 @@ model.eval()
 # Prepare input data
 ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation", trust_remote_code=True)
 inputs = processor(ds[0]["audio"]["array"], return_tensors="pt", padding="longest", sampling_rate=16_000).input_values
-inputs = inputs.repeat([BATCH_SIZE, 1])
+inputs = inputs.repeat([1, 1])
 example = (inputs,)
 
 # Trace model for Trainium
 traced = torch_neuronx.trace(model, example, compiler_args='--model-type=transformer')
 
-# Save traced model
+# Save and load traced model
 filename = 'model.pt'
 torch.jit.save(traced, filename)
-
-# Load and run inference
 model_neuron = torch.jit.load(filename)
+
+# Run inference
 output = model_neuron(inputs)
 ```
 
@@ -15617,8 +18199,6 @@ import torch_neuronx
 from datasets import load_dataset
 from transformers import Wav2Vec2Processor, Wav2Vec2ConformerForCTC
 
-BATCH_SIZE = 1
-
 # Load processor and model
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-conformer-rope-large-960h-ft")
 model = Wav2Vec2ConformerForCTC.from_pretrained("facebook/wav2vec2-conformer-rope-large-960h-ft")
@@ -15627,7 +18207,7 @@ model.eval()
 # Prepare input data
 ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation", trust_remote_code=True)
 inputs = processor(ds[0]["audio"]["array"], return_tensors="pt", padding="longest", sampling_rate=16_000).input_values
-inputs = inputs.repeat([BATCH_SIZE, 1])
+inputs = inputs.repeat([1, 1])
 example = (inputs,)
 
 # Trace model for Trainium
@@ -15713,28 +18293,6 @@ def nki_tensor_add_kernel(a_input, b_input):
     return c_output
 ```
 
-## EVRF005.rst
-
-```python
-import torch
-import torch.nn as nn
-
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.linear1 = nn.Linear(10, 20)
-        self.linear2 = nn.Linear(20, 10)
-    
-    def forward(self, x):
-        x = self.linear1(x)
-        x = torch.relu(x)
-        x = self.linear2(x)
-        return x
-
-# Convert to a supported type
-input_tensor = torch.randn(1, 10).to(torch.float16)
-```
-
 ## test_nki_mask.py
 
 ```python
@@ -15779,32 +18337,53 @@ def nki_memset():
   return a_tensor
 ```
 
+## test_nki_isa_dma_transpose.py
+
+```python
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+
+@nki.jit(mode="simulation")
+def nki_dma_transpose_2d_hbm2sb(a):
+  b = nisa.dma_transpose(a)
+  return b
+
+@nki.jit(mode="simulation")
+def nki_dma_transpose_2d_sb2sb(a):
+  a_sb = nl.load(a)
+  b = nisa.dma_transpose(a_sb)
+  return b
+```
+
 ## hf-google-vit_benchmark.py
 
 ```python
 import torch
+import neuronperf
+import neuronperf.torch
 import torch_neuronx
-from transformers import ViTImageProcessor, ViTForImageClassification
 
-# Load model and processor
-feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224', torchscript=True)
-model.eval()
-
-# Prepare example input
 from PIL import Image
 import requests
-url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-image = Image.open(requests.get(url, stream=True).raw)
-inputs = feature_extractor(images=image, return_tensors="pt")
-inputs = inputs['pixel_values'].repeat([2, 1, 1, 1])
-example = (inputs,)
+from transformers import ViTImageProcessor, ViTForImageClassification
 
-# Trace model for Trainium
-traced = torch_neuronx.trace(model, example, compiler_args="--model-type=transformer")
 
-# Save traced model
-torch.jit.save(traced, 'model.pt')
+def benchmark(batch_size):
+    feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
+    model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224', torchscript=True)
+    model.eval()
+
+    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    image = Image.open(requests.get(url, stream=True).raw)
+    inputs = feature_extractor(images=image, return_tensors="pt")
+    inputs = inputs['pixel_values'].repeat([batch_size, 1, 1, 1])
+    example = (inputs,)
+
+    traced = torch_neuronx.trace(model, example, compiler_args="--model-type=transformer")
+    filename = 'model.pt'
+    torch.jit.save(traced, filename)
+    reports = neuronperf.torch.benchmark(filename, [example], batch_sizes=[batch_size])
 ```
 
 ## test_nki_isa_affine_select.py
@@ -15819,7 +18398,7 @@ import neuronxcc.nki.language as nl
 def nki_affine_select(a_tensor):
   b_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
 
-  # Example: Take tile a of shape [128, 128] and replace its
+  # Example 1: Take tile a of shape [128, 128] and replace its
   # upper triangle with nl.fp32.min
   ix, iy = nl.mgrid[0:128, 0:128]
   a = nl.load(a_tensor[ix, iy])
@@ -15863,85 +18442,6 @@ image_batched = torch.rand([1, 3, batch_size, 8])
 
 # Run inference with a batched input
 output = model_parallel(image_batched)
-```
-
-## EVRF010.rst
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Erroneous code example - simultaneous input and kernel dilation
-x = jnp.ones((1, 4, 4, 1), dtype=jnp.float32)
-kernel = jnp.ones((3, 3, 1, 1), dtype=jnp.float32)
-
-result = lax.conv_general_dilated(
-    x,
-    kernel,
-    window_strides=(1, 1),
-    padding=((2, 2), (2, 2)),
-    lhs_dilation=(2, 2), # input dilation
-    rhs_dilation=(2, 2), # kernel dilation
-    dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-)
-```
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Corrected code example - kernel dilation only
-x = jnp.ones((1, 4, 4, 1), dtype=jnp.float32)
-kernel = jnp.ones((3, 3, 1, 1), dtype=jnp.float32)
-
-result = lax.conv_general_dilated(
-    x,
-    kernel,
-    window_strides=(1, 1),
-    padding=((2, 2), (2, 2)),
-    lhs_dilation=(1, 1), # no input dilation
-    rhs_dilation=(2, 2),
-    dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-)
-```
-
-## EVRF011.rst
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Erroneous code example - strided convolution with dilated input (not supported)
-x = jnp.ones((1, 4, 4, 1), dtype=jnp.float32)
-kernel = jnp.ones((3, 3, 1, 1), dtype=jnp.float32)
-
-result = lax.conv_general_dilated(
-    x,
-    kernel,
-    window_strides=(2, 2),    # strided convolution
-    padding=((2, 2), (2, 2)),
-    lhs_dilation=(2, 2),      # and dilated input
-    rhs_dilation=(1, 1),
-    dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-)
-```
-
-```python
-import jax.numpy as jnp
-from jax import lax
-
-# Corrected code example - remove input dilation
-x = jnp.ones((1, 4, 4, 1), dtype=jnp.float32)
-kernel = jnp.ones((3, 3, 1, 1), dtype=jnp.float32)
-
-result = lax.conv_general_dilated(
-    x, kernel,
-    window_strides=(2, 2),  
-    padding=((2, 2), (2, 2)),
-    lhs_dilation=(1, 1),    # remove input dilation
-    rhs_dilation=(1, 1),
-    dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-)
 ```
 
 ## getting_started_jax.py
@@ -16005,6 +18505,7 @@ import neuronxcc.nki.isa as nisa
 import neuronxcc.nki.language as nl
 from neuronxcc.nki.typing import tensor
 
+
 @nki.jit(mode="simulation")
 def nki_max8():
   ##################################################################
@@ -16020,6 +18521,29 @@ def nki_max8():
   return a_tensor
 ```
 
+## perceiver-vision_benchmark.py
+
+```python
+import torch
+import neuronperf as npf
+import neuronperf.torch
+
+
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+```
+
+```python
+inputs = [get_batch(batch_size) for batch_size in batch_sizes]
+reports = npf.torch.benchmark(filename, inputs, n_models=n_models, workers_per_model=workers_per_model)
+```
+
+```python
+npf.print_reports(reports)
+npf.write_csv(reports)
+npf.write_json(reports)
+```
+
 ## sd_attention_torch.py
 
 ```python
@@ -16031,11 +18555,57 @@ from sd_attention_nki_kernels import fused_self_attn_for_SD_small_head_size
 
 device = xm.xla_device()
 
+def cpu_golden_attn(q, k, v):
+    softmax_scale = 0.125
+    q_scaled = q * softmax_scale
+    raw_score = torch.matmul(q_scaled, k.transpose(1, 0))
+    
+    norm_score = torch.nn.functional.softmax(raw_score, dim=-1)
+
+    return torch.matmul(norm_score, v)
+
 q_tensor = torch.rand((4096, 64), dtype=torch.float32).to(device=device)
 k_tensor = torch.rand((4096, 64), dtype=torch.float32).to(device=device)
 v_tensor = torch.rand((4096, 64), dtype=torch.float32).to(device=device)
 
 output_nki = fused_self_attn_for_SD_small_head_size(q_tensor, k_tensor, v_tensor)
+
+output_torch = cpu_golden_attn(q_tensor, k_tensor, v_tensor)
+
+allclose = torch.allclose(output_torch, output_nki, atol=1e-5, rtol=1e-3)
+```
+
+## layout-violation.py
+
+```python
+import neuronxcc.nki.language as nl
+from neuronxcc import nki
+
+
+@nki.jit
+def tensor_exp_kernel_(in_tensor):
+  """NKI kernel to compute elementwise exponential of an input tensor
+
+  Args:
+      in_tensor: an input tensor of shape [128,512]
+  Returns:
+      out_tensor: an output tensor of shape [128,512]
+  """
+  out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+
+  # Generate indices for the input/output tensors
+  i_p = nl.arange(256)[:, None] # Previously nl.arange(128)
+  i_f = nl.arange(512)[None, :]
+
+  # Load input data from HBM to on-chip memory
+  in_tile = nl.load(in_tensor[i_p, i_f])
+
+  # perform the computation:
+  out_tile = nl.exp(in_tile)
+
+  # store the results back to HBM
+  nl.store(out_tensor[i_p, i_f], value=out_tile)
 ```
 
 ## perceiver-vision_compile.py
@@ -16051,22 +18621,61 @@ def get_batch(batch_size):
     return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
 
 
-# Compile a model for AWS Trainium
+# Compile a model for Trainium
 model = transformers.PerceiverForImageClassificationLearned.from_pretrained(
     "deepmind/vision-perceiver-learned"
 )
 inputs = [get_batch(batch_size) for batch_size in [1]]
-batch_sizes = [1]
-pipeline_sizes = [1]
 
 npf.torch.compile(
     model,
     inputs,
-    batch_sizes=batch_sizes,
-    pipeline_sizes=pipeline_sizes,
-    filename="perceiver_vision.json",
+    batch_sizes=[1],
+    pipeline_sizes=[1],
+    filename="model.json",
     model_name="vision-perceiver-learned",
 )
+```
+
+## layout-dynamic-loop.py
+
+```python
+import neuronxcc.nki.language as nl
+from neuronxcc import nki
+import math
+
+@nki.jit
+def tensor_exp_kernel_(in_tensor):
+  """NKI kernel to compute elementwise exponential of an input tensor
+
+  Args:
+      in_tensor: an input tensor of ANY 2D shape (up to SBUF size)
+  Returns:
+      out_tensor: an output tensor of ANY 2D shape (up to SBUF size)
+  """
+  sz_p, sz_f = in_tensor.shape
+  out_tensor = nl.ndarray((sz_p, sz_f), dtype=in_tensor.dtype,
+                          buffer=nl.shared_hbm)
+
+  i_f = nl.arange(sz_f)[None, :]
+
+  for p in nl.affine_range(math.ceil(sz_p / nl.tile_size.pmax)):
+    # Generate tensor indices for the input/output tensors
+    # pad index to pmax, for simplicity
+    i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
+
+    # Load input data from external memory to on-chip memory
+    # only read up to sz_p
+    in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p<sz_p))
+
+    # perform the computation
+    out_tile = nl.exp(in_tile, mask=(i_p<sz_p))
+
+    # store the results back to external memory
+    # only write up to sz_p
+    nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p))
+
+    return out_tensor
 ```
 
 ## torch-neuronx-dataparallel-example-dim-neq-zero.rst
@@ -16103,32 +18712,6 @@ image_batched = torch.rand([1, 3, batch_size, 8])
 output = model_parallel(image_batched)
 ```
 
-## ESFH002.rst
-
-```python
-import jax
-import jax.numpy as jnp
-
-@jax.jit
-def foo():
-    # direct uint64 constant in arithmetic operation
-    x = jnp.array([1, 2, 3], dtype=jnp.uint64)
-    # large constant that exceeds uint32 max
-    large_constant = jnp.uint64(5_000_000_000)
-    return x + large_constant
-```
-
-```python
-import jax
-import jax.numpy as jnp
-
-@jax.jit
-def test():
-    x = jnp.array([1, 2, 3], dtype=jnp.uint32)
-    large_constant = jnp.uint32(5_000_000_000)
-    return x + large_constant
-```
-
 ## trace_bert_neuronx.py
 
 ```python
@@ -16137,11 +18720,12 @@ import torch_neuronx
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
+
 # Build tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained("bert-base-cased-finetuned-mrpc")
 model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased-finetuned-mrpc", return_dict=False)
 
-# Setup example inputs
+# Setup some example inputs
 sequence_0 = "The company HuggingFace is based in New York City"
 sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
 
@@ -16156,10 +18740,45 @@ example_inputs_paraphrase = (
     torch.cat([paraphrase['token_type_ids']] * batch_size, 0)
 )
 
-# Trace model for AWS Trainium optimization
+# Run torch.neuron.trace to generate a TorchScript that is optimized by AWS Neuron
 model_neuron_batch = torch_neuronx.trace(model, example_inputs_paraphrase)
 
-# Save the optimized model
+# Save the batched model
+model_neuron_batch.save('bert_neuron_b{}.pt'.format(batch_size))
+```
+
+## trace_bert_neuron.py
+
+```python
+import torch
+import torch_neuron
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+# Build tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased-finetuned-mrpc")
+model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased-finetuned-mrpc", return_dict=False)
+
+# Setup some example inputs
+sequence_0 = "The company HuggingFace is based in New York City"
+sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
+
+max_length = 128
+batch_size = 6
+
+paraphrase = tokenizer.encode_plus(sequence_0, sequence_1, max_length=max_length, padding='max_length', truncation=True, return_tensors="pt")
+
+example_inputs_paraphrase = (
+    torch.cat([paraphrase['input_ids']] * batch_size, 0),
+    torch.cat([paraphrase['attention_mask']] * batch_size, 0),
+    torch.cat([paraphrase['token_type_ids']] * batch_size, 0)
+)
+
+# Run torch.neuron.trace to generate a TorchScript that is optimized by AWS Neuron
+model_neuron_batch = torch_neuron.trace(model, example_inputs_paraphrase)
+
+# Save the batched model
 model_neuron_batch.save('bert_neuron_b{}.pt'.format(batch_size))
 ```
 
@@ -16190,44 +18809,10 @@ example_inputs_paraphrase = (
     torch.cat([paraphrase['token_type_ids']] * batch_size, 0)
 )
 
-# Trace model with torch_neuron for AWS Neuron optimization
+# Trace model with torch_neuron
 model_neuron_batch = torch_neuron.trace(model, example_inputs_paraphrase)
 
-# Save the optimized model
-model_neuron_batch.save('bert_neuron_b{}.pt'.format(batch_size))
-```
-
-## trace_bert_neuron.py
-
-```python
-import torch
-import torch_neuron
-
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
-# Build tokenizer and model
-tokenizer = AutoTokenizer.from_pretrained("bert-base-cased-finetuned-mrpc")
-model = AutoModelForSequenceClassification.from_pretrained("bert-base-cased-finetuned-mrpc", return_dict=False)
-
-# Setup example inputs
-sequence_0 = "The company HuggingFace is based in New York City"
-sequence_1 = "HuggingFace's headquarters are situated in Manhattan"
-
-max_length = 128
-batch_size = 6
-
-paraphrase = tokenizer.encode_plus(sequence_0, sequence_1, max_length=max_length, padding='max_length', truncation=True, return_tensors="pt")
-
-example_inputs_paraphrase = (
-    torch.cat([paraphrase['input_ids']] * batch_size, 0),
-    torch.cat([paraphrase['attention_mask']] * batch_size, 0),
-    torch.cat([paraphrase['token_type_ids']] * batch_size, 0)
-)
-
-# Trace model with torch_neuron for AWS Trainium optimization
-model_neuron_batch = torch_neuron.trace(model, example_inputs_paraphrase)
-
-# Save the optimized model
+# Save the traced model
 model_neuron_batch.save('bert_neuron_b{}.pt'.format(batch_size))
 ```
 
@@ -16249,14 +18834,6 @@ def torch_rmsnorm_kernel(a_tensor, g_tensor):
 
   # Scale the output by the weight
   return tensor * g_tensor
-
-device = xm.xla_device()
-
-a_tensor = torch.rand((250, 512), dtype=torch.float32).to(device=device)
-g_tensor = torch.rand((512), dtype=torch.float32).to(device=device)
-
-output_nki = nki_rmsnorm_kernel(a_tensor, g_tensor)
-output_torch = torch_rmsnorm_kernel(a_tensor, g_tensor)
 ```
 
 ## average_pool2d_jax.py
@@ -16272,173 +18849,8 @@ def jax_average_pool_2D(in_tensor, pool_size):
 ```
 
 ```python
+# NKI kernel usage
 out_nki = tensor_avgpool_kernel(in_array, pool_size=POOL_SIZE)
-```
-
-## ESPP004.rst
-
-```python
-import numpy as np
-import jax.numpy as jnp
-import jax
-from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
-
-# Unsupported data type example
-dtype = np.dtype(dtypes.float4_e2m1fn)
-val = lax_internal._convert_element_type(0, dtype, weak_type=False)
-```
-
-```python
-import numpy as np
-import jax.numpy as jnp
-import jax
-from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
-
-# Supported data type example
-dtype = jnp.bfloat16
-val = lax_internal._convert_element_type(0, dtype, weak_type=False)
-```
-
-## rmsnorm_jax.py
-
-```python
-import jax
-import jax.numpy as jnp
-from rmsnorm_nki_kernels import nki_rmsnorm_kernel
-
-def jax_rms_norm(a_tensor, g_tensor):
-  # Square the tensor (element-wise)
-  in_square = jnp.square(a_tensor)
-  # Calculate means in the free dimension
-  mean = in_square.mean(axis=1, keepdims=True)
-  # Scale by reciprocal of sqrt(mean)
-  tensor = a_tensor * jnp.reciprocal(jnp.sqrt(mean))
-
-  # Scale the output by the weight
-  return tensor * g_tensor
-```
-
-## unet_compile.py
-
-```python
-import torch
-import neuronperf as npf
-import neuronperf.torch
-
-def get_batch(batch_size):
-    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
-
-npf.torch.compile(
-    model,
-    inputs,
-    batch_sizes=batch_sizes,
-    pipeline_sizes=pipeline_sizes,
-    filename=filename,
-    model_name=model_name,
-)
-```
-
-## EARG001.rst
-
-```python
-traced_model = torch_neuronx.trace(
-   model,
-   input,
-   compiler_args=['--lnc', '2']  # ERROR: lnc=2 not supported on trn1
-)
-```
-
-## layout-violation.py
-
-```python
-import neuronxcc.nki.language as nl
-from neuronxcc import nki
-
-
-@nki.jit
-def tensor_exp_kernel_(in_tensor):
-  """NKI kernel to compute elementwise exponential of an input tensor
-
-  Args:
-      in_tensor: an input tensor of shape [128,512]
-  Returns:
-      out_tensor: an output tensor of shape [128,512]
-  """
-  out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-
-  # Load input data from HBM to on-chip memory
-  in_tile = nl.load(in_tensor[0:256, 0:512])
-
-  # perform the computation:
-  out_tile = nl.exp(in_tile)
-
-  # store the results back to HBM
-  nl.store(out_tensor[0:256, 0:512], value=out_tile)
-```
-
-## layout-dynamic-loop.py
-
-```python
-import neuronxcc.nki.language as nl
-from neuronxcc import nki
-import math
-
-@nki.jit
-def tensor_exp_kernel_(in_tensor):
-  """NKI kernel to compute elementwise exponential of an input tensor
-
-  Args:
-      in_tensor: an input tensor of ANY 2D shape (up to SBUF size)
-  Returns:
-      out_tensor: an output tensor of ANY 2D shape (up to SBUF size)
-  """
-  sz_p, sz_f = in_tensor.shape
-  out_tensor = nl.ndarray((sz_p, sz_f), dtype=in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-
-  for p in nl.affine_range(math.ceil(sz_p / nl.tile_size.pmax)):
-    # Generate tensor indices for the input/output tensors
-    p_start = k * nl.tile_size.pmax
-    p_end = p_start + nl.tile_size.pmax
-    i_p = slice(p_start, min(p_end, sz_p))
-
-    # Load input data from external memory to on-chip memory
-    in_tile = nl.load(in_tensor[i_p, 0:sz_f])
-
-    # perform the computation
-    out_tile = nl.exp(in_tile)
-
-    # store the results back to external memory
-    nl.store(out_tensor[i_p, 0:sz_f], value=out_tile)
-
-    return out_tensor
-```
-
-## average_pool2d_torch.py
-
-```python
-import torch
-from torch_xla.core import xla_model as xm
-from average_pool2d_nki_kernels import tensor_avgpool_kernel
-
-device = xm.xla_device()
-
-# Set up average pool 2D parameters
-POOL_SIZE = 2
-C, HIN, WIN = 2, 6, 6
-HOUT, WOUT = HIN//POOL_SIZE, WIN//POOL_SIZE
-
-# Create input tensor and move to device
-in_tensor = torch.arange(C * HIN * WIN, dtype=torch.bfloat16).reshape(C, HIN, WIN).to(device=device)
-
-# Call NKI kernel
-out_nki = tensor_avgpool_kernel(in_tensor, POOL_SIZE)
-
-# Compare with PyTorch reference implementation
-out_torch = torch.nn.functional.avg_pool2d(in_tensor, POOL_SIZE, POOL_SIZE)
 ```
 
 ## layout-pass.py
@@ -16460,16 +18872,92 @@ def tensor_exp_kernel_(in_tensor):
   out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
                           buffer=nl.shared_hbm)
 
+  # Generate indices for the input/output tensors
+  i_p = nl.arange(128)[:, None]
+  i_f = nl.arange(512)[None, :]
+
   # Load input data from HBM to on-chip memory
-  in_tile = nl.load(in_tensor[0:128, 0:512])
+  in_tile = nl.load(in_tensor[i_p, i_f])
 
   # perform the computation:
   out_tile = nl.exp(in_tile)
 
   # store the results back to HBM
-  nl.store(out_tensor[0:128, 0:512], value=out_tile)
+  nl.store(out_tensor[i_p, i_f], value=out_tile)
 
   return out_tensor
+```
+
+## rmsnorm_jax.py
+
+```python
+import jax
+import jax.numpy as jnp
+from rmsnorm_nki_kernels import nki_rmsnorm_kernel
+
+# Reference JAX implementation
+def jax_rms_norm(a_tensor, g_tensor):
+  # Square the tensor (element-wise)
+  in_square = jnp.square(a_tensor)
+  # Calculate means in the free dimension
+  mean = in_square.mean(axis=1, keepdims=True)
+  # Scale by reciprocal of sqrt(mean)
+  tensor = a_tensor * jnp.reciprocal(jnp.sqrt(mean))
+
+  # Scale the output by the weight
+  return tensor * g_tensor
+```
+
+## unet_compile.py
+
+```python
+import torch
+
+import neuronperf as npf
+import neuronperf.torch
+
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+
+# Compile
+npf.torch.compile(
+    model,
+    inputs,
+    batch_sizes=batch_sizes,
+    pipeline_sizes=pipeline_sizes,
+    filename=filename,
+    model_name=model_name,
+)
+```
+
+## average_pool2d_torch.py
+
+```python
+import torch
+from torch_xla.core import xla_model as xm
+from average_pool2d_nki_kernels import tensor_avgpool_kernel
+
+device = xm.xla_device()
+
+# Set up parameters
+POOL_SIZE = 2
+C, HIN, WIN = 2, 6, 6
+HOUT, WOUT = HIN//POOL_SIZE, WIN//POOL_SIZE
+
+# Create input tensor on device
+in_tensor = torch.arange(C * HIN * WIN, dtype=torch.bfloat16).reshape(C, HIN, WIN).to(device=device)
+
+# Call NKI kernel
+out_nki = tensor_avgpool_kernel(in_tensor, POOL_SIZE)
+
+# Compare with PyTorch reference
+out_torch = torch.nn.functional.avg_pool2d(in_tensor, POOL_SIZE, POOL_SIZE)
+
+# Verify results
+if (out_nki == out_torch).all():
+    print("NKI and Torch match")
+else:
+    print("NKI and Torch differ")
 ```
 
 ## test_nki_nl_dslice.py
@@ -16492,29 +18980,27 @@ def example_kernel(in_tensor):
   return out_tensor
 ```
 
-## EVRF017.rst
+## resnet_benchmark.py
 
 ```python
-import jax.lax as lax
-import jax.numpy as jnp
+import torch
+import neuronperf as npf
+import neuronperf.torch
 
-# Erroneous code example - base dilation greater than 1 not supported
-result = lax.reduce_window(
-    x, -jnp.inf, lax.max,
-    window_dimensions=(1, 1, 1, 1),
-    window_strides=(1, 1, 1, 1),
-    padding='VALID',
-    base_dilation=(1, 2, 1, 1)
-)
 
-# Fixed code example - base dilation set to all 1s
-result = lax.reduce_window(
-    x, -jnp.inf, lax.max,
-    window_dimensions=(1, 1, 1, 1),
-    window_strides=(1, 1, 1, 1),
-    padding='VALID',
-    base_dilation=(1, 1, 1, 1)
-)
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+```
+
+```python
+inputs = [get_batch(batch_size) for batch_size in batch_sizes]
+filename = f"{model_name}.json"
+
+reports = npf.torch.benchmark(filename, inputs, n_models=n_models, workers_per_model=workers_per_model)
+
+npf.print_reports(reports)
+npf.write_csv(reports)
+npf.write_json(reports)
 ```
 
 ## torch-neuron-dataparallel-example-specify-ncs.rst
@@ -16643,7 +19129,7 @@ model_parallel = torch.neuron.DataParallel(model_neuron)
 batch_sizes = [2, 3, 4, 5, 6]
 for batch_size in batch_sizes:
     image_batched = torch.rand([batch_size, 3, 224, 224])
-    
+
     # Run inference with a batched input
     output = model_parallel(image_batched)
 ```
@@ -16660,6 +19146,9 @@ a = torch.rand((512, 2048), dtype=torch.bfloat16).to(device=device)
 b = torch.rand((512, 2048), dtype=torch.bfloat16).to(device=device)
 
 output_nki = nki_tensor_add_nc2(a, b)
+output_torch = a + b
+
+allclose = torch.allclose(output_torch, output_nki, atol=1e-4, rtol=1e-2)
 ```
 
 ## layout-loop.py
@@ -16680,14 +19169,14 @@ def tensor_exp_kernel_(in_tensor):
   out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
                           buffer=nl.shared_hbm)
 
+  i_f = nl.arange(512)[None, :]
+
   for k in nl.affine_range(2):
     # Generate tensor indices for the input/output tensors
-    p_start = k * nl.tile_size.pmax
-    p_end = p_start + nl.tile_size.pmax
-    i_p = slice(p_start, p_end)
+    i_p = k * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
 
     # Load input data from HBM to on-chip memory
-    in_tile = nl.load(in_tensor[i_p, 0:512])
+    in_tile = nl.load(in_tensor[i_p, i_f])
 
     # perform the computation
     out_tile = nl.exp(in_tile)
@@ -16698,12 +19187,34 @@ def tensor_exp_kernel_(in_tensor):
   return out_tensor
 ```
 
+## vgg_benchmark.py
+
+```python
+import torch
+import neuronperf as npf
+import neuronperf.torch
+
+
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+```
+
+```python
+inputs = [get_batch(batch_size) for batch_size in batch_sizes]
+filename = f"{model_name}.json"
+
+reports = npf.torch.benchmark(filename, inputs, n_models=n_models, workers_per_model=workers_per_model)
+
+npf.print_reports(reports)
+npf.write_csv(reports)
+npf.write_json(reports)
+```
+
 ## spmd_multiple_nc_tensor_addition_jax.py
 
 ```python
 import jax
 import jax.numpy as jnp
-from spmd_multiple_nc_tensor_addition_nki_kernels import nki_tensor_add_nc2
 
 seed_a, seed_b = jax.random.split(jax.random.PRNGKey(42))
 a = jax.random.uniform(seed_a, (512, 2048), dtype=jnp.bfloat16)
@@ -16711,6 +19222,8 @@ b = jax.random.uniform(seed_b, (512, 2048), dtype=jnp.bfloat16)
 
 output_nki = nki_tensor_add_nc2(a, b)
 output_jax = a + b
+
+allclose = jnp.allclose(output_jax, output_nki, atol=1e-4, rtol=1e-2)
 ```
 
 ## resnet_compile.py
@@ -16721,16 +19234,20 @@ import torchvision
 import neuronperf as npf
 import neuronperf.torch
 
-model = getattr(torchvision.models, "resnet50")(pretrained=True)
-inputs = [torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32) for batch_size in [1, 8, 64]]
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+
+# Compile a model
+model = getattr(torchvision.models, "resnet18")(pretrained=True)
+inputs = [get_batch(batch_size) for batch_size in [1, 8, 64]]
 
 npf.torch.compile(
     model,
     inputs,
     batch_sizes=[1, 8, 64],
     pipeline_sizes=[1],
-    filename="resnet50.json",
-    model_name="resnet50",
+    filename="resnet18.json",
+    model_name="resnet18",
 )
 ```
 
@@ -16747,6 +19264,10 @@ a = torch.arange(P*X*Y, dtype=torch.int8).reshape((P, X*Y)).to(device=device)
 a_t_nki = torch.zeros((P, Y*X), dtype=torch.int8).to(device=device)
 
 a_t_nki = tensor_transpose2D_kernel_(a, (X, Y))
+
+a_t_torch = torch.transpose(a.reshape(P, X, Y), 1, 2).reshape(P, X * Y)
+
+allclose = torch.allclose(a_t_torch, a_t_nki)
 ```
 
 ## spmd_tensor_addition_torch.py
@@ -16771,8 +19292,14 @@ import torchvision
 import neuronperf as npf
 import neuronperf.torch
 
+
+def get_batch(batch_size):
+    return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
+
+
+# Compile a model with neuronperf
 model = getattr(torchvision.models, "vgg16")(pretrained=True)
-inputs = [torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32) for batch_size in [1, 8, 64]]
+inputs = [get_batch(batch_size) for batch_size in [1, 8, 64]]
 
 npf.torch.compile(
     model,
@@ -16852,32 +19379,6 @@ image_batched = torch.rand([batch_size, 3, 224, 224])
 output = model_parallel(image_batched)
 ```
 
-## EVRF001.rst
-
-```python
-class Model(torch.nn.Module):
-    def forward(self, A, b):
-        # Although slower than triangular_solve, this is mathematically equivalent
-        A_inv = torch.inverse(A)
-        return A_inv @ b
-```
-
-## EUOC002.rst
-
-```python
-class Model(torch.nn.Module):
-    def forward(self, A, b):
-        return torch.triangular_solve(b, A)
-```
-
-```python
-class Model(torch.nn.Module):
-    def forward(self, A, b):
-        # Although slower than triangular_solve, this is mathematically equivalent
-        A_inv = torch.inverse(A)
-        return A_inv @ b
-```
-
 ## test_nki_simulate_kernel.py
 
 ```python
@@ -16926,7 +19427,10 @@ def get_batch(batch_size):
     return torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32)
 
 
+# Compile model with neuronperf
 model = torchvision.models.resnet50(pretrained=True)
+batch_sizes = [1, 6]
+pipeline_sizes = [1]
 inputs = [get_batch(batch_size) for batch_size in batch_sizes]
 
 npf.torch.compile(
@@ -16934,19 +19438,47 @@ npf.torch.compile(
     inputs,
     batch_sizes=batch_sizes,
     pipeline_sizes=pipeline_sizes,
-    filename=filename,
-    model_name=model_name,
+    filename="resnet50.json",
+    model_name="resnet50",
 )
 ```
 
-## EVRF013.rst
+## test_resnet50_pt.py
 
 ```python
-def forward(self, x):
-    x = x.float()
-    k = 5
-    values, indices = torch.topk(x, k=k, dim=-1)
-    return values, indices
+import torch
+import torch_neuron
+
+import neuronperf as npf
+import neuronperf.torch
+
+from torchvision import models
+
+
+# Load a pretrained ResNet50 model
+model = models.resnet50(pretrained=True)
+
+# Select a few batch sizes to test
+batch_sizes = [5, 6, 7]
+
+# Construct example inputs
+inputs = [torch.zeros([batch_size, 3, 224, 224], dtype=torch.float32) for batch_size in batch_sizes]
+
+# Compile
+npf.torch.compile(
+	model, 
+	inputs, 
+	batch_sizes=batch_sizes, 
+	filename='resnet50.json',
+)
+
+# Benchmark
+reports = npf.torch.benchmark('resnet50.json', inputs)
+
+# View and save results
+npf.print_reports(reports)
+npf.write_csv(reports, 'resnet50_results.csv')
+npf.write_json(reports, 'resnet50_results.json')
 ```
 
 ## test_simple_pt.py
@@ -16955,19 +19487,70 @@ def forward(self, x):
 import torch
 import torch.neuron
 
+import neuronperf as npf
+import neuronperf.torch
 
+
+# Define a simple model
 class Model(torch.nn.Module):
     def forward(self, x):
         x = x * 3
         return x + 1
 
 
+# Instantiate
 model = Model()
 model.eval()
 
+# Define some inputs
 batch_sizes = [1]
 inputs = [torch.ones((batch_size, 3, 224, 224)) for batch_size in batch_sizes]
 
+# Compile for Neuron
 model_neuron = torch.neuron.trace(model, inputs)
 model_neuron.save("model_neuron_b1.pt")
+
+# Benchmark
+reports = npf.torch.benchmark("model_neuron_b1.pt", inputs, batch_sizes)
+
+# View and save results
+npf.print_reports(reports)
+npf.write_csv(reports, "model_neuron_b1.csv")
+```
+
+## model.py
+
+```python
+import torch.nn as nn
+import torch.nn.functional as F
+
+class MLP(nn.Module):
+  def __init__(self, input_size = 28 * 28, output_size = 10, layers = [120, 84]):
+      super(MLP, self).__init__()
+      self.fc1 = nn.Linear(input_size, layers[0])
+      self.fc2 = nn.Linear(layers[0], layers[1])
+      self.fc3 = nn.Linear(layers[1], output_size)
+
+  def forward(self, x):
+      x = F.relu(self.fc1(x))
+      x = F.relu(self.fc2(x))
+      x = self.fc3(x)
+      return F.log_softmax(x, dim=1)
+```
+
+## neuron-setup-example.py
+
+```python
+from neuronsetuphelper import neuron_setup_helper
+
+nr_setup = neuron_setup_helper(manifest_file='default', neuron_version='latest')
+
+setup_cmd = nr_setup.instructions(
+    framework='tensorflow',
+    action='Install',
+    os='ubuntu',
+    ami='non-dlami',
+    mode='develop',
+    framework_version='latest'
+)
 ```

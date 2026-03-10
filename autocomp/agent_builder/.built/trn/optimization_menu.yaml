@@ -9,16 +9,17 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Align tensor partition dimension to hardware tile size (128)
-- strategy: Use SBUF to accumulate partial results before writing to HBM
-- strategy: Leverage matmult engine by casting operands to BF16 or FP16
-- strategy: Tile free dimensions to maximize on-chip SBUF reuse
-- strategy: Exploit TF32 for matmul precision-performance tradeoff over FP32
-- strategy: Partition reductions along the contraction dimension across NeuronCores
-- strategy: Pack narrow tensors to fill full hardware partition tiles
-- strategy: Use FP8 quantization for memory-bound operations
-- strategy: Coalesce small DMA transfers into larger contiguous block loads
-- strategy: Separate matmul accumulation in FP32 from FP16/BF16 inputs
-- strategy: Vectorize element-wise operations on the vector engine free dimension
-- strategy: Reorder tensor layouts to make DMA access patterns contiguous
+- strategy: Fuse QKV weight matrices into a single larger matmul
+- strategy: Use BSH attention layout to overlap compute with collectives
+- strategy: Shard KV cache over sequence dimension via flash decoding
+- strategy: Align bucket sizes to powers of two for reduced padding waste
+- strategy: Duplicate Q weights to skip flash decoding allgather overhead
+- strategy: Use int8 weight storage to reduce memory bandwidth pressure
+- strategy: Encode context in parallel rather than token-by-token
+- strategy: Select GQA sharding strategy matching batch and head dimensions
+- strategy: Minimize collective operations by choosing optimal tensor-parallel degree
+- strategy: Rewrite computation as pure-function HLO for compiler optimization
+- strategy: Consolidate small matmuls into larger sharded operations across NeuronCores
+- strategy: Choose context encoding buckets close to expected prompt lengths
+- strategy: Move embedding and sampling operations on-device to avoid transfers
 - strategy: Other methods not listed here.
