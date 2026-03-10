@@ -719,6 +719,7 @@ def main():
     # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
     # Options: "static", "one-shot", "progressive"
     menu_strategy = "static"
+    built_menu_strategy_enum = {"static": 0, "one-shot": 1, "progressive": 2}
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -789,6 +790,8 @@ def main():
         output_str += f"_reimpl1"
     if early_stop_iters > 0:
         output_str += f"_es{early_stop_iters}_{early_stop_threshold}"
+    if menu_strategy:
+        output_str += f"_ms{built_menu_strategy_enum[menu_strategy]}"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)

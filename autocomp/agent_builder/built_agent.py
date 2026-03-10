@@ -145,6 +145,9 @@ Relevant sections (one per line):"""
             selected = []
             for line in raw.strip().split("\n"):
                 line = line.strip().lstrip("- ").strip()
+                if not line:
+                    logger.error("%s BuiltLLMAgent: Empty line in ISA selection raw response: %s", self.llm_client.model, repr(raw))
+                    continue
                 if line in self._isa_sections:
                     selected.append(line)
                 else:
@@ -160,7 +163,7 @@ Relevant sections (one per line):"""
 
         self._isa_selection_cache[cache_key] = selected
         logger.info("%s BuiltLLMAgent: ISA selection for %s: %d/%d sections", self.llm_client.model, cache_key, len(selected), len(self._isa_sections))
-        logger.debug("%s BuiltLLMAgent: Selected ISA sections: %s", self.llm_client.model, cache_key, selected)
+        logger.debug("%s BuiltLLMAgent: Selected ISA sections: %s", self.llm_client.model, selected)
         return self._assemble_isa_sections(selected)
 
     def _assemble_isa_sections(self, section_names: list[str]) -> str:
