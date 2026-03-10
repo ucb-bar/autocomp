@@ -752,7 +752,7 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
+    output_str = f"{agent_name}_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"
     # Sanitize hw description for filesystem

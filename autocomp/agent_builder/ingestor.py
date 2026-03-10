@@ -203,17 +203,27 @@ _BLOCK_ELEMENTS = {
     "address", "article", "aside", "blockquote", "br", "dd", "details",
     "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure",
     "form", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li",
-    "main", "ol", "p", "pre", "section", "summary", "table", "tbody",
+    "main", "ol", "p", "section", "summary", "table", "tbody",
     "td", "tfoot", "th", "thead", "tr", "ul",
 }
 
 
 def _extract_text(soup) -> str:
-    """Extract text from BeautifulSoup, preserving inline formatting.
+    """Extract text from BeautifulSoup, preserving code blocks verbatim.
 
-    Block elements get newlines; inline elements get spaces.
+    <pre> blocks are extracted with original whitespace wrapped in markdown
+    fences. All other block elements get newlines; inline elements get spaces.
     """
     from bs4 import NavigableString, Tag
+
+    # First, replace <pre> blocks with placeholders to preserve formatting
+    pre_blocks: list[str] = []
+    for pre in soup.find_all("pre"):
+        code = pre.get_text()
+        if code.strip():
+            placeholder = f"\n__CODE_BLOCK_{len(pre_blocks)}__\n"
+            pre_blocks.append(code)
+            pre.replace_with(placeholder)
 
     parts: list[str] = []
     for element in soup.descendants:
@@ -228,30 +238,49 @@ def _extract_text(soup) -> str:
     raw = " ".join(parts)
     # Collapse whitespace around newlines
     lines = [line.strip() for line in raw.split("\n")]
-    return "\n".join(line for line in lines if line)
+    text = "\n".join(line for line in lines if line)
+
+    # Restore code blocks with markdown fences
+    for i, code in enumerate(pre_blocks):
+        text = text.replace(f"__CODE_BLOCK_{i}__", f"\n```\n{code}```\n")
+
+    return text
 
 
 class WebpageLoader(SourceLoader):
-    """Fetches webpages, extracts text, optionally follows same-domain links."""
+    """Fetches webpages, extracts text, optionally follows same-domain links.
 
-    def load(self, *, url: str, max_depth: int = 1, max_pages: int = 50, **kwargs) -> SourceIndex:
+    URLs sharing the starting URL's path prefix are crawled first (priority
+    queue), so the crawler exhausts the relevant subtree before venturing into
+    other same-domain pages.
+    """
+
+    def load(self, *, url: str, max_depth: int = 1, max_pages: int = 50,
+             **kwargs) -> SourceIndex:
         try:
             import requests
             from bs4 import BeautifulSoup
         except ImportError:
             raise ImportError("requests and beautifulsoup4 are required: pip install requests beautifulsoup4")
 
-        logger.info("WebpageLoader: fetching %s (depth=%d)", url, max_depth)
+        logger.info("WebpageLoader: fetching %s (depth=%d, max_pages=%d)", url, max_depth, max_pages)
         parsed_base = urlparse(url)
         base_domain = parsed_base.netloc
+        # Derive prefix from the starting URL's directory path
+        base_path = parsed_base.path.rsplit("/", 1)[0] + "/"
 
         visited: set[str] = set()
         content: dict[str, str] = {}
         headings_by_url: dict[str, list[str]] = {}
-        queue: list[tuple[str, int]] = [(url, 0)]
+        # Two-tier queue: priority (same prefix) and secondary (other)
+        priority_queue: list[tuple[str, int]] = [(url, 0)]
+        secondary_queue: list[tuple[str, int]] = []
 
-        while queue and len(visited) < max_pages:
-            current_url, depth = queue.pop(0)
+        while (priority_queue or secondary_queue) and len(visited) < max_pages:
+            if priority_queue:
+                current_url, depth = priority_queue.pop(0)
+            else:
+                current_url, depth = secondary_queue.pop(0)
             if current_url in visited:
                 continue
             visited.add(current_url)
@@ -287,10 +316,13 @@ class WebpageLoader(SourceLoader):
                     href = a["href"]
                     abs_url = urljoin(current_url, href)
                     parsed = urlparse(abs_url)
-                    # Strip fragment
                     abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    if parsed.netloc == base_domain and abs_url not in visited:
-                        queue.append((abs_url, depth + 1))
+                    if parsed.netloc != base_domain or abs_url in visited:
+                        continue
+                    if parsed.path.startswith(base_path):
+                        priority_queue.append((abs_url, depth + 1))
+                    else:
+                        secondary_queue.append((abs_url, depth + 1))
 
         # Build structural metadata
         meta_lines = [f"Webpage: {url} ({len(content)} pages fetched)"]

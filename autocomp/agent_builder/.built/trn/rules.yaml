@@ -1,39 +1,47 @@
 general:
-- The rewritten program should be semantically equivalent to the original program,
-  within a small numerical tolerance.
-- Keep the same function name and signature as the original program (helper functions
-  can be renamed or deleted).
-- All tensor dimensions must be known at compile time; dynamic shapes are not supported.
-- The partition dimension (axis 0) is always 128 on NeuronCore-v2; free dimensions
-  are all other axes.
-- Data movement between HBM and on-chip SRAM (SBUF/PSUM) via DMA is the primary performance
-  bottleneck and must be minimized.
-- Tiles in SBUF cannot exceed 192 KB total size; PSUM tiles cannot exceed 2 KB per
-  partition per bank.
-- Matrix multiplication (nc_matmul) must read from SBUF and write to PSUM; inputs
-  and outputs cannot be reversed.
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- The partition dimension (first dimension of all on-chip tiles) must be ≤ 128 and maps to all 128 parallel lanes; every tile
+  operation costs the same whether using 1 or 128 partitions.
+- All computation requires data in SBUF or PSUM; HBM tensors cannot be directly operated on—they must be loaded first via
+  nl.load() or nl.load_transpose2d().
+- SBUF and PSUM are 2D memories organized as (partition_dim, free_dim); the partition dimension is always the first dimension
+  of any tile shape.
+- Tensor Engine matmul (nc_matmul) reads from SBUF and writes to PSUM; outputs are always FP32 regardless of input dtype,
+  and accumulation is always FP32.
+- DMA operations (load, store, load_transpose2d) move data between HBM and SBUF only; PSUM is not directly accessible via
+  DMA.
+- Mask expressions must be affine expressions of static loop indices (e.g., i < 64, 2*i + j < 100); runtime tensor values
+  and non-affine operations (e.g., i % 4) are not allowed in masks.
+- Loop-carried dependencies require sequential_range(); affine_range() assumes iterations are independent and can be parallelized/pipelined.
+- The partition dimension of all operands in a single compute instruction must match (e.g., nl.add(a[128, 512], b[128, 512])
+  is valid; nl.add(a[128, 512], b[64, 512]) is invalid unless b is broadcast).
 planning:
 - Limit the scope of the plan to the selected optimization.
-- Do not count out any of the optimizations unless they are clearly irrelevant to
-  the code.
-- When planning data layout, account for the fact that SBUF and PSUM have separate
-  address spaces and require explicit DMA transfers between them.
-- Identify opportunities to reuse data in on-chip memory across multiple operations
-  to reduce HBM bandwidth consumption.
-- For operations exceeding hardware size limits (e.g., large normalization kernels),
-  plan decomposition into smaller sub-operations that fit within constraints.
+- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
+- 'Matmul tile sizes must satisfy: contraction axis K ≤ 128 (partition dim), stationary free axis M ≤ 128, moving free axis
+  N ≤ 512; for K > 128, accumulate multiple matmul outputs into the same PSUM tile.'
+- SBUF capacity is 24 MiB (128 partitions × 192 KiB each); estimate live SBUF usage and plan tiling/loop fusion to avoid compiler-inserted
+  spills that degrade performance.
+- VectorE and GpSimdE cannot access SBUF simultaneously; VectorE and ScalarE cannot access PSUM simultaneously—plan instruction
+  sequences to avoid serialization bottlenecks.
+- Tensor Engine throughput is 4× slower for FP32 than for BF16/FP16/TF32/cFP8; plan to downcast FP32 inputs before matmul
+  when possible.
+- DMA engines run in parallel with compute; plan to overlap load/store operations with compute to hide latency.
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
-- Reduction results must be stored to a tile before being reused as input to another
-  operation; intermediate reduction values cannot be directly chained.
-- When using direct allocation APIs (psum.alloc, sbuf.alloc, psum.mod_alloc, sbuf.mod_alloc),
-  do not mix them with automatic allocation (psum.auto_alloc, sbuf.auto_alloc) in
-  the same kernel.
-- Loop variables and runtime values cannot be used for static indexing operations;
-  only compile-time constants and affine expressions are permitted for tile indexing.
-- "The partition axis size of input tiles to nc_matmul must be identical and \u2264\
-  128; free axis of stationary must be \u2264128, free axis of moving must be \u2264\
-  512."
-- When writing to PSUM via nc_matmul or other Tensor Engine operations, ensure the
-  output tile does not exceed 2 KB per partition; use multiple smaller operations
-  or accumulation if necessary.
+- Indexing a tile with 1D arange is not supported; always use 2D indexing with shape (P, F) where P is partition dimension
+  and F is free dimension, e.g., nl.arange(128)[:, None] for partition and nl.arange(512)[None, :] for free.
+- Tensors defined inside if/else/for blocks cannot be used outside their scope; define tensors at the appropriate scope level
+  and use assignment (tensor[...] = value) to update them within nested blocks.
+- Mutable kernel parameters must be explicitly returned in the return statement; immutable parameters cannot be modified.
+- Control flow (if/while/for conditions) cannot depend on arange or mgrid values; use mask parameter instead to conditionally
+  execute instructions.
+- Reduction outputs (e.g., from loop_reduce or matmul accumulation) must be stored or explicitly copied before reuse in a
+  different context to avoid undefined behavior.
+- nc_matmul requires both stationary and moving inputs to have the contraction dimension (K) in the partition dimension; if
+  K is in the free dimension, transpose the input first.
+- Indirect indexing (using one tensor to index another) is only supported for load/store operations; other APIs like load_transpose2d
+  do not support indirect indices.
+- Bias and scale parameters in activation instructions must be float32 (bias) or float32 scalar/vector (scale); other dtypes
+  will cause a compilation error.

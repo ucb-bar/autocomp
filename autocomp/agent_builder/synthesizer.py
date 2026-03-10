@@ -43,7 +43,7 @@ _ROUTE_PREVIEW_CHARS = 6000
 _BUCKET_NAMES = ["isa", "architecture", "optimization", "rules", "examples"]
 
 _BUCKET_DESCRIPTIONS = {
-    "isa": "API / instruction-set reference ONLY (function signatures, parameter descriptions, class definitions, instruction semantics). NOT code examples, NOT tutorials, NOT operator support lists, NOT framework integration docs.",
+    "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics, and their inline usage examples/snippets). NOT standalone tutorials or sample programs.",
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
     "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
@@ -179,10 +179,11 @@ class ComponentSynthesizer:
                 f"Classify this content into one or more categories.\n\n"
                 f"Categories:\n{bucket_list}\n- skip: {skip_desc}\n\n"
                 f"IMPORTANT DISTINCTIONS:\n"
-                f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions) "
+                f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions, and their inline usage examples) "
                 f"that the agent will directly use when writing code. "
                 f"API docs for tools, services, or libraries outside the agent's scope are NOT 'isa'.\n"
-                f"- Files with runnable code (function bodies with implementations) are 'examples', not 'isa'.\n"
+                f"- Files that are primarily standalone runnable programs/tutorials (not API reference) are 'examples', not 'isa'. "
+                f"However, API reference files that contain inline code snippets within docstrings are still 'isa'.\n"
                 f"- Operator support tables (lists of supported ops for a framework) are 'examples', not 'isa'.\n"
                 f"- 'optimization' is ONLY for guidance on optimizing code that the agent writes. "
                 f"Optimization advice for things outside the agent's scope is 'skip'.\n\n"
@@ -227,7 +228,7 @@ class ComponentSynthesizer:
         logger.info("  Routing took %.1fs", t_route - t0)
 
         # Stage 2 + 3: Extract and merge each component
-        logger.info("ComponentSynthesizer: Stage 2 -- per-file extraction")
+        logger.info("ComponentSynthesizer: Stage 2 -- extract, merge, synthesize")
 
         t_start = time.time()
         architecture = self._synthesize_architecture(buckets["architecture"])
@@ -307,6 +308,7 @@ class ComponentSynthesizer:
 
     def _arch_map_reduce(self, items: list[tuple[str, str]]) -> str:
         # Map: summarize each document individually in parallel
+        logger.info("Architecture: map - summarize each document individually in parallel")
         prompts: list[str] = []
         for key, text in items:
             truncated = _truncate(text, max_chars=self._ARCH_SINGLE_DOC_CHARS)
@@ -331,6 +333,7 @@ class ComponentSynthesizer:
             )
         ]
 
+        logger.info("Architecture: reduce - merge summaries into final architecture summary")
         summaries = "\n\n".join(
             f"--- {items[i][0]} ---\n{all_responses[i]}"
             for i in range(len(items)) if i < len(all_responses) and all_responses[i]
@@ -369,6 +372,7 @@ class ComponentSynthesizer:
 
         # Ask the LLM to identify entry boundaries (name, description, line range)
         # then copy source content verbatim -- no LLM rewriting.
+        logger.info("ISA docs: extract - identify entry/exit boundaries and copy content verbatim")
         prompts: list[str] = []
         for key, text in candidates:
             prompts.append(self._build_isa_boundary_prompt(key, text))
@@ -531,13 +535,10 @@ Return ONLY a JSON object:"""
 - "end_line": the line number where this entry ends (inclusive)
 
 RULES:
-- Include the FULL definition and documentation for each entry (signature, docstring, all parameters, examples)
+- Include the FULL definition and documentation for each entry (signature, description, docstring, all parameters, return type, AND any "Example:" or "Examples:" sections with code blocks that follow)
+- KEEP inline code examples/snippets that appear inside an API entry's docstring — these show correct usage patterns and are essential
 - Do NOT overlap line ranges between entries
-- SKIP imports, module-level comments, tutorials, and narrative text
-- SKIP example/tutorial kernel implementations (functions that are sample code demonstrating API usage, not the API itself)
-- SKIP operator support tables and compatibility lists (e.g. lists of supported TensorFlow/PyTorch ops)
-- SKIP runnable code examples, test functions, and benchmark code
-- ONLY include entries that are API/library reference: function signatures with documented parameters, class definitions, enum definitions, instruction specifications
+- ONLY include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
 - If no API reference content is found, return an empty array []
 
 Return ONLY a JSON array:
@@ -570,7 +571,6 @@ JSON array:"""
                 end = int(item.get("end_line", 0))
                 if start < 1 or end < start:
                     continue
-                # Copy verbatim from source (1-indexed to 0-indexed)
                 content = "\n".join(lines[start - 1:end])
                 md = f"### {name}\n\n{content}"
                 entries.append(ISAEntry(
@@ -783,7 +783,7 @@ Performance optimization strategies:"""
 - Memory layout rules (e.g., "tiles in scratchpad must not exceed X KB", "data must be contiguous along dimension Y")
 - Correctness constraints (e.g., "loop variables cannot be used for indexing in this context")
 - API usage pitfalls (e.g., "reduction output must be stored before reuse")
-Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Aim for 3-5 rules per category, fewer if possible.
+Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Return AT MOST 5 rules per category — pick the most critical ones only.
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases

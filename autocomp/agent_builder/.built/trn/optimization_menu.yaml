@@ -9,19 +9,18 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Maximize partition dimension usage to saturate 128 parallel compute lanes
-- strategy: Map large free axis as stationary tensor for fast LoadStationary
-- strategy: Use PSUM accumulation pattern for tiled contraction dimension matmuls
-- strategy: Minimize most-minor free dimension stride to stay under 16 bytes
-- strategy: Assign independent operations to different engines for asynchronous parallel
-    execution
-- strategy: Use TensorE for low-latency transpose/broadcast instead of HBM round-trips
-- strategy: Combine scale/bias with activation into single ScalarE pipelined instruction
-- strategy: Use activation_reduce to fuse nonlinear function with reduction on ScalarE
-- strategy: Pack small-partition operations via partition vectorization to fill 128
-    lanes
-- strategy: Maximize both free and partition dimensions in load/store for DMA efficiency
-- strategy: Choose reduction engine based on natural data layout to avoid transposes
-- strategy: Prefer BF16/FP16/cFP8 over FP32 inputs for 4x TensorE throughput
-- strategy: Exploit background LoadStationary to overlap stationary loading with computation
+- strategy: Maximize SBUF tile partition dimension to 128 for full compute lane utilization
+- strategy: Map large free-axis matrix as stationary operand in TensorE matmul
+- strategy: Use transpose_x=True in matmul to avoid extra transpose instruction
+- strategy: Accumulate multiple nc_matmul results into same PSUM bank via affine_range
+- strategy: Pack small VectorE operations across partitions via partition vectorization
+- strategy: Combine multiply-add with nonlinear function into single ScalarE activation instruction
+- strategy: Ensure minimum 4KiB free dimension size for DMA transfer efficiency
+- strategy: Avoid most-minor free dimension strides exceeding 16 bytes in SBUF access
+- strategy: Use TensorE for cross-partition broadcast or transpose instead of explicit data movement
+- strategy: Coalesce small result tiles into larger contiguous SBUF buffers before HBM store
+- strategy: Hoist SBUF tensor declarations inside loops to enable compiler multi-buffering
+- strategy: Use PE tiling for small matmuls to improve TensorE systolic array utilization
+- strategy: Pipeline TensorE background LoadStationary with MultiplyMoving computation
+- strategy: Cast FP32 matmul inputs to BF16/FP16/TF32/cFP8 before TensorE execution
 - strategy: Other methods not listed here.
