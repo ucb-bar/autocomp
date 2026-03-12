@@ -980,7 +980,7 @@ Parameters:
         "header": "nisa.nc_find_index8(dst: tile, data: tile, vals: tile, dtype: nki_dtype=data.dtype, name=None)",
         "description": """Find indices of the 8 given values in each partition of the data tensor using Vector Engine.
 
-Loads the 8 values from vals, then loads the data tensor and outputs the indices (starting at 0) of the first occurrence of each value in data, per partition. data can be up to 5-dimensional; vals must be up to 3-dimensional. data must have between 8 and 16,384 elements per partition. vals must have exactly 8 elements per partition. Output has exactly 8 elements per partition and is uint16 or uint32 (default uint32). Behavior is undefined if a value in vals is not in data. If provided, mask is applied only to the data tensor.
+Loads the 8 values from vals, then loads the data tensor and outputs the indices (starting at 0) of the first occurrence of each value in data, per partition. data can be up to 5-dimensional; vals must be up to 3-dimensional. data must have between 8 and 16,384 elements per partition. vals must have exactly 8 elements per partition. Output has exactly 8 elements per partition and is uint16 or uint32 (default uint32). Behavior is undefined if a value in vals is not in data.
 Behavior is undefined if vals tensor contains values that are not in the data tensor.
 
 Parameters:
