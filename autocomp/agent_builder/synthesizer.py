@@ -47,7 +47,7 @@ _BUCKET_DESCRIPTIONS = {
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
     "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
-    "examples": "code examples, tutorials, sample kernels, example implementations, operator support lists, framework integration docs",
+    "examples": "code examples, tutorials, sample kernels, example implementations, framework integration docs",
     "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
 }
 
@@ -109,7 +109,7 @@ class ComponentSynthesizer:
                 f"Source: {key}\n\n"
                 f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
                 f"{self._context_prefix}"
-                f"Is this content relevant to the agent's task described above?\n\n"
+                f"Is this content directly relevant to the agent's task described above?\n\n"
                 f"Answer YES or NO."
             )
 
@@ -179,12 +179,11 @@ class ComponentSynthesizer:
                 f"Classify this content into one or more categories.\n\n"
                 f"Categories:\n{bucket_list}\n- skip: {skip_desc}\n\n"
                 f"IMPORTANT DISTINCTIONS:\n"
-                f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions, and their inline usage examples) "
+                f"- 'isa' is ONLY for API/instruction reference docs (function signatures, parameter tables, class definitions, inline usage examples, and other closely related documentation) "
                 f"that the agent will directly use when writing code. "
                 f"API docs for tools, services, or libraries outside the agent's scope are NOT 'isa'.\n"
                 f"- Files that are primarily standalone runnable programs/tutorials (not API reference) are 'examples', not 'isa'. "
                 f"However, API reference files that contain inline code snippets within docstrings are still 'isa'.\n"
-                f"- Operator support tables (lists of supported ops for a framework) are 'examples', not 'isa'.\n"
                 f"- 'optimization' is ONLY for guidance on optimizing code that the agent writes. "
                 f"Optimization advice for things outside the agent's scope is 'skip'.\n\n"
                 f"{context_note}"
@@ -387,7 +386,6 @@ class ComponentSynthesizer:
         for (key, text), responses in zip(candidates, all_responses):
             raw = (responses[0].strip() if responses else "")
             entries = self._parse_boundary_response(raw, text, key)
-            entries = [e for e in entries if self._is_valid_isa_entry(e)]
             logger.info("  ISA extract: %s -> %d entries", key, len(entries))
             all_entries.extend(entries)
 
@@ -402,15 +400,42 @@ class ComponentSynthesizer:
         if not all_entries:
             return "No ISA documentation found. Please add manually."
 
+        # Merge entries with the same name: combine content, skip near-duplicates
+        grouped: dict[str, list[ISAEntry]] = {}
+        for entry in all_entries:
+            grouped.setdefault(entry.name, []).append(entry)
+
+        merged: list[ISAEntry] = []
+        for name, entries in grouped.items():
+            if len(entries) == 1:
+                merged.append(entries[0])
+                continue
+            # Sort longest first, skip entries whose content is a substring of a longer one
+            entries.sort(key=lambda e: len(e.markdown), reverse=True)
+            unique_parts: list[str] = []
+            for e in entries:
+                body = e.markdown.split("\n", 2)[-1].strip() if "\n" in e.markdown else e.markdown
+                if not any(body in existing for existing in unique_parts):
+                    unique_parts.append(e.markdown)
+            combined_md = "\n\n".join(unique_parts)
+            merged.append(ISAEntry(
+                name=name,
+                description=entries[0].description,
+                source_key=entries[0].source_key,
+                markdown=combined_md,
+            ))
+        if len(merged) < len(all_entries):
+            logger.info("  ISA merge: %d -> %d entries (%d duplicates merged)",
+                         len(all_entries), len(merged), len(all_entries) - len(merged))
+        all_entries = merged
+
         categories = self._categorize_isa_entries(all_entries)
         logger.info("  ISA categorization: %d categories", len(categories))
         for cat_name, entry_names in categories.items():
             logger.info("    %s: %d entries", cat_name, len(entry_names))
 
-        # Build a name -> list[ISAEntry] index for reassembly
-        name_to_entries: dict[str, list[ISAEntry]] = {}
-        for entry in all_entries:
-            name_to_entries.setdefault(entry.name, []).append(entry)
+        # Build a name -> entry index for reassembly
+        name_to_entry: dict[str, ISAEntry] = {e.name: e for e in all_entries}
 
         # Reassemble by category
         parts: list[str] = []
@@ -418,7 +443,8 @@ class ComponentSynthesizer:
         for cat_name, entry_names in categories.items():
             section_entries: list[str] = []
             for name in entry_names:
-                for entry in name_to_entries.get(name, []):
+                entry = name_to_entry.get(name)
+                if entry:
                     section_entries.append(entry.markdown)
                 categorized_names.add(name)
             if section_entries:
@@ -446,13 +472,14 @@ class ComponentSynthesizer:
         index_lines = [f"{name}: {desc}" for name, desc in seen.items()]
         index_text = "\n".join(index_lines)
 
-        prompt = f"""{self._context_prefix}Below are API entries extracted from the SDK. Each line is "name: description".
+        prompt = f"""Below are API entries extracted from the SDK. Each line is "name: description".
 
 === ENTRIES ({len(seen)} total) ===
 {index_text}
 === END ===
 
-Keep ONLY entries the agent would directly call or reference when writing optimized code. Remove APIs that are outside the agent's scope as described above.
+{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
+Do not include standalone tutorials or sample programs, as those belong in the "examples" bucket. Skip release notes, changelogs, and other non-API/instruction documentation.
 
 Return ONLY a JSON array of entry names to keep.
 
@@ -538,7 +565,8 @@ RULES:
 - Include the FULL definition and documentation for each entry (signature, description, docstring, all parameters, return type, AND any "Example:" or "Examples:" sections with code blocks that follow)
 - KEEP inline code examples/snippets that appear inside an API entry's docstring — these show correct usage patterns and are essential
 - Do NOT overlap line ranges between entries
-- ONLY include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
+- Include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
+- Closely related documentation can also be included, such as additional information about particular parts of the API/instruction set.
 - If no API reference content is found, return an empty array []
 
 Return ONLY a JSON array:
@@ -583,19 +611,6 @@ JSON array:"""
             pass
 
         return _parse_markdown_entries(raw, source_key)
-
-    @staticmethod
-    def _is_valid_isa_entry(entry: ISAEntry) -> bool:
-        """Filter out entries that are clearly not ISA reference material."""
-        md = entry.markdown
-        lines = [l for l in md.split("\n") if l.strip() and not l.startswith("### ")]
-        if len(lines) <= 1:
-            return False
-        # If the entire body is just table rows, it's a support list entry
-        non_table_lines = [l for l in lines if not l.strip().startswith("|") and l.strip() != "---"]
-        if not non_table_lines:
-            return False
-        return True
 
     def _extract_code_examples(self, items: list[tuple[str, str]]) -> str:
         """Extract code examples from the examples bucket in parallel (language-agnostic)."""
@@ -651,8 +666,11 @@ JSON array:"""
     # Optimization menu
     # ------------------------------------------------------------------
 
+    _OPT_SINGLE_DOC_CHARS = 30_000
+    _OPT_MERGE_CHARS = 60_000
+
     def _synthesize_optimization_menu(self, items: list[tuple[str, str]]) -> list[str]:
-        """Synthesize optimization strategies from routed documentation."""
+        """Synthesize optimization strategies from routed documentation via map-reduce."""
         defaults = [
             "reduce data movement",
             "overlap data movement and compute",
@@ -666,33 +684,114 @@ JSON array:"""
             "simplify or remove unnecessary code",
         ]
 
-        content = _items_to_text(items, max_chars=100_000)
-        if not content.strip():
+        if not items:
             defaults.append("Other methods not listed here.")
             return defaults
 
-        prompt = f"""Below is documentation about the hardware target.
+        total_chars = sum(len(t) for _, t in items)
+        if total_chars <= self._OPT_SINGLE_DOC_CHARS:
+            return self._opt_single_pass(items, defaults)
 
-=== DOCUMENTATION ===
+        return self._opt_map_reduce(items, defaults)
+
+    def _opt_single_pass(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
+        """Single-pass optimization menu when content fits in one call."""
+        content = _items_to_text(items, max_chars=self._OPT_SINGLE_DOC_CHARS)
+        raw = self._opt_reduce(content, defaults)
+        return defaults + self._parse_opt_lines(raw) + ["Other methods not listed here."]
+
+    def _opt_map_reduce(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
+        """Map-reduce optimization menu for large content."""
+        # Map: extract candidate strategies from each document in parallel
+        logger.info("Optimization menu: map - extract strategies from %d documents", len(items))
+        defaults_text = chr(10).join("- " + d for d in defaults)
+        prompts: list[str] = []
+        for key, text in items:
+            truncated = _truncate(text, max_chars=self._OPT_SINGLE_DOC_CHARS)
+            prompts.append(
+                f"Source: {key}\n\n"
+                f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
+                f"{self._context_prefix}"
+                f"Extract performance optimization strategies taught or demonstrated "
+                f"in this document. Techniques demonstrated in tutorials and examples have strong potential to be useful optimizations, but make sure to extract the core principle behind the technique.\n\n"
+                f"These generic strategies are already known (do NOT repeat them):\n"
+                f"{defaults_text}\n\n"
+                f"Return each NEW strategy on its own line, prefixed with \"- \". "
+                f"If no new strategies are found, return \"- none\".\n\n"
+                f"Optimization strategies:"
+            )
+
+        all_responses = self._chat(
+            prompt=prompts, num_candidates=1, temperature=0,
+        ) if len(prompts) == 1 else [
+            r[0] if r else "" for r in
+            self.llm.chat_async(
+                prompts, num_candidates=1, temperature=0,
+            )
+        ]
+
+        # Collect all candidate strategies from map step
+        candidates: list[str] = []
+        for i, resp in enumerate(all_responses):
+            if not resp:
+                continue
+            lines = self._parse_opt_lines(resp)
+            if lines:
+                logger.info("  %s: %d strategies", items[i][0], len(lines))
+            candidates.extend(lines)
+
+        logger.info("Optimization menu: reduce - merge %d candidates into final list", len(candidates))
+        if not candidates:
+            defaults.append("Other methods not listed here.")
+            return defaults
+
+        candidate_text = chr(10).join(f"- {c}" for c in candidates)
+        candidate_text = _truncate(candidate_text, max_chars=self._OPT_MERGE_CHARS)
+
+        # Reduce: merge, deduplicate, and curate
+        raw = self._opt_reduce(candidate_text, defaults, is_reduce=True)
+        return defaults + self._parse_opt_lines(raw) + ["Other methods not listed here."]
+
+    def _opt_reduce(self, content: str, defaults: list[str], is_reduce: bool = False) -> str:
+        """Run the reduce/synthesis prompt for optimization menu."""
+        defaults_text = chr(10).join("- " + d for d in defaults)
+        if is_reduce:
+            header = (
+                "Below are candidate optimization strategies extracted from "
+                "multiple documents about the hardware target."
+            )
+            content_label = "CANDIDATE STRATEGIES"
+            instruction = (
+                "Merge, deduplicate, and curate these into a final list of "
+                "10-20 hardware-specific optimization strategies. "
+            )
+        else:
+            header = "Below is documentation about the hardware target."
+            content_label = "DOCUMENTATION"
+            instruction = (
+                "Generate 10-20 ADDITIONAL hardware-specific performance optimization "
+                "strategies from the documentation."
+            )
+
+        prompt = f"""{header}
+
+=== {content_label} ===
 {content}
-=== END DOCUMENTATION ===
+=== END {content_label} ===
 
 The agent uses an "optimization menu" -- a list of strategies it picks from when planning how to optimize a single kernel's code. Here are the generic strategies already included:
 
-{chr(10).join("- " + d for d in defaults)}
+{defaults_text}
 
-Generate 5-15 ADDITIONAL hardware-specific performance optimization strategies from the documentation.
+{instruction}
 
-EXAMPLES:
+EXAMPLES of good strategy descriptions:
+- "multi-tile grouping"
+- "supertile fuse-and-reuse"
 - "keep reusable data in local memory across outer loop iterations"
 - "fuse dependent operations into a single loop to avoid HBM round-trips"
-- "multi-tile grouping"
-- "Add additional loop levels so larger blocks of data can be loaded"
-- "supertile fuse-and-reuse"
-- "fuse instructions"
-- "stronger tiling for contraction / moving-free split"
-- "delay division until after all reductions are complete"
 - "use the streaming softmax with running max and scaling trick"
+- "delay division until after all reductions are complete"
 
 {self._context_prefix}RULES:
 - Avoid making the strategies overly specific
@@ -707,9 +806,12 @@ Return each strategy on its own line, prefixed with "- ".
 Performance optimization strategies:"""
 
         responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
-        raw = responses[0].strip() if responses else ""
+        return responses[0].strip() if responses else ""
 
-        hw_specific: list[str] = []
+    @staticmethod
+    def _parse_opt_lines(raw: str) -> list[str]:
+        """Parse bullet-pointed optimization lines from LLM output."""
+        results: list[str] = []
         for line in raw.split("\n"):
             line = line.strip()
             if line.startswith("- "):
@@ -720,12 +822,9 @@ Performance optimization strategies:"""
                 line = re.sub(r"^\d+\.\s*", "", line).strip()
             else:
                 continue
-            if line and len(line) > 10:
-                hw_specific.append(line)
-
-        combined = defaults + hw_specific
-        combined.append("Other methods not listed here.")
-        return combined
+            if line and len(line) > 10 and line.lower() != "none":
+                results.append(line)
+        return results
 
     # ------------------------------------------------------------------
     # Rules
@@ -782,8 +881,8 @@ Performance optimization strategies:"""
 - Programming model constraints (e.g., "the partition dimension is always 128", "free dimensions must be multiples of 512 for the Tensor Engine")
 - Memory layout rules (e.g., "tiles in scratchpad must not exceed X KB", "data must be contiguous along dimension Y")
 - Correctness constraints (e.g., "loop variables cannot be used for indexing in this context")
-- API usage pitfalls (e.g., "reduction output must be stored before reuse")
-Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Return AT MOST 5 rules per category — pick the most critical ones only.
+- Known/common API usage pitfalls (e.g., "reduction output must be stored before reuse")
+Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Return AT MOST 3 rules per category — pick the most critical ones only.
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases

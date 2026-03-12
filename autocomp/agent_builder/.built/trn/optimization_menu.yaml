@@ -9,16 +9,23 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Leverage TensorE fast LoadStationary by mapping short tensors to moving operand
-- strategy: Vectorize partition dimension to fill all 128 SBUF partitions per instruction
-- strategy: Combine scalar/vector pipeline stages into single `nisa.activation` instructions
-- strategy: Replace `nl.load_transpose2d` with `nl.load` plus `nisa.nc_transpose` for bandwidth
-- strategy: Use direct allocation with modulo buffering to control SBUF tile rotation
-- strategy: Swap stationary and moving operands in nc_matmul to eliminate intermediate transposes
-- strategy: Choose IO tensor layouts compatible with compute API to avoid TensorE transpose overhead
-- strategy: Maximize DMA transfer size to exceed 32KiB per transfer for full bandwidth utilization
-- strategy: Use TensorE PE tiling for small matmuls to fill the 128x128 systolic array
-- strategy: Accumulate multiple nc_matmul results into same PSUM tile to increase arithmetic intensity
-- strategy: Declare buffers inside inner loops to prevent unnecessary spilling
-- strategy: Exploit TensorE for cross-partition reductions instead of requiring layout transposes
+- strategy: Accumulate partial sums directly in PSUM across contraction-dimension iterations
+- strategy: Use low-level `nki.isa` APIs for fine-grained hardware instruction control
+- strategy: Tile matmul operands to maximum hardware tile sizes (128×128 stationary, 128×512 moving)
+- strategy: Fuse multiply-add with activation into single scalar engine pipelined instructions
+- strategy: Use `load_transpose2d` to combine load and transpose into one operation
+- strategy: Assign larger free-axis matrix as stationary operand in `nc_matmul`
+- strategy: Use TensorE for data reshaping via multiply with constant matrices when not matmul-bound
+- strategy: Exploit free-dimension broadcasting to avoid explicit broadcast instructions
+- strategy: Use `sequential_range` for accumulation loops to prevent compiler reordering
+- strategy: Coalesce small result tiles into larger contiguous buffers before HBM stores
+- strategy: Apply execution masks for safe partial-tile boundary handling
+- strategy: Use hardware-accelerated specialized intrinsics (rsqrt, bn_stats, activation_reduce)
+- strategy: Hoist tensor declarations into independent loop bodies to avoid false dependencies
+- strategy: Use direct allocation with modulo rotation for explicit multi-buffering control
+- strategy: Maximize partition axis utilization by packing operations across all 128 lanes
+- strategy: Defer normalization divisions until after subsequent matmul contractions
+- strategy: Pre-fetch and cache reused tensors in SBUF across all loop iterations
+- strategy: Choose reduction engine based on data layout to avoid transpositions
+- strategy: Downcast intermediates before transpose to exploit higher transpose throughput
 - strategy: Other methods not listed here.

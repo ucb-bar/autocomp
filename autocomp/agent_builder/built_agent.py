@@ -22,31 +22,38 @@ class BuiltLLMAgent(LLMAgent):
     config directory (produced by AgentBuilder) instead of hardcoding them.
     """
 
+    _FINE_FILTER_MIN_SUBS = 5
+    _FINE_FILTER_MIN_CHARS = 8_000
+
     def __init__(self, model: str, config_dir: str | Path,
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
-                 menu_strategy: str = "static"):
+                 menu_strategy: str = "static",
+                 fine_grained_isa: bool = False):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
         self.menu_strategy = menu_strategy # choose from: [static, one-shot, progressive]
+        self.fine_grained_isa = fine_grained_isa
 
         # Load all config files
         self._architecture = self._load_text("architecture.md")
         self._isa_docs_raw = self._load_text("isa_docs.md")
         self._isa_sections = self._parse_isa_sections(self._isa_docs_raw)
+        self._isa_subsections = self._parse_isa_subsections(self._isa_sections)
         self._optimization_menu = self._load_optimization_menu()
         self._rules = self._load_rules()
 
-        # Cache for ISA section selection per problem
-        self._isa_selection_cache: dict[str, list[str]] = {}
+        # Cache for ISA selection per problem (stores final assembled text)
+        self._isa_selection_cache: dict[str, str] = {}
 
         # Cache for new menu options per candidate
         self._new_menu_cache: dict[str, list[str]] = {}
 
         logger.info(
-            "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations",
+            "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, fine_grained_isa=%s",
             self.config_dir, len(self._isa_sections), len(self._optimization_menu),
+            self.fine_grained_isa,
         )
 
     def __repr__(self):
@@ -82,14 +89,13 @@ class BuiltLLMAgent(LLMAgent):
 
     @staticmethod
     def _parse_isa_sections(isa_text: str) -> dict[str, str]:
-        """Parse ISA docs markdown into sections keyed by header."""
+        """Parse ISA docs markdown into sections keyed by ## header."""
         sections: dict[str, str] = {}
         current_header = "General"
         current_lines: list[str] = []
 
         for line in isa_text.split("\n"):
             if line.startswith("## "):
-                # Save previous section
                 if current_lines:
                     sections[current_header] = "\n".join(current_lines).strip()
                 current_header = line[3:].strip()
@@ -102,69 +108,211 @@ class BuiltLLMAgent(LLMAgent):
 
         return sections
 
-    def _get_isa_for_problem(self, prob: Prob, code: str) -> str:
-        """
-        Select relevant ISA sections for a problem.
+    @staticmethod
+    def _parse_isa_subsections(sections: dict[str, str]) -> dict[str, dict[str, str]]:
+        """Parse ### subsections within each ## section.
 
-        On first call for a given problem, makes a lightweight LLM call to
-        select relevant sections. Result is cached for subsequent calls.
+        Returns {section_name: {subsection_name: content}}.
         """
+        result: dict[str, dict[str, str]] = {}
+        for sec_name, sec_text in sections.items():
+            subs: dict[str, str] = {}
+            cur_sub: str | None = None
+            cur_lines: list[str] = []
+            preamble_lines: list[str] = []
+
+            for line in sec_text.split("\n"):
+                if line.startswith("### "):
+                    if cur_sub is not None:
+                        subs[cur_sub] = "\n".join(cur_lines).strip()
+                    cur_sub = line[4:].strip()
+                    cur_lines = [line]
+                elif cur_sub is not None:
+                    cur_lines.append(line)
+                else:
+                    preamble_lines.append(line)
+
+            if cur_sub is not None:
+                subs[cur_sub] = "\n".join(cur_lines).strip()
+            if preamble_lines:
+                preamble = "\n".join(preamble_lines).strip()
+                if preamble:
+                    subs["_preamble"] = preamble
+
+            result[sec_name] = subs
+        return result
+
+    @staticmethod
+    def _subsection_summary(content: str, max_chars: int = 300) -> str:
+        """Extract a brief description from a ### subsection's content."""
+        lines = content.split("\n")
+        body = []
+        for line in lines:
+            if line.startswith("### "):
+                continue
+            stripped = line.strip()
+            if not stripped or stripped == "---":
+                continue
+            if stripped.startswith("*"):
+                continue
+            body.append(stripped)
+            if len(" ".join(body)) >= max_chars:
+                break
+        summary = " ".join(body)
+        if len(summary) > max_chars:
+            summary = summary[:max_chars] + "…"
+        return summary
+
+    def _get_isa_for_problem(self, prob: Prob, code: str) -> str:
+        """Select relevant ISA sections (and optionally subsections) for a problem."""
         cache_key = f"{prob.prob_type}:{prob.prob_id}"
 
         if cache_key in self._isa_selection_cache:
-            selected = self._isa_selection_cache[cache_key]
-            return self._assemble_isa_sections(selected)
+            return self._isa_selection_cache[cache_key]
 
-        # If ISA is small enough, include everything
         if len(self._isa_docs_raw) < 30_000:
-            self._isa_selection_cache[cache_key] = list(self._isa_sections.keys())
+            self._isa_selection_cache[cache_key] = self._isa_docs_raw
             return self._isa_docs_raw
 
-        # Ask the LLM to select relevant sections
+        # Level 1: select ## sections
+        selected_sections = self._select_sections(prob, code)
+        logger.info(
+            "%s BuiltLLMAgent: ISA selection for %s: %d/%d sections",
+            self.llm_client.model, cache_key,
+            len(selected_sections), len(self._isa_sections),
+        )
+        logger.debug(
+            "%s BuiltLLMAgent: Selected ISA sections: %s",
+            self.llm_client.model, selected_sections,
+        )
+
+        if not self.fine_grained_isa:
+            text = self._assemble_isa_sections(selected_sections)
+            self._isa_selection_cache[cache_key] = text
+            return text
+
+        # Level 2: within large selected sections, filter ### subsections
+        parts: list[str] = []
+        sections_to_filter: list[str] = []
+        for name in selected_sections:
+            subs = self._isa_subsections.get(name, {})
+            real_subs = {k: v for k, v in subs.items() if k != "_preamble"}
+            sec_text = self._isa_sections.get(name, "")
+            if (len(real_subs) >= self._FINE_FILTER_MIN_SUBS
+                    and len(sec_text) >= self._FINE_FILTER_MIN_CHARS):
+                sections_to_filter.append(name)
+            else:
+                parts.append(sec_text)
+
+        if sections_to_filter:
+            filtered = self._select_subsections(prob, code, sections_to_filter)
+            for sec_name, kept_subs in filtered.items():
+                subs = self._isa_subsections[sec_name]
+                sec_parts: list[str] = []
+                if "_preamble" in subs:
+                    sec_parts.append(subs["_preamble"])
+                for sub_name in kept_subs:
+                    if sub_name in subs:
+                        sec_parts.append(subs[sub_name])
+                parts.append("\n\n".join(sec_parts))
+
+        text = "\n\n".join(parts)
+        self._isa_selection_cache[cache_key] = text
+        logger.info(
+            "%s BuiltLLMAgent: Fine-grained ISA for %s: %d chars (filtered %d sections)",
+            self.llm_client.model, cache_key, len(text), len(sections_to_filter),
+        )
+        return text
+
+    def _select_sections(self, prob: Prob, code: str) -> list[str]:
+        """Level-1: LLM selects which ## sections are relevant."""
         section_list = "\n".join(f"- {name}" for name in self._isa_sections.keys())
         prob_context = getattr(prob, "context", "")
 
-        prompt = f"""Given the following code and problem context, select which ISA documentation sections are relevant. Return ONLY the section names, one per line.
+        prompt = (
+            "Given the following code and problem context, select which ISA "
+            "documentation sections are relevant. Return ONLY the section names, "
+            "one per line.\n\n"
+            f"Problem type: {prob.prob_type}\n"
+            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+            f"Code:\n```\n{code}\n```\n\n"
+            f"Available ISA sections:\n{section_list}\n\n"
+            "Relevant sections (one per line):"
+        )
+        return self._match_names_from_llm(prompt, list(self._isa_sections.keys()))
 
-Problem type: {prob.prob_type}
-{f'Problem context: {prob_context}' if prob_context else ''}
+    def _select_subsections(
+        self, prob: Prob, code: str, section_names: list[str],
+    ) -> dict[str, list[str]]:
+        """Level-2: for each large section, LLM selects which ### APIs are needed."""
+        prob_context = getattr(prob, "context", "")
+        all_sub_names: list[str] = []
+        sec_for_sub: list[str] = []
+        sub_descriptions: list[str] = []
+        for sec_name in section_names:
+            for sub_name, content in self._isa_subsections[sec_name].items():
+                if sub_name == "_preamble":
+                    continue
+                all_sub_names.append(sub_name)
+                sec_for_sub.append(sec_name)
+                sub_descriptions.append(self._subsection_summary(content))
 
-Code:
-```
-{code}
-```
+        sub_list_parts: list[str] = []
+        for name, desc in zip(all_sub_names, sub_descriptions):
+            if desc:
+                sub_list_parts.append(f"- {name}: {desc}")
+            else:
+                sub_list_parts.append(f"- {name}")
+        sub_list = "\n".join(sub_list_parts)
 
-Available ISA sections:
-{section_list}
+        prompt = (
+            "Given the following code, select which specific APIs/instructions "
+            "are needed. Be selective — only include APIs the code actually uses "
+            "or is likely to need. Return ONLY the API names, one per line.\n\n"
+            f"Problem type: {prob.prob_type}\n"
+            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+            f"Code:\n```\n{code}\n```\n\n"
+            f"Available APIs:\n{sub_list}\n\n"
+            "Needed APIs (one per line):"
+        )
+        kept = self._match_names_from_llm(prompt, all_sub_names)
 
-Relevant sections (one per line):"""
+        result: dict[str, list[str]] = {name: [] for name in section_names}
+        for sub_name in kept:
+            idx = all_sub_names.index(sub_name)
+            result[sec_for_sub[idx]].append(sub_name)
 
+        for sec_name in section_names:
+            total = len([k for k in self._isa_subsections[sec_name] if k != "_preamble"])
+            logger.debug(
+                "%s BuiltLLMAgent: Fine-grained %s: %d/%d subsections",
+                self.llm_client.model, sec_name,
+                len(result[sec_name]), total,
+            )
+        return result
+
+    def _match_names_from_llm(self, prompt: str, valid_names: list[str]) -> list[str]:
+        """Send a selection prompt to the LLM and fuzzy-match the response to valid names."""
         try:
             responses = self.llm_client.chat(prompt=prompt, num_candidates=1, temperature=0)
             raw = responses[0] if responses else ""
-            selected = []
+            selected: list[str] = []
             for line in raw.strip().split("\n"):
                 line = line.strip().lstrip("- ").strip()
                 if not line:
-                    logger.error("%s BuiltLLMAgent: Empty line in ISA selection raw response: %s", self.llm_client.model, repr(raw))
                     continue
-                if line in self._isa_sections:
-                    selected.append(line)
+                if line in valid_names:
+                    if line not in selected:
+                        selected.append(line)
                 else:
-                    # Fuzzy match
-                    for name in self._isa_sections:
-                        if line.lower() in name.lower() or name.lower() in line.lower():
-                            selected.append(name)
+                    for name in valid_names:
+                        if (line.lower() in name.lower() or name.lower() in line.lower()):
+                            if name not in selected:
+                                selected.append(name)
                             break
-            if not selected:
-                selected = list(self._isa_sections.keys())
+            return selected if selected else valid_names
         except Exception:
-            selected = list(self._isa_sections.keys())
-
-        self._isa_selection_cache[cache_key] = selected
-        logger.info("%s BuiltLLMAgent: ISA selection for %s: %d/%d sections", self.llm_client.model, cache_key, len(selected), len(self._isa_sections))
-        logger.debug("%s BuiltLLMAgent: Selected ISA sections: %s", self.llm_client.model, selected)
-        return self._assemble_isa_sections(selected)
+            return valid_names
 
     def _assemble_isa_sections(self, section_names: list[str]) -> str:
         parts = []
