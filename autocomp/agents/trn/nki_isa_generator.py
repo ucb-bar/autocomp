@@ -237,7 +237,7 @@ nisa.dma_copy(dst=c_tensor[0:128, 0:512], src=c)"""},
     "ShapeAndSelection": [
         {"header": "nl.where(condition: tile[bool], x: tile, y: tile|scalar, dtype=None)", "description": "Return a tile with elements from x where condition is True, and elements from y otherwise. Note x must be a tile."},
         {"header": "nl.broadcast_to(src: tile, *, shape: tuple=None)", "description": "Broadcasts a tile to a new shape. Returns a new tile broadcast along the partition dimension of src, this new tile will be in SBUF, but can be also assigned to a PSUM tensor."},
-        {"header": "nki.tensor.broadcast_to(shape: tuple)", "description": "The tensor object must be a tile or can be implicitly converted to a tile. A tensor can be implicitly converted to a tile iff the partition dimension is the highest dimension. Returns a new view of the tile, no copy will occur."},
+        {"header": "nki.meta.tensor.broadcast_to(shape: tuple)", "description": "The tensor object must be a tile or can be implicitly converted to a tile. A tensor can be implicitly converted to a tile iff the partition dimension is the highest dimension. Returns a new view of the tile, no copy will occur. (Beta 2: nki.tensor moved to nki.meta.tensor)"},
         {"header": "nl.expand_dims(data: tile, axis: int|tuple)", "description": "Inserts a new dimension of size 1 into the tile's shape."},
         {"header": "nisa.nc_n_gather / nl.gather_flattened", "description": "Beta 2: nl.gather_flattened replaced by nisa.nc_n_gather (free partition limited to 512). Gathers elements from data's flattened free dimension using indices."}
     ],
@@ -591,7 +591,6 @@ Parameters:
     reduce_res – a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile. The result of sum(ReductionResult) is written in-place into the tensor.
     reduce_cmd – an enum member from nisa.reduce_cmd to control the state of reduction registers
     dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
 Result is written to dst (same layout as input data tile); the instruction does not return a value.
 """,
@@ -1060,7 +1059,6 @@ where,
 Args:
     stationary – the stationary operand on SBUF; layout: (partition axis <= 128, free axis <= 128)
     moving – the moving operand on SBUF; layout: (partition axis <= 128, free axis <= 512)
-    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
     is_stationary_onezero – hints to the compiler whether the stationary operand is a tile with ones/zeros only; setting this field explicitly could lead to 2x better performance if stationary tile is in float32; the field has no impact for non-float32 stationary.
     is_moving_onezero – hints to the compiler if the moving operand is a tile with ones/zeros only; setting this field explicitly could lead to 2x better performance if moving tile is in float32; the field has no impact for non-float32 moving.
     is_transpose – hints to the compiler that this is a transpose operation with moving as an identity matrix.
@@ -1124,7 +1122,6 @@ In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but the
 Note, PF-transpose on Tensor Engine is done by performing a matrix multiplication between data as the stationary tensor and an identity matrix as the moving tensor. See architecture guide for more information. On NeuronCore-v2, such matmul-style transpose is not bit-accurate if the input data contains NaN/Inf. You may consider replacing NaN/Inf with regular floats (float_max/float_min/zeros) in the input matrix before calling nc_transpose(engine=nki.isa.constants.engine.tensor).
 Parameters:
     data – the input tile to be transposed
-    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
     dtype – if specified and it’s different from the data type of input tile data, an additional nki.isa.cast instruction will be inserted to cast the transposed data into the target dtype (see Supported Data Types for more information)
     engine – specify which engine to use for transpose: nki.isa.tensor_engine or nki.isa.vector_engine ; by default, the best engine will be selected for the given input tile shape
 Result is written to dst (transposed result of input data); the instruction does not return a value.
@@ -1330,7 +1327,6 @@ Parameters:
         op – the reduction operator (see Supported Math Operators for NKI ISA for supported reduction operators)
         data – the input tile to be reduced
         axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: [1], [1,2], [1,2,3], [1,2,3,4]
-        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
         dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
         negate – if True, reduction result is multiplied by -1.0; only applicable when op is an arithmetic operator
         keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
@@ -1369,7 +1365,6 @@ Parameters:
         operand1 – a scalar constant or a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile
         reverse1 – reverse ordering of inputs to op1; if false, operand1 is the rhs of op1; if true, operand1 is the lhs of op1
         dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
         engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.scalar_engine, nki.isa.gpsimd_engine (only allowed for rsqrt) or nki.isa.unknown_engine (default, let compiler select best engine based on the input tile shape).
 
 Result is written to dst; the instruction does not return a value.""",
@@ -1411,7 +1406,6 @@ Parameters:
         reduce_op – the reduce operation to perform on the free dimension of data <op0> operand0
         reduce_res – a tile of shape (data.shape[0], 1), where data.shape[0] is the partition axis size of the input data tile. The result of reduce_op(data <op0> operand0) is written in-place into the tile.
         dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 Result is written to dst; reduction result is written in-place to reduce_res; the instruction does not return a value.""",
     },
     "nki.isa.tensor_tensor": {
@@ -1443,7 +1437,6 @@ Parameters:
     data1 – lhs input operand of the element-wise operation
     data2 – rhs input operand of the element-wise operation
     op – a binary math operator (see Supported Math Operators for NKI ISA for supported operators)
-    mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
     dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
     engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.gpsimd_engine or nki.isa.unknown_engine (default, let compiler select best engine based on the input tile shape).
 Result is written to dst; the instruction does not return a value.""",
@@ -1488,7 +1481,6 @@ Parameters:
         op1 – a binary arithmetic math operator (see Supported Math Operators for NKI ISA for supported operators)
         reverse0 – reverse ordering of inputs to op0; if false, data0 is the lhs of op0; if true, data0 is the rhs of op0
         reverse1 – reverse ordering of inputs to op1; if false, data1 is the rhs of op1; if true, data1 is the lhs of op1
-        mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
         dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
 Result is written to dst; the instruction does not return a value.""",
         "examples": """# Example 1: scan two tiles, a and b, of the same
