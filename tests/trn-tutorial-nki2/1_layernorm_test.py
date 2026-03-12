@@ -4,13 +4,14 @@ import nki.language as nl
 import numpy as np
 import math
 
-# Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
-TILE_ROWS = 128
-PARAM_BCAST_CHUNK_COLS = 512
 
 # SUBSTITUTE HERE
 
 def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
+  # Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
+  TILE_ROWS = 128
+  PARAM_BCAST_CHUNK_COLS = 512
+  
   # Compute LayerNorm:
   #   y = ((x - mean(x)) / sqrt(var(x) + epsilon)) * gamma + beta
   # Reduction (mean/var) is along the last (free) dimension.

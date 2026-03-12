@@ -1,5 +1,10 @@
 @nki.jit
 def test(a_tensor, g_tensor):
+
+  # Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
+  TILE_ROWS = 128
+  G_BROADCAST_CHUNK_COLS = 512
+
   # Compute out_tensor = a_tensor / RMS(a_tensor) * g_tensor
   # where RMS(x) = sqrt((1/N) * sum(x^2)) and N = a_tensor.shape[1].
   # Reduction (mean) is along the last (free) dimension.
