@@ -64,6 +64,12 @@ class ComponentSynthesizer:
     for each component.
     """
 
+    # Single context budget: ~150K chars leaves generous room for prompt
+    # instructions within a 200K-token context window.  All per-document
+    # and merge truncation derives from this one number.
+    CONTEXT_BUDGET = 150_000
+    _MERGE_BUDGET = 80_000  # for reduce steps (merged map outputs are compressed)
+
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
                  description: str = ""):
         self.llm = llm_client
@@ -264,9 +270,6 @@ class ComponentSynthesizer:
     # Architecture
     # ------------------------------------------------------------------
 
-    _ARCH_SINGLE_DOC_CHARS = 30_000
-    _ARCH_MERGE_CHARS = 60_000
-
     def _synthesize_architecture(self, items: list[tuple[str, str]]) -> str:
         """Summarize hardware architecture from routed content.
 
@@ -278,7 +281,7 @@ class ComponentSynthesizer:
             return "No architecture documentation found. Please add manually."
 
         total_chars = sum(len(t) for _, t in items)
-        if total_chars <= self._ARCH_SINGLE_DOC_CHARS:
+        if total_chars <= self.CONTEXT_BUDGET:
             return self._arch_single_pass(items)
 
         return self._arch_map_reduce(items)
@@ -295,7 +298,7 @@ class ComponentSynthesizer:
     )
 
     def _arch_single_pass(self, items: list[tuple[str, str]]) -> str:
-        content = _items_to_text(items, max_chars=self._ARCH_SINGLE_DOC_CHARS)
+        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
         prompt = (
             f"=== DOCUMENTATION ===\n{content}\n=== END DOCUMENTATION ===\n\n"
             f"{self._context_prefix}"
@@ -310,7 +313,7 @@ class ComponentSynthesizer:
         logger.info("Architecture: map - summarize each document individually in parallel")
         prompts: list[str] = []
         for key, text in items:
-            truncated = _truncate(text, max_chars=self._ARCH_SINGLE_DOC_CHARS)
+            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
             prompts.append(
                 f"Source: {key}\n\n"
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
@@ -337,7 +340,7 @@ class ComponentSynthesizer:
             f"--- {items[i][0]} ---\n{all_responses[i]}"
             for i in range(len(items)) if i < len(all_responses) and all_responses[i]
         )
-        summaries = _truncate(summaries, max_chars=self._ARCH_MERGE_CHARS)
+        summaries = _truncate(summaries, max_chars=self._MERGE_BUDGET)
 
         # Reduce: merge summaries into final architecture summary
         prompt = (
@@ -548,7 +551,7 @@ Return ONLY a JSON object:"""
         """Build a prompt that asks the LLM to identify entry boundaries, not rewrite content."""
         lines = text.split("\n")
         numbered = "\n".join(f"{i+1}: {line}" for i, line in enumerate(lines))
-        numbered = _truncate(numbered, max_chars=120_000)
+        numbered = _truncate(numbered, max_chars=self.CONTEXT_BUDGET)
         return f"""Below is a numbered source file "{key}". Identify ALL API/instruction reference entries (functions, classes, methods, enums, instructions) that have proper documentation.
 
 === FILE (numbered lines) ===
@@ -630,7 +633,7 @@ JSON array:"""
         for key, text in candidates:
             basename = key.rsplit("/", 1)[-1] if "/" in key else key
             basenames.append(basename)
-            text_trunc = _truncate(text, max_chars=40_000)
+            text_trunc = _truncate(text, max_chars=self.CONTEXT_BUDGET)
             prompts.append(
                 f"Source: {basename}\n\n"
                 f"=== FILE ===\n{text_trunc}\n=== END ===\n\n"
@@ -666,9 +669,6 @@ JSON array:"""
     # Optimization menu
     # ------------------------------------------------------------------
 
-    _OPT_SINGLE_DOC_CHARS = 30_000
-    _OPT_MERGE_CHARS = 60_000
-
     def _synthesize_optimization_menu(self, items: list[tuple[str, str]]) -> list[str]:
         """Synthesize optimization strategies from routed documentation via map-reduce."""
         defaults = [
@@ -689,14 +689,14 @@ JSON array:"""
             return defaults
 
         total_chars = sum(len(t) for _, t in items)
-        if total_chars <= self._OPT_SINGLE_DOC_CHARS:
+        if total_chars <= self.CONTEXT_BUDGET:
             return self._opt_single_pass(items, defaults)
 
         return self._opt_map_reduce(items, defaults)
 
     def _opt_single_pass(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
         """Single-pass optimization menu when content fits in one call."""
-        content = _items_to_text(items, max_chars=self._OPT_SINGLE_DOC_CHARS)
+        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
         raw = self._opt_reduce(content, defaults)
         return defaults + self._parse_opt_lines(raw) + ["Other methods not listed here."]
 
@@ -707,7 +707,7 @@ JSON array:"""
         defaults_text = chr(10).join("- " + d for d in defaults)
         prompts: list[str] = []
         for key, text in items:
-            truncated = _truncate(text, max_chars=self._OPT_SINGLE_DOC_CHARS)
+            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
             prompts.append(
                 f"Source: {key}\n\n"
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
@@ -746,7 +746,7 @@ JSON array:"""
             return defaults
 
         candidate_text = chr(10).join(f"- {c}" for c in candidates)
-        candidate_text = _truncate(candidate_text, max_chars=self._OPT_MERGE_CHARS)
+        candidate_text = _truncate(candidate_text, max_chars=self._MERGE_BUDGET)
 
         # Reduce: merge, deduplicate, and curate
         raw = self._opt_reduce(candidate_text, defaults, is_reduce=True)
@@ -832,7 +832,7 @@ Performance optimization strategies:"""
 
     def _synthesize_rules(self, items: list[tuple[str, str]],
                           architecture: str = "", isa_docs: str = "") -> dict[str, list[str]]:
-        """Extract rules and constraints from routed documentation."""
+        """Extract rules and constraints from routed documentation via map-reduce."""
         base_rules: dict[str, list[str]] = {
             "general": [
                 "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
@@ -847,16 +847,22 @@ Performance optimization strategies:"""
             ],
         }
 
-        content = _items_to_text(items, max_chars=100_000)
-        if not content.strip():
+        if not items:
             return base_rules
 
-        # Provide architecture and ISA as additional context
+        extra_context = self._rules_extra_context(architecture, isa_docs)
+
+        total_chars = sum(len(t) for _, t in items)
+        if total_chars <= self.CONTEXT_BUDGET:
+            return self._rules_single_pass(items, base_rules, extra_context)
+
+        return self._rules_map_reduce(items, base_rules, extra_context)
+
+    def _rules_extra_context(self, architecture: str, isa_docs: str) -> str:
         context_parts: list[str] = []
         if architecture:
             context_parts.append(f"=== ARCHITECTURE SUMMARY ===\n{architecture}\n=== END ===\n")
         if isa_docs:
-            # Include just the section headers and first line of each to keep it compact
             isa_summary_lines: list[str] = []
             for line in isa_docs.split("\n"):
                 if line.startswith("## ") or line.startswith("### "):
@@ -867,22 +873,90 @@ Performance optimization strategies:"""
                     + "\n".join(isa_summary_lines[:200])
                     + "\n=== END ===\n"
                 )
-        extra_context = "\n".join(context_parts)
+        return "\n".join(context_parts)
 
-        prompt = f"""Below is documentation about the hardware target's programming model.
+    _RULES_INSTRUCTION = (
+        "Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:\n"
+        "- Programming model constraints (e.g., \"the partition dimension is always 128\")\n"
+        "- Memory layout rules (e.g., \"tiles in scratchpad must not exceed X KB\")\n"
+        "- Correctness constraints (e.g., \"loop variables cannot be used for indexing in this context\")\n"
+        "- Known/common API usage pitfalls (e.g., \"reduction output must be stored before reuse\")\n"
+        "Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, "
+        "performance advice, or general best practices -- those belong in the optimization menu."
+    )
 
-=== DOCUMENTATION ===
+    def _rules_single_pass(self, items: list[tuple[str, str]],
+                           base_rules: dict[str, list[str]], extra_context: str) -> dict[str, list[str]]:
+        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
+        raw = self._rules_reduce(content, extra_context, is_reduce=False)
+        return self._merge_rules(base_rules, raw)
+
+    def _rules_map_reduce(self, items: list[tuple[str, str]],
+                          base_rules: dict[str, list[str]], extra_context: str) -> dict[str, list[str]]:
+        logger.info("Rules: map - extract rules from %d documents", len(items))
+        prompts: list[str] = []
+        for key, text in items:
+            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
+            prompts.append(
+                f"Source: {key}\n\n"
+                f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
+                f"{self._context_prefix}"
+                f"{self._RULES_INSTRUCTION}\n\n"
+                f"Return each rule on its own line, prefixed with \"- \". "
+                f"If no rules are found, return \"- none\".\n\n"
+                f"Rules:"
+            )
+
+        all_responses = self._chat(
+            prompt=prompts, num_candidates=1, temperature=0,
+        ) if len(prompts) == 1 else [
+            r[0] if r else "" for r in
+            self.llm.chat_async(
+                prompts, num_candidates=1, temperature=0,
+            )
+        ]
+
+        candidates: list[str] = []
+        for i, resp in enumerate(all_responses):
+            if not resp:
+                continue
+            lines = self._parse_opt_lines(resp)
+            if lines:
+                logger.info("  %s: %d rules", items[i][0], len(lines))
+            candidates.extend(lines)
+
+        logger.info("Rules: reduce - merge %d candidates into final list", len(candidates))
+        if not candidates:
+            return base_rules
+
+        candidate_text = "\n".join(f"- {c}" for c in candidates)
+        candidate_text = _truncate(candidate_text, max_chars=self._MERGE_BUDGET)
+
+        raw = self._rules_reduce(candidate_text, extra_context, is_reduce=True)
+        return self._merge_rules(base_rules, raw)
+
+    def _rules_reduce(self, content: str, extra_context: str, is_reduce: bool = False) -> str:
+        if is_reduce:
+            header = ("Below are candidate correctness rules extracted from "
+                      "multiple documents about the hardware target's programming model.")
+            content_label = "CANDIDATE RULES"
+            task = ("Merge, deduplicate, and curate these into a final list of critical "
+                    "correctness rules. Return AT MOST 3 rules per category -- pick the most critical ones only.")
+        else:
+            header = "Below is documentation about the hardware target's programming model."
+            content_label = "DOCUMENTATION"
+            task = ("Return AT MOST 3 rules per category -- pick the most critical ones only.")
+
+        prompt = f"""{header}
+
+=== {content_label} ===
 {content}
-=== END DOCUMENTATION ===
+=== END {content_label} ===
 
 {extra_context}
 
-{self._context_prefix}Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:
-- Programming model constraints (e.g., "the partition dimension is always 128", "free dimensions must be multiples of 512 for the Tensor Engine")
-- Memory layout rules (e.g., "tiles in scratchpad must not exceed X KB", "data must be contiguous along dimension Y")
-- Correctness constraints (e.g., "loop variables cannot be used for indexing in this context")
-- Known/common API usage pitfalls (e.g., "reduction output must be stored before reuse")
-Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, performance advice, or general best practices -- those belong in the optimization menu. Return AT MOST 3 rules per category — pick the most critical ones only.
+{self._context_prefix}{self._RULES_INSTRUCTION}
+{task}
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases
@@ -893,9 +967,11 @@ Return as a JSON object with keys "general", "planning", "coding", each mapping 
 
 Return ONLY a JSON object:"""
 
-        responses = self._chat_light(prompt=prompt, num_candidates=1, temperature=0)
-        raw = responses[0].strip() if responses else "{}"
+        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        return responses[0].strip() if responses else "{}"
 
+    @staticmethod
+    def _merge_rules(base_rules: dict[str, list[str]], raw: str) -> dict[str, list[str]]:
         try:
             json_match = re.search(r"\{[\s\S]*\}", raw)
             if json_match:
@@ -906,7 +982,6 @@ Return ONLY a JSON object:"""
                         logger.info("  Rules extracted (%s): %d new rules", key, len(extracted[key]))
         except json.JSONDecodeError:
             logger.warning("Failed to parse rules JSON, using defaults only")
-
         return base_rules
 
 
