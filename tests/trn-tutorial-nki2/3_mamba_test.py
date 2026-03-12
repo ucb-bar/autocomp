@@ -3,6 +3,7 @@ import nki.isa as nisa
 import nki.language as nl
 import numpy as np
 import math
+import torch
 
 # SUBSTITUTE HERE
 

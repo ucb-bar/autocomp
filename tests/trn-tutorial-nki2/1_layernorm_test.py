@@ -7,6 +7,7 @@ import math
 
 # SUBSTITUTE HERE
 
+@nki.jit
 def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
   # Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
   TILE_ROWS = 128

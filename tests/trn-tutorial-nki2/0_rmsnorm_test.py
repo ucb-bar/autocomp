@@ -9,6 +9,7 @@ import numpy as np
 # NKI_EXAMPLE_42_BEGIN
 import math
 
+import nki
 import nki.language as nl
 import nki.isa as nisa
 

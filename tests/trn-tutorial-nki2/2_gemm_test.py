@@ -84,8 +84,8 @@ def test_nki(ref_func, test_func):
 
 def benchmark_nki(nki_func):
     # Benchmarking with large matrices to show the differences more clearly
-    lhsT = nt.tensor[[8192, 4096], nl.bfloat16]
-    rhs = nt.tensor[[8192, 8192], nl.bfloat16]
+    lhsT = (np.random.randn(8192, 4096) * (1.0 / np.sqrt(4096))).astype(nl.bfloat16)
+    rhs = (np.random.randn(8192, 8192) * (1.0 / np.sqrt(8192))).astype(nl.bfloat16)
 
     bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
     bench_func(lhsT, rhs)

@@ -1,3 +1,4 @@
+@nki.jit
 def test(input_tensor, epsilon, gamma_vector, beta_vector):
 
   # Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
