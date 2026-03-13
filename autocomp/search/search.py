@@ -1,10 +1,11 @@
 import pathlib
 import random
 import json
+from pathlib import Path
 
 import wandb
 
-from autocomp.common import logger, SOLS_DIR
+from autocomp.common import logger, SOLS_DIR, REPO_ROOT
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
@@ -58,12 +59,25 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
-    elif agent_name == "built":
-        config_dir = hw_config._config_dir if hasattr(hw_config, '_config_dir') else f"autocomp/agent_builder/.built/{backend_name}"
+    elif agent_name.startswith("built/") or Path(agent_name).is_dir():
+        # "built/<name>" resolves to .built/<name>/; direct paths also accepted
+        _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
+        if agent_name.startswith("built/"):
+            built_name = agent_name[len("built/"):]
+            config_dir = _BUILT_DIR / built_name
+        else:
+            config_dir = Path(agent_name)
+        if not config_dir.is_dir():
+            available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
+            raise ValueError(
+                f"Built agent config not found at '{config_dir}'. "
+                f"Available: {available}"
+            )
+        logger.info("Using built agent from %s", config_dir)
         agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in models])
         code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in code_models]) if code_models else None
     else:
-        raise ValueError(f"Unknown agent name: {agent_name}")
+        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built/<name>', or a path to a built agent directory.")
     
     return eval_backend, agent, code_agent
 
@@ -679,7 +693,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda"
+    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "built/<name>", or a path to a built agent
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TrnHardwareConfig("trn1.2xlarge")

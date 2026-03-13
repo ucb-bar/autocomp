@@ -5,6 +5,7 @@ Writes synthesized components to human-editable config files in a directory
 that can be loaded by BuiltLLMAgent at runtime.
 """
 
+import datetime
 import yaml
 from pathlib import Path
 
@@ -20,6 +21,7 @@ class AgentAssembler:
         components: SynthesizedComponents,
         agent_name: str,
         output_dir: str | Path,
+        build_metadata: dict | None = None,
     ) -> Path:
         """
         Write all components to the output directory.
@@ -30,11 +32,14 @@ class AgentAssembler:
         out.mkdir(parents=True, exist_ok=True)
 
         # agent_config.yaml
-        config = {
+        config: dict = {
             "agent_name": agent_name,
             "version": "1.0",
-            "description": f"Auto-generated agent config for {agent_name}",
+            "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         }
+        if build_metadata:
+            config["build"] = build_metadata
+        config["description"] = f"Auto-generated agent config for {agent_name}"
         self._write_yaml(out / "agent_config.yaml", config)
 
         # architecture.md

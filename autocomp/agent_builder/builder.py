@@ -107,7 +107,13 @@ class AgentBuilder:
         # Stage 3: Assemble
         logger.info("AgentBuilder: Stage 3 -- assembling agent config")
         assembler = AgentAssembler()
-        config_dir = assembler.assemble(components, agent_name, output_dir)
+        build_metadata = {
+            "main_model": self._llm_client.model,
+            "light_model": (self._light_llm_client.model if self._light_llm_client else self._llm_client.model),
+            "description": self._description,
+            "sources": [{"type": st, **kw} for st, kw in self._ingestor._sources],
+        }
+        config_dir = assembler.assemble(components, agent_name, output_dir, build_metadata=build_metadata)
 
         logger.info(
             "AgentBuilder: build complete. Config at %s\n"
