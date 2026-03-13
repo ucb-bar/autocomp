@@ -170,7 +170,7 @@ Notable parameters:
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
 - `prob_id`: The problem ID to use.
-- `translate_iters`: Number of initial iterations that use translation strategies (converting code to the target representation) instead of optimization strategies. Defaults to `0` (no translation). Built agents load strategies from `translate_menu.yaml`; see [Agent Builder docs](autocomp/agent_builder/AGENT_BUILDER.md#translation-support).
+- `translate_iters`: Number of initial iterations that use translation strategies (converting code to the target representation) instead of optimization strategies. Defaults to `0` (no translation). Only works on supported agents. Built agents load strategies from `translate_menu.yaml`; see [Agent Builder docs](autocomp/agent_builder/AGENT_BUILDER.md#translation-support).
 - `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of the best score (e.g., `1.2` means up to 20% worse). Defaults to `1.2`.
 
 ## 📁 Repository Structure

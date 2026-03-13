@@ -149,9 +149,12 @@ For deeper changes to agent behavior (e.g., prompt structure, ISA selection logi
 
 ### Translation support
 
-Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics) during the first N iterations of a search run, before switching to optimization. To enable it:
+Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics). When `translate_iters > 0` in `search.py`, the first `translate_iters` iterations use a translation menu instead of the optimization menu, with a relaxed performance threshold (`translate_perf_threshold`, default 1.2×) for keeping candidates.
 
-1. Create a `translate_menu.yaml` in the built agent's config directory:
+To configure:
+
+1. Set `translate_iters` to a positive value in `search.py` (e.g., `translate_iters = 2`).
+2. Optionally create `translate_menu.yaml` in the agent's config directory:
 
 ```yaml
 strategies:
@@ -160,9 +163,7 @@ strategies:
   - "fuse multiple TargetISA kernels into a single kernel"
 ```
 
-2. Set `translate_iters` to a positive value in `search.py` (e.g., `translate_iters = 2` to translate for the first 2 iterations).
-
-The agent loads `translate_menu.yaml` at startup. When `translate_iters > 0`, the first N iterations use these strategies instead of the normal optimization menu. If the file is absent, the `translate` flag has no effect on menu selection.
+If `translate_menu.yaml` is absent, a generic default (`"convert high-level code to target kernel code"`) is used.
 
 ## Python API
 
