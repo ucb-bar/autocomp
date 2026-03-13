@@ -17,10 +17,6 @@ Welcome to the code repository of **Autocomp**. Recent updates:
 
 **(3/13/2026)** Added the **Agent Builder** for automatically creating hardware-specific LLM agents from documentation sources.
 
-**(1/22/2026)** Reorganized repo structure to make it easier to add a new hardware target.
-
-**(1/8/2026)** Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
-
 **📚 Paper**: [**Autocomp: A Powerful and Portable Code Optimizer for Tensor Accelerators**](https://arxiv.org/abs/2505.18574)
 
 **✏️ Authors**: [Charles Hong](https://charleshong3.github.io/), [Sahil Bhatia](https://x.com/sahilb17), [Alvin Cheung](https://people.eecs.berkeley.edu/~akcheung/), and [Yakun Sophia Shao](https://people.eecs.berkeley.edu/~ysshao/) (UC Berkeley)
@@ -206,6 +202,10 @@ Notable parameters:
 ```
 
 ## 📝 Changelog
+
+**(1/22/2026)** Reorganized repo structure to make it easier to add a new hardware target.
+
+**(1/8/2026)** Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
 
 **(11/18/2025)** Added documentation for adding a new hardware target ([ADDING_HARDWARE_SUPPORT.md](ADDING_HARDWARE_SUPPORT.md)), added the `examples` directory for example optimization traces, and published [📝 blog post 4](https://charleshong3.github.io/blog/autocomp_trainium_conv1d.html) about how we optimized conv1d on Trainium.
 

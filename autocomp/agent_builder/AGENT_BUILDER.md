@@ -107,7 +107,7 @@ A built agent produces the following files in `.built/<agent_name>/`:
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
-A reference example is available at `.built/trn-nki1/` (built with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.1/nki/index.html)).
+A reference example is available at `.built/trn-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.1/nki/index.html)).
 
 ## How It Works
 
@@ -117,12 +117,34 @@ The synthesizer first **routes** each document into component buckets (`isa`, `a
 
 Each component is then synthesized using a **map-reduce** pattern: documents are processed in parallel (map), then the results are merged and deduplicated (reduce). Documents larger than the context budget are automatically split on paragraph boundaries, so the pipeline scales to arbitrarily large documentation sets.
 
+### ISA filtering
+
+Built agents can have large ISA docs. At runtime, the agent selects only the relevant sections for the current problem using a two-level LLM filter:
+
+1. **Level 1:** Selects relevant `##` sections based on the problem and code context.
+2. **Level 2** (`fine_grained_isa=True`): Within large selected sections, further filters individual `###` entries to keep only those relevant to the task.
+
+Both levels are cached per-problem so the filtering cost is paid once.
+
 ### Optimization menu
 
 The optimization menu is the list of strategies the agent considers when planning. It has two layers:
 
 - **Static (build time):** Generic defaults (loop tiling, reduce data movement, etc.) plus hardware-specific strategies extracted from your docs. You can edit `optimization_menu.yaml` after building.
 - **Dynamic (runtime):** When `menu_strategy="one-shot"`, the agent generates workload-specific strategies by analyzing the current code candidate. These are cached and appended to the static menu, so the agent adapts to the specific problem.
+
+## Customizing a Built Agent
+
+All output files are plain YAML or Markdown, so you can customize a built agent without writing any code:
+
+- Edit `optimization_menu.yaml` to add domain-specific strategies or remove irrelevant ones.
+- Edit `rules.yaml` to add constraints you've discovered through experimentation.
+- Edit `isa_docs.md` to add missing API entries or remove noisy ones.
+- Use `--rerun <component>` to re-synthesize a single component from updated sources.
+
+You can also copy an existing built agent directory, modify the files, and use it as a new agent (`agent_name = "built:my_custom_agent"`).
+
+For deeper changes to agent behavior (e.g., prompt structure, ISA selection logic, or how the optimization menu is used during planning), subclass `BuiltLLMAgent` and add a new `elif` branch in `create_backend_and_agents()` in `search.py` to wire it up.
 
 ## Python API
 
