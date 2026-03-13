@@ -68,9 +68,9 @@ class TrnLLMAgent(LLMAgent):
             "use the streaming softmax with running max and scaling trick",
             "optimize accumulation patterns in PSUM",
             "optimize reduction by fusing tile-wise reductions with transformation passes",
-            "Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.",
+            "Combine adjacent tiles into contiguous blocks before nisa.dma_copy() to maximize memory throughput.",
             "Scan carry-over to parallelize the scan operation",
-            "Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
+            "Hoist nisa.dma_copy() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.",
             "Kernel Fusion via SBUF residency",
             "Add a small fixed-size inner loop as a compiler hint",
             "Modify one particular parameter",
@@ -96,7 +96,7 @@ class TrnLLMAgent(LLMAgent):
                  "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
                  "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
                  "Maintain correct tensor shapes and indexing patterns. Remember not to index with affine_range loop variables. Avoid loop carried dependencies.",
-                 "The following imports have already been run: import nki as nki; import nki.isa as nisa; import nki.language as nl; import numpy as np;",
+                 "The following imports have already been run: import nki; import nki.isa as nisa; import nki.language as nl; import numpy as np;",
                 ])
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
