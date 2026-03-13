@@ -111,7 +111,7 @@ Eval backends generally need to clean LLM-generated code. There is some simple e
 
 ## Step 3: Create an LLM Agent Class
 
-> **Tip:** The [Agent Builder](autocomp/agent_builder/AGENT_BUILDER.md) can automatically generate an agent from your hardware's documentation, code examples, and API references. This is the recommended starting point -- you can then customize the generated config files if needed. The manual approach below is useful when you want to introduce new, unsupported agent functionality and need full control over prompt structure.
+> **Tip:** The [Agent Builder](autocomp/agent_builder/README.md) can automatically generate an agent from your hardware's documentation, code examples, and API references. This is the recommended starting point -- you can then customize the generated config files if needed. The manual approach below is useful when you want to introduce new, unsupported agent functionality and need full control over prompt structure.
 
 Create a new directory `autocomp/agents/{backend_name}/` with a file `{backend_name}_agent.py` that contains a class inheriting from `LLMAgent` (defined in `autocomp/agents/llm_agent.py`).
 
