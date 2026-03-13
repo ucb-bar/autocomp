@@ -19,7 +19,6 @@ class AgentBuilder:
         builder.add_source("directory", path="/path/to/hw-sdk/docs")
         builder.add_source("pdf", path="/path/to/architecture-manual.pdf")
         builder.add_source("webpage", url="https://docs.example.com/isa-reference")
-        builder.add_source("github", url="https://github.com/org/hw-examples")
 
         config_dir = builder.build(
             agent_name="my_accelerator",
@@ -73,7 +72,7 @@ class AgentBuilder:
         Add a knowledge source to ingest.
 
         Args:
-            source_type: One of "directory", "github", "pdf", "webpage", "confluence"
+            source_type: One of "directory", "file", "webpage"
             **kwargs: Source-specific arguments (path, url, email, api_token, etc.)
         """
         self._ingestor.add_source(source_type, **kwargs)

@@ -124,6 +124,30 @@ class DirectoryLoader(SourceLoader):
         )
 
 
+class FileLoader(SourceLoader):
+    """Loads a single file: delegates PDFs to PDFLoader, reads text files directly."""
+
+    def load(self, *, path: str, **kwargs) -> SourceIndex:
+        file_path = Path(path).expanduser().resolve()
+        if not file_path.is_file():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        if file_path.suffix.lower() == ".pdf":
+            return PDFLoader().load(path=str(file_path))
+
+        if not _is_text_file(file_path):
+            raise ValueError(f"File does not appear to be text: {file_path}")
+
+        logger.info("FileLoader: reading %s", file_path)
+        text = file_path.read_text(errors="replace")
+        return SourceIndex(
+            source_type="file",
+            source_id=str(file_path),
+            structural_metadata=f"File: {file_path.name} ({len(text)} chars)",
+            content={file_path.name: text},
+        )
+
+
 class PDFLoader(SourceLoader):
     """Extracts text from PDFs, preserving page numbers and TOC structure."""
 
@@ -301,7 +325,7 @@ class WebpageLoader(SourceLoader):
 
 _LOADER_REGISTRY: dict[str, type[SourceLoader]] = {
     "directory": DirectoryLoader,
-    "pdf": PDFLoader,
+    "file": FileLoader,
     "webpage": WebpageLoader,
 }
 

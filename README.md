@@ -15,6 +15,8 @@ AI-Driven Code Optimizer for Tensor Accelerators
 
 Welcome to the code repository of **Autocomp**. Recent updates:
 
+**(3/13/2026)** Added the **Agent Builder** for automatically creating hardware-specific LLM agents from documentation sources.
+
 **(1/22/2026)** Reorganized repo structure to make it easier to add a new hardware target.
 
 **(1/8/2026)** Check out our latest [📝 blog post](https://charleshong3.github.io/blog/autocomp_trainium_attention.html) on optimizing attention on Trainium!
@@ -131,13 +133,28 @@ models = [
 
 By default the `us-west-2` region is used. Set the `AWS_REGION` environment variable (or add it to `keys.py`) to override.
 
+## 🏗️ Agent Builder
+
+The Agent Builder automatically creates hardware-specific LLM agents from documentation sources (local directories, PDFs, and webpages). It uses a three-stage pipeline (ingest, synthesize, assemble) to produce human-editable config files that define a fully functional Autocomp agent.
+
+```bash
+pip install "autocomp[agent-builder]"
+
+python -m autocomp.agent_builder.run_agent_builder \
+    --agent-name my_accelerator \
+    --source-dir path/to/docs \
+    --description "Optimizing kernels for MyAccelerator using the XYZ programming interface."
+```
+
+For detailed usage, CLI options, Python API, and output format, see [Agent Builder documentation](autocomp/agent_builder/AGENT_BUILDER.md).
+
 ## 🚀 Usage
 
 `autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as hardware target, models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
 Notable parameters:
 - `backend_name`: The hardware target to use. Currently supported values are `gemmini`, `trn`, `kernelbench`, and `gpumode`.
-- `agent_name`: The LLM agent type to use. Defaults based on `backend_name`. Currently supported agents are `gemmini`, `trn`, and `cuda` (used for both `kernelbench` and `gpumode`).
+- `agent_name`: The LLM agent type to use. Defaults based on `backend_name`. Currently supported agents are `gemmini`, `trn`, and `cuda` (used for both `kernelbench` and `gpumode`). Use `"built:<name>"` for agents created with the Agent Builder (e.g., `"built:my_accelerator"`).
 - `hw_config`: A hardware configuration object describing the target hardware. Examples:
   - `TrnHardwareConfig("trn1.2xlarge")`
   - `GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)`
@@ -163,6 +180,7 @@ Notable parameters:
 **`autocomp/`** - Core Autocomp code.
 - `search/` - Search algorithm (`search.py`) and optimization infrastructure.
 - `agents/` - LLM agents for planning and code generation. Each hardware target has its own subdirectory (e.g., `gemmini/`, `trn/`, `cuda/`) with agent code and prompts.
+- `agent_builder/` - Agent Builder pipeline for creating new hardware-specific agents from documentation sources. See [Agent Builder](#-agent-builder) for details.
 - `backend/` - Eval backends for code evaluation. Each eval backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `kernelbench/`, `gpumode/`) with evaluation code and setup instructions. One hardware target can have multiple eval backends.
 - `hw_config/` - Hardware configuration classes. Each hardware target has a config file (e.g., `cuda_config.py`, `gemmini_config.py`, `trn_config.py`).
 - `common/` - Shared utilities (LLM interface, logging, etc.).

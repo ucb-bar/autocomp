@@ -59,11 +59,11 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
-    elif agent_name.startswith("built/") or Path(agent_name).is_dir():
-        # "built/<name>" resolves to .built/<name>/; direct paths also accepted
+    elif agent_name.startswith("built:") or Path(agent_name).is_dir():
+        # "built:<name>" resolves to .built/<name>/; direct paths also accepted
         _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
-        if agent_name.startswith("built/"):
-            built_name = agent_name[len("built/"):]
+        if agent_name.startswith("built:"):
+            built_name = agent_name[len("built:"):]
             config_dir = _BUILT_DIR / built_name
         else:
             config_dir = Path(agent_name)
@@ -77,7 +77,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in models])
         code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in code_models]) if code_models else None
     else:
-        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built/<name>', or a path to a built agent directory.")
+        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
     return eval_backend, agent, code_agent
 
@@ -693,7 +693,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "built/<name>", or a path to a built agent
+    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TrnHardwareConfig("trn1.2xlarge")
@@ -769,7 +769,8 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{agent_name.replace('/', '-')}"
+    clean_agent_name = pathlib.Path(agent_name).name if "/" in agent_name else agent_name
+    output_str = f"{clean_agent_name}"
     output_str += f"_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"

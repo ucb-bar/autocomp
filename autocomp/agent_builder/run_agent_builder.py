@@ -41,15 +41,18 @@ def build_agent(agent_name: str, output_dir: str,
                 llm_model: str, light_llm_model: str | None = None,
                 description: str = "",
                 source_dir: str | None = None,
+                source_files: list[str] | None = None,
                 source_urls: list[str] | None = None,
                 max_depth: int = 2, max_pages: int = 50,
                 context_budget: int = 150_000) -> Path:
-    """Run the AgentBuilder pipeline on directory and/or URL sources."""
+    """Run the AgentBuilder pipeline on directory, file, and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
     builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
                            description=description, context_budget=context_budget)
     if source_dir:
         builder.add_source("directory", path=source_dir)
+    for f in (source_files or []):
+        builder.add_source("file", path=f)
     for url in (source_urls or []):
         builder.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     config_dir = builder.build(agent_name=agent_name, output_dir=output_dir)
@@ -64,6 +67,7 @@ def rerun_component(component: str, config_dir: Path,
                     model: str, light_model: str | None = None,
                     description: str = "",
                     source_dir: str | None = None,
+                    source_files: list[str] | None = None,
                     source_urls: list[str] | None = None,
                     max_depth: int = 2, max_pages: int = 50,
                     context_budget: int = 150_000):
@@ -106,6 +110,8 @@ def rerun_component(component: str, config_dir: Path,
     ingestor = KnowledgeIngestor()
     if source_dir:
         ingestor.add_source("directory", path=source_dir)
+    for f in (source_files or []):
+        ingestor.add_source("file", path=f)
     for url in (source_urls or []):
         ingestor.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     indices = ingestor.ingest()
@@ -164,7 +170,8 @@ def rerun_component(component: str, config_dir: Path,
 # Dry-run: validate ingestion without LLM calls
 # ------------------------------------------------------------------
 
-def dry_run(source_dir: str | None = None, source_urls: list[str] | None = None,
+def dry_run(source_dir: str | None = None, source_files: list[str] | None = None,
+            source_urls: list[str] | None = None,
             max_depth: int = 2, max_pages: int = 50):
     """Ingest sources and report statistics."""
     from autocomp.agent_builder.ingestor import KnowledgeIngestor
@@ -175,6 +182,8 @@ def dry_run(source_dir: str | None = None, source_urls: list[str] | None = None,
     ingestor = KnowledgeIngestor()
     if source_dir:
         ingestor.add_source("directory", path=source_dir)
+    for f in (source_files or []):
+        ingestor.add_source("file", path=f)
     for url in (source_urls or []):
         ingestor.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     indices = ingestor.ingest()
@@ -363,6 +372,8 @@ def main():
     )
     parser.add_argument("--source-dir", default=None,
                         help="Path to source directory to ingest")
+    parser.add_argument("--source-file", action="append", default=None, dest="source_files",
+                        help="Path to a single file to ingest (PDF or text; can be repeated)")
     parser.add_argument("--source-url", action="append", default=None, dest="source_urls",
                         help="URL to ingest (can be repeated)")
     parser.add_argument("--max-depth", type=int, default=2,
@@ -395,9 +406,10 @@ def main():
     args = parser.parse_args()
 
     if args.dry_run:
-        if not args.source_dir and not args.source_urls:
-            parser.error("--dry-run requires at least one of --source-dir or --source-url")
-        dry_run(source_dir=args.source_dir, source_urls=args.source_urls,
+        if not args.source_dir and not args.source_files and not args.source_urls:
+            parser.error("--dry-run requires at least one of --source-dir, --source-file, or --source-url")
+        dry_run(source_dir=args.source_dir, source_files=args.source_files,
+                source_urls=args.source_urls,
                 max_depth=args.max_depth, max_pages=args.max_pages)
         return
 
@@ -414,6 +426,7 @@ def main():
             light_model=args.light_model,
             description=args.description,
             source_dir=args.source_dir,
+            source_files=args.source_files,
             source_urls=args.source_urls,
             max_depth=args.max_depth,
             max_pages=args.max_pages,
@@ -428,13 +441,15 @@ def main():
         inspect_built_agent(config_dir)
         return
 
-    if not args.source_dir and not args.source_urls:
-        parser.error("At least one of --source-dir or --source-url is required for building")
+    if not args.source_dir and not args.source_files and not args.source_urls:
+        parser.error("At least one of --source-dir, --source-file, or --source-url is required for building")
 
     output_dir = str(Path(args.output_dir) / args.agent_name)
     print(f"Building {args.agent_name} agent...")
     if args.source_dir:
         print(f"  Source dir: {args.source_dir}")
+    for f in (args.source_files or []):
+        print(f"  Source file: {f}")
     for url in (args.source_urls or []):
         print(f"  Source URL: {url}")
     print(f"  Output: {output_dir}")
@@ -449,6 +464,7 @@ def main():
         light_llm_model=args.light_model,
         description=args.description,
         source_dir=args.source_dir,
+        source_files=args.source_files,
         source_urls=args.source_urls,
         max_depth=args.max_depth,
         max_pages=args.max_pages,
