@@ -214,7 +214,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
             out_name = f"compile_{label}_output.txt"
             try:
                 p = subprocess.run(cmd, capture_output=True, text=True,
-                                   timeout=600)
+                                   timeout=240)
                 with open(temp_dir / out_name, "w") as f:
                     f.write(f"=== STDOUT ===\n{p.stdout}\n"
                             f"=== STDERR ===\n{p.stderr}")

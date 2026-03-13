@@ -33,7 +33,7 @@ class BuiltLLMAgent(LLMAgent):
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
-        self.menu_strategy = menu_strategy # choose from: [static, one-shot, progressive]
+        self.menu_strategy = menu_strategy # choose from: [static, one-shot]
         self.fine_grained_isa = fine_grained_isa
 
         # Load all config files
@@ -445,9 +445,6 @@ class BuiltLLMAgent(LLMAgent):
             prompt_text += "Identify optimization opportunities specific to this software workload that are NOT already listed above. "
             prompt_text += "Identify about 10 new optimization strategies that could improve this kernel's performance. The optimization strategies should be high-level and able to be expressed in a few words."
             prompt_text += "Return ONLY the list of optimization strategies as a Python list of strings. Do NOT include explanations, numbering, bullet points, headers, or any other text.\n"
-        elif self.menu_strategy == "progressive":
-            #TODO
-            pass
 
         return prompt_text
 

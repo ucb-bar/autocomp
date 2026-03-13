@@ -709,13 +709,13 @@ def main():
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 10
+    iterations = 8
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 4
+    prob_id = 1
 
     # Reimplement failed candidates
-    # Only works for trn
-    reimplement_failed = True
+    # Only works for agents for which it is implemented (trn, built agents)
+    reimplement_failed = False
 
     # Early stopping parameters
     early_stop_iters = 0       # 0 = disabled; stop after N iters without improvement
@@ -724,16 +724,16 @@ def main():
     # Beam search parameters
     num_plan_candidates=6
     num_code_candidates=2
-    beam_size=6
+    beam_size=3
 
     # Translation parameters
     translate_iters = 0
     translate_perf_threshold = 1.2
 
     # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
-    # Options: "static", "one-shot", "progressive"
+    # Options: "static", "one-shot"
     menu_strategy = "one-shot"
-    built_menu_strategy_enum = {"static": 0, "one-shot": 1, "progressive": 2}
+    built_menu_strategy_enum = {"static": 0, "one-shot": 1}
 
     # Fine-grained ISA filtering for BuiltLLMAgent (2-level: ## sections then ### subsections)
     fine_grained_isa = True
@@ -769,7 +769,8 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{agent_name}_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
+    output_str = f"{agent_name.replace('/', '-')}"
+    output_str += f"_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"
     # Sanitize hw description for filesystem
