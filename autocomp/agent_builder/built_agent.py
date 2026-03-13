@@ -4,11 +4,10 @@ produced by the AgentBuilder.
 """
 
 import random
-import re
 import yaml
 from pathlib import Path
 
-from autocomp.common import logger, LLMClient
+from autocomp.common import logger
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate

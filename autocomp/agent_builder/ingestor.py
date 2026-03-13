@@ -2,15 +2,11 @@
 Knowledge ingestion system for the Agent Builder.
 
 Provides a pluggable loader system that normalizes diverse knowledge sources
-(directories, GitHub repos, PDFs, webpages, Confluence pages) into a lightweight
-index (structural metadata) plus raw content for on-demand reading.
+(directories, PDFs, webpages) into a lightweight index (structural metadata)
+plus raw content for on-demand reading.
 """
 
-import os
 import re
-import shutil
-import tempfile
-import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,21 +33,6 @@ class SourceLoader(ABC):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Text file extensions we consider readable
-# ---------------------------------------------------------------------------
-_TEXT_EXTENSIONS = {
-    ".py", ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
-    ".java", ".js", ".ts", ".jsx", ".tsx",
-    ".rs", ".go", ".rb", ".pl", ".sh", ".bash",
-    ".md", ".rst", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini",
-    ".html", ".htm", ".xml", ".csv",
-    ".r", ".R", ".m", ".f", ".f90",
-    ".cu", ".cuh", ".cl",  # CUDA, OpenCL
-    ".nki",  # NKI
-    ".makefile", ".cmake",
-}
-
 _BINARY_SKIP_DIRS = {
     ".git", "__pycache__", "node_modules", ".tox", ".eggs",
     "build", "dist", ".mypy_cache", ".pytest_cache",
@@ -61,17 +42,19 @@ _MAX_FILE_SIZE = 512 * 1024  # 512 KB per file
 
 
 def _is_text_file(path: Path) -> bool:
-    if path.suffix.lower() in _TEXT_EXTENSIONS:
-        return True
-    if path.suffix == "" and path.name in ("Makefile", "Dockerfile", "LICENSE", "README"):
-        return True
-    return False
+    """Content-based text detection: reject files containing null bytes (same heuristic as git)."""
+    try:
+        chunk = path.read_bytes()[:8192]
+        return b'\x00' not in chunk
+    except OSError:
+        return False
 
 
-def _build_file_tree(root: Path, max_depth: int = 6) -> tuple[str, dict[str, str]]:
-    """Walk a directory and return (tree_string, content_dict)."""
+def _build_file_tree(root: Path, max_depth: int = 6) -> tuple[str, dict[str, str], list[Path]]:
+    """Walk a directory and return (tree_string, content_dict, pdf_paths)."""
     tree_lines: list[str] = []
     content: dict[str, str] = {}
+    pdfs: list[Path] = []
 
     def _walk(directory: Path, prefix: str, depth: int):
         if depth > max_depth:
@@ -82,25 +65,30 @@ def _build_file_tree(root: Path, max_depth: int = 6) -> tuple[str, dict[str, str
             return
 
         dirs = [e for e in entries if e.is_dir() and e.name not in _BINARY_SKIP_DIRS]
-        files = [e for e in entries if e.is_file() and _is_text_file(e)]
+        files = [e for e in entries if e.is_file()]
 
         for d in dirs:
             tree_lines.append(f"{prefix}{d.name}/")
             _walk(d, prefix + "  ", depth + 1)
 
         for f in files:
-            size = f.stat().st_size
-            tree_lines.append(f"{prefix}{f.name} ({size} bytes)")
-            if size <= _MAX_FILE_SIZE:
-                rel = str(f.relative_to(root))
-                try:
-                    content[rel] = f.read_text(errors="replace")
-                except Exception:
-                    pass
+            if f.suffix.lower() == ".pdf":
+                size = f.stat().st_size
+                tree_lines.append(f"{prefix}{f.name} ({size} bytes) [PDF]")
+                pdfs.append(f)
+            elif _is_text_file(f):
+                size = f.stat().st_size
+                tree_lines.append(f"{prefix}{f.name} ({size} bytes)")
+                if size <= _MAX_FILE_SIZE:
+                    rel = str(f.relative_to(root))
+                    try:
+                        content[rel] = f.read_text(errors="replace")
+                    except Exception:
+                        pass
 
     _walk(root, "", 0)
     tree_str = "\n".join(tree_lines)
-    return tree_str, content
+    return tree_str, content, pdfs
 
 
 class DirectoryLoader(SourceLoader):
@@ -112,38 +100,28 @@ class DirectoryLoader(SourceLoader):
             raise FileNotFoundError(f"Directory not found: {root}")
 
         logger.info("DirectoryLoader: indexing %s", root)
-        tree_str, content = _build_file_tree(root)
+        tree_str, content, pdfs = _build_file_tree(root)
+
+        if pdfs:
+            pdf_loader = PDFLoader()
+            for pdf_path in pdfs:
+                try:
+                    pdf_index = pdf_loader.load(path=str(pdf_path))
+                    rel = str(pdf_path.relative_to(root))
+                    for key, text in pdf_index.content.items():
+                        content[f"{rel}:{key}"] = text
+                    logger.info("DirectoryLoader: extracted %d pages from %s",
+                                len(pdf_index.content), pdf_path.name)
+                except Exception as e:
+                    logger.warning("DirectoryLoader: failed to read PDF %s: %s",
+                                   pdf_path.name, e)
+
         return SourceIndex(
             source_type="directory",
             source_id=str(root),
             structural_metadata=f"Directory: {root}\n\n{tree_str}",
             content=content,
         )
-
-
-class GitHubRepoLoader(SourceLoader):
-    """Shallow-clones a GitHub repo then delegates to DirectoryLoader."""
-
-    def load(self, *, url: str, branch: str = None, **kwargs) -> SourceIndex:
-        logger.info("GitHubRepoLoader: cloning %s", url)
-        tmp_dir = tempfile.mkdtemp(prefix="autocomp_gh_")
-        try:
-            cmd = ["git", "clone", "--depth", "1"]
-            if branch:
-                cmd += ["--branch", branch]
-            cmd += [url, tmp_dir]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-
-            loader = DirectoryLoader()
-            index = loader.load(path=tmp_dir)
-            index.source_type = "github"
-            index.source_id = url
-            index.structural_metadata = index.structural_metadata.replace(
-                f"Directory: {tmp_dir}", f"GitHub repo: {url}"
-            )
-            return index
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 class PDFLoader(SourceLoader):
@@ -160,30 +138,26 @@ class PDFLoader(SourceLoader):
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
         logger.info("PDFLoader: reading %s", pdf_path)
-        doc = pymupdf.open(str(pdf_path))
+        with pymupdf.open(str(pdf_path)) as doc:
+            # Try to extract TOC
+            toc = doc.get_toc()
+            toc_lines = []
+            if toc:
+                for level, title, page_num in toc:
+                    indent = "  " * (level - 1)
+                    toc_lines.append(f"{indent}{title} (p.{page_num})")
 
-        # Try to extract TOC
-        toc = doc.get_toc()
-        toc_lines = []
-        if toc:
-            for level, title, page_num in toc:
-                indent = "  " * (level - 1)
-                toc_lines.append(f"{indent}{title} (p.{page_num})")
-
-        # Extract text per page
-        content: dict[str, str] = {}
-        page_summaries: list[str] = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text = page.get_text()
-            if text.strip():
-                key = f"page_{page_num + 1}"
-                content[key] = text
-                # Extract first non-empty line as a summary hint
-                first_line = text.strip().split("\n")[0][:100]
-                page_summaries.append(f"  Page {page_num + 1}: {first_line}")
-
-        doc.close()
+            # Extract text per page
+            content: dict[str, str] = {}
+            page_summaries: list[str] = []
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text()
+                if text.strip():
+                    key = f"page_{page_num + 1}"
+                    content[key] = text
+                    first_line = text.strip().split("\n")[0][:100]
+                    page_summaries.append(f"  Page {page_num + 1}: {first_line}")
 
         metadata_parts = [f"PDF: {pdf_path.name} ({len(content)} pages with text)"]
         if toc_lines:
@@ -321,133 +295,14 @@ class WebpageLoader(SourceLoader):
         )
 
 
-class ConfluenceLoader(SourceLoader):
-    """
-    Loads Confluence Cloud pages via REST API v2.
-
-    Index phase: recursively fetches page tree (titles only, no body).
-    Content phase: fetches full page body on demand when content is accessed.
-    """
-
-    def load(self, *, base_url: str, page_id: str = None, space_id: str = None,
-             email: str = None, api_token: str = None, max_pages: int = 200, **kwargs) -> SourceIndex:
-        try:
-            import requests
-            from bs4 import BeautifulSoup
-        except ImportError:
-            raise ImportError("requests and beautifulsoup4 are required: pip install requests beautifulsoup4")
-
-        if not email or not api_token:
-            raise ValueError("ConfluenceLoader requires email and api_token")
-        if not page_id and not space_id:
-            raise ValueError("ConfluenceLoader requires either page_id or space_id")
-
-        logger.info("ConfluenceLoader: indexing %s (page_id=%s, space_id=%s)", base_url, page_id, space_id)
-        auth = (email, api_token)
-        api_base = f"{base_url.rstrip('/')}/wiki/api/v2"
-
-        # Collect page tree: (id, title, parent_id, depth)
-        pages: list[dict] = []
-
-        def _fetch_children(parent_id: str, depth: int):
-            if len(pages) >= max_pages:
-                return
-            url = f"{api_base}/pages/{parent_id}/children"
-            cursor = None
-            while len(pages) < max_pages:
-                params = {"limit": 50}
-                if cursor:
-                    params["cursor"] = cursor
-                resp = requests.get(url, auth=auth, params=params, timeout=15)
-                resp.raise_for_status()
-                data = resp.json()
-                for child in data.get("results", []):
-                    pages.append({
-                        "id": child["id"],
-                        "title": child.get("title", "Untitled"),
-                        "parent_id": parent_id,
-                        "depth": depth,
-                    })
-                    _fetch_children(child["id"], depth + 1)
-                # Pagination
-                links = data.get("_links", {})
-                if "next" in links:
-                    cursor = links["next"].split("cursor=")[-1] if "cursor=" in links["next"] else None
-                    if not cursor:
-                        break
-                else:
-                    break
-
-        if page_id:
-            # Fetch the root page info
-            resp = requests.get(f"{api_base}/pages/{page_id}", auth=auth, timeout=15)
-            resp.raise_for_status()
-            root = resp.json()
-            pages.append({
-                "id": root["id"],
-                "title": root.get("title", "Untitled"),
-                "parent_id": None,
-                "depth": 0,
-            })
-            _fetch_children(page_id, 1)
-        elif space_id:
-            url = f"{api_base}/spaces/{space_id}/pages"
-            params = {"limit": 50, "depth": "root"}
-            resp = requests.get(url, auth=auth, params=params, timeout=15)
-            resp.raise_for_status()
-            for p in resp.json().get("results", []):
-                pages.append({
-                    "id": p["id"],
-                    "title": p.get("title", "Untitled"),
-                    "parent_id": None,
-                    "depth": 0,
-                })
-                _fetch_children(p["id"], 1)
-
-        # Build structural metadata (page tree)
-        tree_lines = [f"Confluence: {base_url} ({len(pages)} pages)"]
-        for p in pages:
-            indent = "  " * p["depth"]
-            tree_lines.append(f"  {indent}{p['title']} [id:{p['id']}]")
-
-        # Build a lazy content store -- fetch bodies on demand
-        # For simplicity in the two-pass pipeline, we pre-fetch all content now
-        # since the synthesizer will select what to read via Pass 1
-        content: dict[str, str] = {}
-        for p in pages:
-            try:
-                resp = requests.get(
-                    f"{api_base}/pages/{p['id']}",
-                    auth=auth, params={"body-format": "storage"}, timeout=15,
-                )
-                resp.raise_for_status()
-                body = resp.json().get("body", {}).get("storage", {}).get("value", "")
-                if body:
-                    soup = BeautifulSoup(body, "html.parser")
-                    text = soup.get_text(separator="\n", strip=True)
-                    if text:
-                        content[f"page:{p['id']}:{p['title']}"] = text
-            except Exception as e:
-                logger.warning("ConfluenceLoader: failed to fetch page %s: %s", p["id"], e)
-
-        return SourceIndex(
-            source_type="confluence",
-            source_id=f"{base_url}/page/{page_id or space_id}",
-            structural_metadata="\n".join(tree_lines),
-            content=content,
-        )
-
-
 # ---------------------------------------------------------------------------
 # KnowledgeIngestor: registry + orchestration
 # ---------------------------------------------------------------------------
 
 _LOADER_REGISTRY: dict[str, type[SourceLoader]] = {
     "directory": DirectoryLoader,
-    "github": GitHubRepoLoader,
     "pdf": PDFLoader,
     "webpage": WebpageLoader,
-    "confluence": ConfluenceLoader,
 }
 
 

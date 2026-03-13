@@ -42,11 +42,12 @@ def build_agent(agent_name: str, output_dir: str,
                 description: str = "",
                 source_dir: str | None = None,
                 source_urls: list[str] | None = None,
-                max_depth: int = 2, max_pages: int = 50) -> Path:
+                max_depth: int = 2, max_pages: int = 50,
+                context_budget: int = 150_000) -> Path:
     """Run the AgentBuilder pipeline on directory and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
     builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
-                           description=description)
+                           description=description, context_budget=context_budget)
     if source_dir:
         builder.add_source("directory", path=source_dir)
     for url in (source_urls or []):
@@ -64,7 +65,8 @@ def rerun_component(component: str, config_dir: Path,
                     description: str = "",
                     source_dir: str | None = None,
                     source_urls: list[str] | None = None,
-                    max_depth: int = 2, max_pages: int = 50):
+                    max_depth: int = 2, max_pages: int = 50,
+                    context_budget: int = 150_000):
     """
     Re-ingest the source, re-route, and re-synthesize a single component,
     then overwrite just that file in the existing config dir.
@@ -97,7 +99,8 @@ def rerun_component(component: str, config_dir: Path,
             lp, lm = None, light_model
         light_llm = LLMClient(lm, lp)
 
-    synth = ComponentSynthesizer(llm, light_llm, description=description)
+    synth = ComponentSynthesizer(llm, light_llm, description=description,
+                                 context_budget=context_budget)
 
     # Re-ingest and route
     ingestor = KnowledgeIngestor()
@@ -381,6 +384,8 @@ def main():
                         help="LLM model for synthesis")
     parser.add_argument("--light-model", default="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
                         help="Optional cheaper/faster model for high-token extraction tasks")
+    parser.add_argument("--context-budget", type=int, default=150_000,
+                        help="Max chars of content per LLM call (default: 150000)")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
     parser.add_argument("--rerun", metavar="COMPONENT",
@@ -412,6 +417,7 @@ def main():
             source_urls=args.source_urls,
             max_depth=args.max_depth,
             max_pages=args.max_pages,
+            context_budget=args.context_budget,
         )
         return
 
@@ -446,6 +452,7 @@ def main():
         source_urls=args.source_urls,
         max_depth=args.max_depth,
         max_pages=args.max_pages,
+        context_budget=args.context_budget,
     )
     inspect_built_agent(config_dir)
 

@@ -28,7 +28,7 @@ class AgentBuilder:
     """
 
     def __init__(self, llm_model: str, light_llm_model: str | None = None,
-                 description: str = ""):
+                 description: str = "", context_budget: int = 150_000):
         """
         Args:
             llm_model: Model identifier for synthesis LLM calls.
@@ -65,6 +65,7 @@ class AgentBuilder:
             self._light_llm_client = LLMClient(lm, lp)
 
         self._description = description
+        self._context_budget = context_budget
         self._ingestor = KnowledgeIngestor()
 
     def add_source(self, source_type: str, **kwargs):
@@ -101,6 +102,7 @@ class AgentBuilder:
         logger.info("AgentBuilder: Stage 2 -- synthesizing components")
         synthesizer = ComponentSynthesizer(
             self._llm_client, self._light_llm_client, description=self._description,
+            context_budget=self._context_budget,
         )
         components = synthesizer.synthesize(indices)
 

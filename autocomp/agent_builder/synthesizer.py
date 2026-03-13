@@ -64,17 +64,16 @@ class ComponentSynthesizer:
     for each component.
     """
 
-    # Single context budget: ~150K chars leaves generous room for prompt
-    # instructions within a 200K-token context window.  All per-document
-    # and merge truncation derives from this one number.
-    CONTEXT_BUDGET = 150_000
-    _MERGE_BUDGET = 80_000  # for reduce steps (merged map outputs are compressed)
+    # Default context budget: ~150K chars leaves generous room for prompt
+    # instructions within a 200K-token context window.
+    DEFAULT_CONTEXT_BUDGET = 150_000
 
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
-                 description: str = ""):
+                 description: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
         self.llm = llm_client
         self.light_llm = light_llm_client or llm_client
         self._context_prefix = f"Context: {description}\n\n" if description else ""
+        self.context_budget = context_budget
 
     def _chat(self, prompt: str, **kwargs) -> list[str]:
         results = self.llm.chat_async(
@@ -281,7 +280,7 @@ class ComponentSynthesizer:
             return "No architecture documentation found. Please add manually."
 
         total_chars = sum(len(t) for _, t in items)
-        if total_chars <= self.CONTEXT_BUDGET:
+        if total_chars <= self.context_budget:
             return self._arch_single_pass(items)
 
         return self._arch_map_reduce(items)
@@ -298,7 +297,7 @@ class ComponentSynthesizer:
     )
 
     def _arch_single_pass(self, items: list[tuple[str, str]]) -> str:
-        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
+        content = _items_to_text(items, max_chars=self.context_budget)
         prompt = (
             f"=== DOCUMENTATION ===\n{content}\n=== END DOCUMENTATION ===\n\n"
             f"{self._context_prefix}"
@@ -313,7 +312,7 @@ class ComponentSynthesizer:
         logger.info("Architecture: map - summarize each document individually in parallel")
         prompts: list[str] = []
         for key, text in items:
-            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
+            truncated = _truncate(text, max_chars=self.context_budget)
             prompts.append(
                 f"Source: {key}\n\n"
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
@@ -325,13 +324,10 @@ class ComponentSynthesizer:
                 f"Architecture-relevant notes:"
             )
 
-        all_responses = self._chat(
-            prompt=prompts, num_candidates=1, temperature=0,
-        ) if len(prompts) == 1 else [
+        all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts,
-                num_candidates=1, temperature=0,
+                prompts, num_candidates=1, temperature=0,
             )
         ]
 
@@ -340,7 +336,7 @@ class ComponentSynthesizer:
             f"--- {items[i][0]} ---\n{all_responses[i]}"
             for i in range(len(items)) if i < len(all_responses) and all_responses[i]
         )
-        summaries = _truncate(summaries, max_chars=self._MERGE_BUDGET)
+        summaries = _truncate(summaries, max_chars=self.context_budget)
 
         # Reduce: merge summaries into final architecture summary
         prompt = (
@@ -551,7 +547,7 @@ Return ONLY a JSON object:"""
         """Build a prompt that asks the LLM to identify entry boundaries, not rewrite content."""
         lines = text.split("\n")
         numbered = "\n".join(f"{i+1}: {line}" for i, line in enumerate(lines))
-        numbered = _truncate(numbered, max_chars=self.CONTEXT_BUDGET)
+        numbered = _truncate(numbered, max_chars=self.context_budget)
         return f"""Below is a numbered source file "{key}". Identify ALL API/instruction reference entries (functions, classes, methods, enums, instructions) that have proper documentation.
 
 === FILE (numbered lines) ===
@@ -633,7 +629,7 @@ JSON array:"""
         for key, text in candidates:
             basename = key.rsplit("/", 1)[-1] if "/" in key else key
             basenames.append(basename)
-            text_trunc = _truncate(text, max_chars=self.CONTEXT_BUDGET)
+            text_trunc = _truncate(text, max_chars=self.context_budget)
             prompts.append(
                 f"Source: {basename}\n\n"
                 f"=== FILE ===\n{text_trunc}\n=== END ===\n\n"
@@ -689,16 +685,16 @@ JSON array:"""
             return defaults
 
         total_chars = sum(len(t) for _, t in items)
-        if total_chars <= self.CONTEXT_BUDGET:
+        if total_chars <= self.context_budget:
             return self._opt_single_pass(items, defaults)
 
         return self._opt_map_reduce(items, defaults)
 
     def _opt_single_pass(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
         """Single-pass optimization menu when content fits in one call."""
-        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
+        content = _items_to_text(items, max_chars=self.context_budget)
         raw = self._opt_reduce(content, defaults)
-        return defaults + self._parse_opt_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
 
     def _opt_map_reduce(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
         """Map-reduce optimization menu for large content."""
@@ -707,7 +703,7 @@ JSON array:"""
         defaults_text = chr(10).join("- " + d for d in defaults)
         prompts: list[str] = []
         for key, text in items:
-            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
+            truncated = _truncate(text, max_chars=self.context_budget)
             prompts.append(
                 f"Source: {key}\n\n"
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
@@ -721,9 +717,7 @@ JSON array:"""
                 f"Optimization strategies:"
             )
 
-        all_responses = self._chat(
-            prompt=prompts, num_candidates=1, temperature=0,
-        ) if len(prompts) == 1 else [
+        all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
                 prompts, num_candidates=1, temperature=0,
@@ -735,7 +729,7 @@ JSON array:"""
         for i, resp in enumerate(all_responses):
             if not resp:
                 continue
-            lines = self._parse_opt_lines(resp)
+            lines = self._parse_bullet_lines(resp)
             if lines:
                 logger.info("  %s: %d strategies", items[i][0], len(lines))
             candidates.extend(lines)
@@ -746,11 +740,11 @@ JSON array:"""
             return defaults
 
         candidate_text = chr(10).join(f"- {c}" for c in candidates)
-        candidate_text = _truncate(candidate_text, max_chars=self._MERGE_BUDGET)
+        candidate_text = _truncate(candidate_text, max_chars=self.context_budget)
 
         # Reduce: merge, deduplicate, and curate
         raw = self._opt_reduce(candidate_text, defaults, is_reduce=True)
-        return defaults + self._parse_opt_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
 
     def _opt_reduce(self, content: str, defaults: list[str], is_reduce: bool = False) -> str:
         """Run the reduce/synthesis prompt for optimization menu."""
@@ -809,7 +803,7 @@ Performance optimization strategies:"""
         return responses[0].strip() if responses else ""
 
     @staticmethod
-    def _parse_opt_lines(raw: str) -> list[str]:
+    def _parse_bullet_lines(raw: str) -> list[str]:
         """Parse bullet-pointed optimization lines from LLM output."""
         results: list[str] = []
         for line in raw.split("\n"):
@@ -853,7 +847,7 @@ Performance optimization strategies:"""
         extra_context = self._rules_extra_context(architecture, isa_docs)
 
         total_chars = sum(len(t) for _, t in items)
-        if total_chars <= self.CONTEXT_BUDGET:
+        if total_chars <= self.context_budget:
             return self._rules_single_pass(items, base_rules, extra_context)
 
         return self._rules_map_reduce(items, base_rules, extra_context)
@@ -887,7 +881,7 @@ Performance optimization strategies:"""
 
     def _rules_single_pass(self, items: list[tuple[str, str]],
                            base_rules: dict[str, list[str]], extra_context: str) -> dict[str, list[str]]:
-        content = _items_to_text(items, max_chars=self.CONTEXT_BUDGET)
+        content = _items_to_text(items, max_chars=self.context_budget)
         raw = self._rules_reduce(content, extra_context, is_reduce=False)
         return self._merge_rules(base_rules, raw)
 
@@ -896,7 +890,7 @@ Performance optimization strategies:"""
         logger.info("Rules: map - extract rules from %d documents", len(items))
         prompts: list[str] = []
         for key, text in items:
-            truncated = _truncate(text, max_chars=self.CONTEXT_BUDGET)
+            truncated = _truncate(text, max_chars=self.context_budget)
             prompts.append(
                 f"Source: {key}\n\n"
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
@@ -907,9 +901,7 @@ Performance optimization strategies:"""
                 f"Rules:"
             )
 
-        all_responses = self._chat(
-            prompt=prompts, num_candidates=1, temperature=0,
-        ) if len(prompts) == 1 else [
+        all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
                 prompts, num_candidates=1, temperature=0,
@@ -920,7 +912,7 @@ Performance optimization strategies:"""
         for i, resp in enumerate(all_responses):
             if not resp:
                 continue
-            lines = self._parse_opt_lines(resp)
+            lines = self._parse_bullet_lines(resp)
             if lines:
                 logger.info("  %s: %d rules", items[i][0], len(lines))
             candidates.extend(lines)
@@ -930,7 +922,7 @@ Performance optimization strategies:"""
             return base_rules
 
         candidate_text = "\n".join(f"- {c}" for c in candidates)
-        candidate_text = _truncate(candidate_text, max_chars=self._MERGE_BUDGET)
+        candidate_text = _truncate(candidate_text, max_chars=self.context_budget)
 
         raw = self._rules_reduce(candidate_text, extra_context, is_reduce=True)
         return self._merge_rules(base_rules, raw)
@@ -972,17 +964,18 @@ Return ONLY a JSON object:"""
 
     @staticmethod
     def _merge_rules(base_rules: dict[str, list[str]], raw: str) -> dict[str, list[str]]:
+        merged = {k: list(v) for k, v in base_rules.items()}
         try:
             json_match = re.search(r"\{[\s\S]*\}", raw)
             if json_match:
                 extracted = json.loads(json_match.group())
                 for key in ("general", "planning", "coding"):
                     if key in extracted and isinstance(extracted[key], list):
-                        base_rules[key].extend(extracted[key])
+                        merged[key].extend(extracted[key])
                         logger.info("  Rules extracted (%s): %d new rules", key, len(extracted[key]))
         except json.JSONDecodeError:
             logger.warning("Failed to parse rules JSON, using defaults only")
-        return base_rules
+        return merged
 
 
 # ---------------------------------------------------------------------------
