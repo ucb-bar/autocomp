@@ -279,6 +279,7 @@ class ComponentSynthesizer:
         if not items:
             return "No architecture documentation found. Please add manually."
 
+        items = _chunk_items(items, self.context_budget)
         total_chars = sum(len(t) for _, t in items)
         if total_chars <= self.context_budget:
             return self._arch_single_pass(items)
@@ -684,6 +685,7 @@ JSON array:"""
             defaults.append("Other methods not listed here.")
             return defaults
 
+        items = _chunk_items(items, self.context_budget)
         total_chars = sum(len(t) for _, t in items)
         if total_chars <= self.context_budget:
             return self._opt_single_pass(items, defaults)
@@ -846,6 +848,7 @@ Performance optimization strategies:"""
 
         extra_context = self._rules_extra_context(architecture, isa_docs)
 
+        items = _chunk_items(items, self.context_budget)
         total_chars = sum(len(t) for _, t in items)
         if total_chars <= self.context_budget:
             return self._rules_single_pass(items, base_rules, extra_context)
@@ -1026,3 +1029,38 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n\n[... truncated ...]"
+
+
+def _chunk_items(items: list[tuple[str, str]], budget: int) -> list[tuple[str, str]]:
+    """Split items that exceed *budget* chars into smaller chunks.
+
+    Chunks are split on paragraph boundaries (double newline) when possible,
+    falling back to single newlines.  Each chunk is labelled
+    ``"<key> [part N/M]"`` so the LLM knows it is seeing a fragment.
+    """
+    result: list[tuple[str, str]] = []
+    for key, text in items:
+        if len(text) <= budget:
+            result.append((key, text))
+            continue
+
+        chunks: list[str] = []
+        remaining = text
+        while remaining:
+            if len(remaining) <= budget:
+                chunks.append(remaining)
+                break
+            # Try to split on a paragraph boundary
+            cut = remaining.rfind("\n\n", 0, budget)
+            if cut < budget // 2:
+                cut = remaining.rfind("\n", 0, budget)
+            if cut < budget // 2:
+                cut = budget
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip("\n")
+
+        total = len(chunks)
+        logger.info("Splitting '%s' (%d chars) into %d chunks", key, len(text), total)
+        for i, chunk in enumerate(chunks, 1):
+            result.append((f"{key} [part {i}/{total}]", chunk))
+    return result

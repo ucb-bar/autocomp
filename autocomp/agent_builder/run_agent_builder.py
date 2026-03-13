@@ -396,7 +396,8 @@ def main():
     parser.add_argument("--light-model", default="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
                         help="Optional cheaper/faster model for high-token extraction tasks")
     parser.add_argument("--context-budget", type=int, default=150_000,
-                        help="Max chars of content per LLM call (default: 150000)")
+                        help="Max characters (not tokens) of source content per LLM call "
+                             "(default: 150000; ~37-50K tokens depending on content)")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
     parser.add_argument("--rerun", metavar="COMPONENT",
