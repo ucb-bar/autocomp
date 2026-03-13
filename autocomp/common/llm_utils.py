@@ -673,6 +673,11 @@ class LLMClient():
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
+            self.client = anthropic.AnthropicBedrock(
+                aws_access_key=aws_access_key,
+                aws_secret_key=aws_secret_key,
+                aws_region=aws_region,
+            )
             self.async_client = anthropic.AsyncAnthropicBedrock(
                 aws_access_key=aws_access_key,
                 aws_secret_key=aws_secret_key,
@@ -903,7 +908,7 @@ class LLMClient():
             )
             for c in gemini_response.candidates:
                 responses.append(c.content.parts[0].text)
-        elif isinstance(self.client, anthropic.Anthropic) or isinstance(self.client, anthropic.AsyncAnthropicBedrock):
+        elif isinstance(self.client, (anthropic.Anthropic, anthropic.AnthropicBedrock)):
             for _ in range(num_candidates):
                 claude_response = self.client.messages.create(
                     model=self.model,

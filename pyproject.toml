@@ -20,6 +20,15 @@ dependencies = [
     "backoff",
     "mistralai[gcp]>=1.0.0",
     "together",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+agent-builder = [
+    "pymupdf",
+    "requests",
+    "beautifulsoup4",
+    "html2text",
 ]
 
 [project.urls]
@@ -30,4 +39,4 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["prompts", "autocomp"]
+include = ["autocomp", "autocomp.*"]
