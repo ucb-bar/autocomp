@@ -1,40 +1,28 @@
 """
-Test the AgentBuilder by building an agent from a local source directory
-and inspecting the generated components.
+Run the AgentBuilder pipeline: build an agent from local source directories
+and/or webpage URLs, inspect generated components, or compare two agents.
 
-Output files (built configs, exported configs) are written to ./output/
-in the current working directory, NOT inside the package.
+Output files (built configs, exported configs) are written to the --output-dir
+directory (defaults to <repo>/autocomp/agent_builder/.built/).
 
 Usage:
     # Dry run (test ingestion only, no LLM calls):
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --dry-run
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --source-dir path/to/source --dry-run
 
     # Full build from a directory:
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --agent-name my_agent
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --source-dir path/to/source
 
     # Full build from webpage URLs:
-    python -m autocomp_tests.test_agent_builder --source-url https://docs.example.com/api --agent-name my_agent
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --source-url https://docs.example.com/api
 
     # Mix directory and URL sources:
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --source-url https://docs.example.com --agent-name my_agent
-
-    # Full build with a specific model:
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --model aws::us.anthropic.claude-opus-4-6-v1
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --source-dir path/to/source --source-url https://docs.example.com
 
     # Inspect an already-built config dir:
-    python -m autocomp_tests.test_agent_builder --inspect output/built/trn
-
-    # Compare two built agents:
-    python -m autocomp_tests.test_agent_builder --inspect output/built/new_agent --compare-to output/built/ref_agent
-
-    # Build and compare against the hand-crafted trn agent:
-    python -m autocomp_tests.test_agent_builder --source-dir path/to/source --compare-to-agent trn
-
-    # Inspect a built agent and compare against the hand-crafted trn agent:
-    python -m autocomp_tests.test_agent_builder --inspect output/built/trn --compare-to-agent trn
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --inspect output/built/my_agent
 
     # Re-run just one component (rules, optimization_menu, isa, architecture, examples):
-    python -m autocomp_tests.test_agent_builder --inspect output/built/trn --rerun rules
+    python -m autocomp.agent_builder.run_agent_builder --agent-name my_agent --inspect output/built/my_agent --rerun rules --source-dir path/to/source
 """
 
 import argparse
@@ -361,378 +349,6 @@ def _inspect_code_examples(config_dir: Path):
 
 
 # ------------------------------------------------------------------
-# Export hand-crafted agent to config dir (for comparison)
-# ------------------------------------------------------------------
-
-def export_agent_config(agent_module: str, output_dir: Path) -> Path:
-    """
-    Instantiate a hand-crafted agent and export its components to a config
-    directory compatible with compare_agents().
-
-    Args:
-        agent_module: Dotted path like 'trn' that maps to autocomp.agents.<name>.
-        output_dir: Where to write the exported config files.
-    """
-    import importlib
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if agent_module == "trn":
-        mod = importlib.import_module("autocomp.agents.trn.trn_agent")
-        from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
-        from autocomp.hw_config.trn_config import TrnHardwareConfig
-        from autocomp.search.prob import Prob
-
-        agent = mod.TrnLLMAgent.__new__(mod.TrnLLMAgent)
-        agent.hw_config = TrnHardwareConfig("trn1.2xlarge")
-        agent.nki_isa_generator = NkiIsaGenerator()
-
-        prob = Prob("trn-tutorial", 1)
-
-        # Optimization menu
-        strategies = agent.get_opt_menu_options(prob)
-        menu_data = {"optimizations": [{"strategy": s} for s in strategies]}
-        with open(output_dir / "optimization_menu.yaml", "w") as f:
-            yaml.dump(menu_data, f, default_flow_style=False)
-
-        # Rules — extract the non-problem-specific, non-hw-config rules
-        # by calling _get_prompt_rules and parsing the numbered list
-        agent.eval_backend = type("Stub", (), {"get_backend_specific_rules": lambda self: []})()
-        agent.hw_config = type("Stub", (), {"get_hw_config_specific_rules": lambda self: []})()
-
-        import random
-        random.seed(0)
-        planning_rules_text = mod.TrnLLMAgent._get_prompt_rules(agent, planning=True, coding=False, prob=prob)
-        random.seed(0)
-        coding_rules_text = mod.TrnLLMAgent._get_prompt_rules(agent, planning=False, coding=True, prob=prob)
-
-        def _parse_rules(text: str) -> list[str]:
-            lines = text.strip().split("\n")
-            return [re.sub(r"^\d+\.\s*", "", line).strip() for line in lines if line.strip()]
-
-        planning_rules = _parse_rules(planning_rules_text)
-        coding_rules = _parse_rules(coding_rules_text)
-        general_rules = []
-        # Rules common to both planning and coding are "general"
-        planning_set = set(planning_rules)
-        coding_set = set(coding_rules)
-        general = planning_set & coding_set
-        general_rules = [r for r in planning_rules if r in general]
-        planning_only = [r for r in planning_rules if r not in general]
-        coding_only = [r for r in coding_rules if r not in general]
-
-        rules_data = {"general": general_rules, "planning": planning_only, "coding": coding_only}
-        with open(output_dir / "rules.yaml", "w") as f:
-            yaml.dump(rules_data, f, default_flow_style=False)
-
-        # ISA docs
-        isa_text = agent.nki_isa_generator.generate_isa(prob)
-        (output_dir / "isa_docs.md").write_text(isa_text)
-
-        # Architecture — hand-crafted agent has a one-liner; extract what we can
-        arch_text = ("# Trainium/Inferentia (NKI)\n\n"
-                     "The NKI (Neuron Kernel Interface) is used for writing "
-                     "high-performance kernels on AWS Trainium and Inferentia chips.\n")
-        (output_dir / "architecture.md").write_text(arch_text)
-
-        # No separate code examples in the hand-crafted agent
-        (output_dir / "code_examples.md").write_text("")
-
-        print(f"Exported hand-crafted '{agent_module}' agent to {output_dir}")
-        return output_dir
-    else:
-        raise ValueError(
-            f"Unknown agent module '{agent_module}'. "
-            f"Add export logic for this agent in export_agent_config()."
-        )
-
-
-# ------------------------------------------------------------------
-# Comparison
-# ------------------------------------------------------------------
-
-def _load_agent_config(config_dir: Path) -> dict:
-    """Load all components from a config directory into a dict."""
-    config: dict = {"dir": config_dir}
-
-    menu_path = config_dir / "optimization_menu.yaml"
-    if menu_path.exists():
-        with open(menu_path) as f:
-            data = yaml.safe_load(f) or {}
-        config["strategies"] = [
-            item["strategy"] if isinstance(item, dict) else str(item)
-            for item in data.get("optimizations", [])
-        ]
-    else:
-        config["strategies"] = []
-
-    rules_path = config_dir / "rules.yaml"
-    if rules_path.exists():
-        with open(rules_path) as f:
-            config["rules"] = yaml.safe_load(f) or {}
-    else:
-        config["rules"] = {}
-
-    for name in ("isa_docs.md", "architecture.md", "code_examples.md"):
-        path = config_dir / name
-        config[name] = path.read_text() if path.exists() else ""
-
-    return config
-
-
-def compare_agents(config_dir: Path, ref_dir: Path, model: str | None = None):
-    """
-    Compare a built agent against a reference agent config directory.
-
-    When a --model is provided, uses an LLM for semantic comparison.
-    Otherwise falls back to structural/keyword comparison.
-    """
-    print("\n" + "=" * 72)
-    print("COMPARISON")
-    print(f"  Built: {config_dir}")
-    print(f"  Ref:   {ref_dir}")
-    print("=" * 72)
-
-    built = _load_agent_config(config_dir)
-    ref = _load_agent_config(ref_dir)
-
-    _compare_optimization_menu(built, ref)
-    _compare_rules(built, ref)
-    _compare_isa_docs(built, ref)
-    _compare_architecture(built, ref)
-    _compare_code_examples(built, ref)
-
-    if model:
-        _llm_semantic_comparison(built, ref, model)
-
-    print("\n" + "=" * 72)
-    print("Comparison complete.")
-    print("=" * 72)
-
-
-def _compare_optimization_menu(built: dict, ref: dict):
-    """Compare optimization strategies between built and reference agents."""
-    b_strats = built["strategies"]
-    r_strats = ref["strategies"]
-
-    print("\n--- Optimization Menu ---")
-    print(f"Built: {len(b_strats)} strategies | Ref: {len(r_strats)} strategies")
-
-    b_lower = {s.lower().strip() for s in b_strats}
-    r_lower = {s.lower().strip() for s in r_strats}
-    exact_shared = b_lower & r_lower
-    if exact_shared:
-        print(f"\nExact matches ({len(exact_shared)}):")
-        for s in sorted(exact_shared):
-            print(f"  = {s}")
-
-    b_kw = _extract_keywords(b_strats)
-    r_kw = _extract_keywords(r_strats)
-    shared_kw = b_kw & r_kw
-    built_only_kw = b_kw - r_kw
-    ref_only_kw = r_kw - b_kw
-
-    print(f"\nTheme overlap: {len(shared_kw)} shared, "
-          f"{len(built_only_kw)} built-only, {len(ref_only_kw)} ref-only")
-    if shared_kw:
-        print(f"  Shared:     {', '.join(sorted(shared_kw))}")
-    if built_only_kw:
-        print(f"  Built-only: {', '.join(sorted(built_only_kw))}")
-    if ref_only_kw:
-        print(f"  Ref-only:   {', '.join(sorted(ref_only_kw))}")
-
-    coverage = len(shared_kw) / len(r_kw) * 100 if r_kw else 100
-    print(f"  Theme coverage of ref: {coverage:.0f}%")
-
-
-def _compare_rules(built: dict, ref: dict):
-    """Compare rules between built and reference agents."""
-    b_rules = built["rules"]
-    r_rules = ref["rules"]
-    all_cats = sorted(set(list(b_rules.keys()) + list(r_rules.keys())))
-
-    print("\n--- Rules ---")
-    for cat in all_cats:
-        b_list = b_rules.get(cat, [])
-        r_list = r_rules.get(cat, [])
-        if not isinstance(b_list, list):
-            b_list = []
-        if not isinstance(r_list, list):
-            r_list = []
-        print(f"  {cat}: built={len(b_list)}, ref={len(r_list)}")
-
-
-def _compare_isa_docs(built: dict, ref: dict):
-    """Compare ISA documentation coverage."""
-    b_text = built["isa_docs.md"]
-    r_text = ref["isa_docs.md"]
-
-    b_entries = set(re.findall(r"^### (.+)$", b_text, re.MULTILINE))
-    r_entries = set(re.findall(r"^### (.+)$", r_text, re.MULTILINE))
-
-    shared = b_entries & r_entries
-    built_only = b_entries - r_entries
-    ref_only = r_entries - b_entries
-
-    print("\n--- ISA Documentation ---")
-    print(f"Built: {len(b_text):,} chars, {len(b_entries)} entries | "
-          f"Ref: {len(r_text):,} chars, {len(r_entries)} entries")
-    print(f"Entry overlap: {len(shared)} shared, "
-          f"{len(built_only)} built-only, {len(ref_only)} ref-only")
-
-    if ref_only and len(ref_only) <= 20:
-        print(f"  Missing from built: {', '.join(sorted(ref_only))}")
-    elif ref_only:
-        print(f"  Missing from built: {', '.join(sorted(list(ref_only))[:20])}... "
-              f"(+{len(ref_only) - 20} more)")
-
-    coverage = len(shared) / len(r_entries) * 100 if r_entries else 100
-    print(f"  Entry coverage of ref: {coverage:.0f}%")
-
-
-def _compare_architecture(built: dict, ref: dict):
-    """Compare architecture summaries."""
-    b_text = built["architecture.md"]
-    r_text = ref["architecture.md"]
-
-    print("\n--- Architecture ---")
-    print(f"Built: {len(b_text):,} chars | Ref: {len(r_text):,} chars")
-
-    b_headers = set(re.findall(r"^#{1,3} (.+)$", b_text, re.MULTILINE))
-    r_headers = set(re.findall(r"^#{1,3} (.+)$", r_text, re.MULTILINE))
-    shared = b_headers & r_headers
-    if shared:
-        print(f"  Shared section headings: {', '.join(sorted(shared))}")
-    built_only = b_headers - r_headers
-    ref_only = r_headers - b_headers
-    if built_only:
-        print(f"  Built-only headings: {', '.join(sorted(built_only))}")
-    if ref_only:
-        print(f"  Ref-only headings: {', '.join(sorted(ref_only))}")
-
-
-def _compare_code_examples(built: dict, ref: dict):
-    """Compare code examples."""
-    b_text = built["code_examples.md"]
-    r_text = ref["code_examples.md"]
-
-    b_sections = set(re.findall(r"^## (.+)$", b_text, re.MULTILINE))
-    r_sections = set(re.findall(r"^## (.+)$", r_text, re.MULTILINE))
-
-    print("\n--- Code Examples ---")
-    print(f"Built: {len(b_text):,} chars, {len(b_sections)} examples | "
-          f"Ref: {len(r_text):,} chars, {len(r_sections)} examples")
-
-    shared = b_sections & r_sections
-    if shared:
-        print(f"  Shared ({len(shared)}): {', '.join(sorted(list(shared))[:15])}")
-    built_only = b_sections - r_sections
-    if built_only:
-        print(f"  Built-only ({len(built_only)}): {', '.join(sorted(list(built_only))[:15])}")
-    ref_only = r_sections - b_sections
-    if ref_only:
-        print(f"  Ref-only ({len(ref_only)}): {', '.join(sorted(list(ref_only))[:15])}")
-
-
-def _llm_semantic_comparison(built: dict, ref: dict, model: str):
-    """Use an LLM to produce a semantic diff summary across all components."""
-    from autocomp.common import LLMClient
-
-    print("\n--- LLM Semantic Analysis ---")
-    try:
-        if "::" in model:
-            provider, model_name = model.split("::", 1)
-        else:
-            provider, model_name = None, model
-        llm = LLMClient(model_name, provider)
-    except Exception as e:
-        print(f"  (Skipped: could not initialize LLM: {e})")
-        return
-
-    def _truncate(text: str, limit: int = 6000) -> str:
-        if len(text) <= limit:
-            return text
-        return text[:limit] + f"\n... [{len(text) - limit:,} chars truncated]"
-
-    b_strats = "\n".join(f"- {s}" for s in built["strategies"])
-    r_strats = "\n".join(f"- {s}" for s in ref["strategies"])
-
-    b_rules_text = yaml.dump(built["rules"], default_flow_style=False)
-    r_rules_text = yaml.dump(ref["rules"], default_flow_style=False)
-
-    b_isa_entries = re.findall(r"^### (.+)$", built["isa_docs.md"], re.MULTILINE)
-    r_isa_entries = re.findall(r"^### (.+)$", ref["isa_docs.md"], re.MULTILINE)
-
-    prompt = f"""Compare these two agent configurations and identify the most important semantic differences. Focus on:
-1. Coverage gaps: what concepts/capabilities does one have that the other lacks?
-2. Quality differences: where is one agent's guidance more specific or actionable?
-3. Potential issues: any rules, strategies, or docs that seem incorrect or counterproductive?
-
-=== BUILT AGENT ===
-
-Optimization strategies:
-{b_strats}
-
-Rules:
-{_truncate(b_rules_text, 4000)}
-
-Architecture summary ({len(built['architecture.md']):,} chars):
-{_truncate(built['architecture.md'], 3000)}
-
-ISA entries ({len(b_isa_entries)}): {', '.join(b_isa_entries[:50])}{'...' if len(b_isa_entries) > 50 else ''}
-
-=== REFERENCE AGENT ===
-
-Optimization strategies:
-{r_strats}
-
-Rules:
-{_truncate(r_rules_text, 4000)}
-
-Architecture summary ({len(ref['architecture.md']):,} chars):
-{_truncate(ref['architecture.md'], 3000)}
-
-ISA entries ({len(r_isa_entries)}): {', '.join(r_isa_entries[:50])}{'...' if len(r_isa_entries) > 50 else ''}
-
-Provide a concise analysis (bullet points). End with an overall assessment of which agent would likely produce better optimization suggestions and why."""
-
-    try:
-        responses = llm.chat(prompt=prompt, num_candidates=1, temperature=0)
-        if responses:
-            print(responses[0])
-        else:
-            print("  (No response from LLM)")
-    except Exception as e:
-        print(f"  (LLM comparison failed: {e})")
-
-
-# ------------------------------------------------------------------
-# Keyword extraction for structural comparison
-# ------------------------------------------------------------------
-
-_OPT_THEMES = {
-    "tiling", "tile", "fusion", "fuse", "fused", "precision", "bfloat16",
-    "fp16", "fp8", "double buffering", "pipelining", "pipeline",
-    "matmul", "transpose", "loop", "reorder", "hoist",
-    "reduction", "scan", "softmax", "mask", "load", "store",
-    "data movement", "overlap", "compute", "contiguous", "locality",
-    "reuse", "accumulation", "pad", "align", "spill", "prefetch",
-    "unroll", "vectorize", "parallel", "batch", "dma", "cache",
-    "memory", "bandwidth", "throughput", "latency",
-}
-
-
-def _extract_keywords(strategies: list[str]) -> set[str]:
-    keywords = set()
-    for s in strategies:
-        s_lower = s.lower()
-        for term in _OPT_THEMES:
-            if term in s_lower:
-                keywords.add(term)
-    return keywords
-
-
-# ------------------------------------------------------------------
 # CLI
 # ------------------------------------------------------------------
 
@@ -748,9 +364,9 @@ def main():
                         help="URL to ingest (can be repeated)")
     parser.add_argument("--max-depth", type=int, default=2,
                         help="Max link-following depth for webpage sources (default: 2)")
-    parser.add_argument("--max-pages", type=int, default=50,
-                        help="Max pages to fetch per webpage source (default: 50)")
-    parser.add_argument("--agent-name", default="trn",
+    parser.add_argument("--max-pages", type=int, default=250,
+                        help="Max pages to fetch per webpage source (default: 250)")
+    parser.add_argument("--agent-name", required=True,
                         help="Name for the built agent")
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT,
                         help="Base output directory for built agents (default: ./output/built)")
@@ -767,23 +383,11 @@ def main():
                         help="Optional cheaper/faster model for high-token extraction tasks")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
-    parser.add_argument("--compare-to", metavar="REF_DIR",
-                        help="Compare against a reference agent config directory "
-                             "(uses --model for semantic LLM comparison if available)")
-    parser.add_argument("--compare-to-agent", metavar="AGENT_NAME",
-                        help="Export a hand-crafted agent (e.g. 'trn') to a temp config "
-                             "dir and compare against it")
     parser.add_argument("--rerun", metavar="COMPONENT",
                         choices=["rules", "optimization_menu", "isa", "architecture", "examples"],
                         help="Re-run synthesis for a single component using an existing "
                              "built config dir (requires --inspect and --source-dir)")
     args = parser.parse_args()
-
-    # Resolve --compare-to-agent into a --compare-to dir
-    if args.compare_to_agent:
-        export_dir = Path.cwd() / "output" / "exported" / args.compare_to_agent
-        export_agent_config(args.compare_to_agent, export_dir)
-        args.compare_to = str(export_dir)
 
     if args.dry_run:
         if not args.source_dir and not args.source_urls:
@@ -816,11 +420,6 @@ def main():
         if not config_dir.is_absolute():
             config_dir = REPO_ROOT / config_dir
         inspect_built_agent(config_dir)
-        if args.compare_to:
-            ref_dir = Path(args.compare_to)
-            if not ref_dir.is_absolute():
-                ref_dir = REPO_ROOT / ref_dir
-            compare_agents(config_dir, ref_dir, model=args.model)
         return
 
     if not args.source_dir and not args.source_urls:
@@ -849,11 +448,6 @@ def main():
         max_pages=args.max_pages,
     )
     inspect_built_agent(config_dir)
-    if args.compare_to:
-        ref_dir = Path(args.compare_to)
-        if not ref_dir.is_absolute():
-            ref_dir = REPO_ROOT / ref_dir
-        compare_agents(config_dir, ref_dir, model=args.model)
 
 
 if __name__ == "__main__":
