@@ -131,6 +131,7 @@ from autocomp.agent_builder import AgentBuilder
 
 builder = AgentBuilder(
     llm_model="aws::us.anthropic.claude-opus-4-6-v1",
+    light_llm_model="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
     description="Optimizing NKI kernels on AWS Trainium.",
 )
 builder.add_source("directory", path="/path/to/docs")
