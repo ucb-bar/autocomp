@@ -693,7 +693,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "trn"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent
+    agent_name = "built:trn-nki1"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TrnHardwareConfig("trn1.2xlarge")

@@ -936,11 +936,11 @@ Performance optimization strategies:"""
                       "multiple documents about the hardware target's programming model.")
             content_label = "CANDIDATE RULES"
             task = ("Merge, deduplicate, and curate these into a final list of critical "
-                    "correctness rules. Return AT MOST 3 rules per category -- pick the most critical ones only.")
+                    "correctness rules. Return AT MOST 5 rules per category -- pick the most critical ones only.")
         else:
             header = "Below is documentation about the hardware target's programming model."
             content_label = "DOCUMENTATION"
-            task = ("Return AT MOST 3 rules per category -- pick the most critical ones only.")
+            task = ("Return AT MOST 5 rules per category -- pick the most critical ones only.")
 
         prompt = f"""{header}
 

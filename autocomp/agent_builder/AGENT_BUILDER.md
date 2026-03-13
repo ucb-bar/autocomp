@@ -104,6 +104,7 @@ A built agent produces the following files in `.built/<agent_name>/`:
 | `optimization_menu.yaml` | List of optimization strategies |
 | `rules.yaml` | Programming constraints (general, planning, coding) |
 | `code_examples.md` | Annotated code examples (not yet used at runtime; reserved for future ICL support) |
+| `translate_menu.yaml` | *(optional, user-created)* Translation strategies for `translate_iters` — see [Translation support](#translation-support) |
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
@@ -145,6 +146,23 @@ All output files are plain YAML or Markdown, so you can customize a built agent 
 You can also copy an existing built agent directory, modify the files, and use it as a new agent (`agent_name = "built:my_custom_agent"`).
 
 For deeper changes to agent behavior (e.g., prompt structure, ISA selection logic, or how the optimization menu is used during planning), subclass `BuiltLLMAgent` and add a new `elif` branch in `create_backend_and_agents()` in `search.py` to wire it up.
+
+### Translation support
+
+Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics) during the first N iterations of a search run, before switching to optimization. To enable it:
+
+1. Create a `translate_menu.yaml` in the built agent's config directory:
+
+```yaml
+strategies:
+  - "convert high-level framework calls into TargetISA intrinsics"
+  - "move non-TargetISA operations into a TargetISA kernel"
+  - "fuse multiple TargetISA kernels into a single kernel"
+```
+
+2. Set `translate_iters` to a positive value in `search.py` (e.g., `translate_iters = 2` to translate for the first 2 iterations).
+
+The agent loads `translate_menu.yaml` at startup. When `translate_iters > 0`, the first N iterations use these strategies instead of the normal optimization menu. If the file is absent, the `translate` flag has no effect on menu selection.
 
 ## Python API
 

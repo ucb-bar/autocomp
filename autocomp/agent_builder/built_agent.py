@@ -21,8 +21,13 @@ class BuiltLLMAgent(LLMAgent):
     config directory (produced by AgentBuilder) instead of hardcoding them.
     """
 
-    _FINE_FILTER_MIN_SUBS = 5
-    _FINE_FILTER_MIN_CHARS = 8_000
+    # Fine-grained ISA filtering thresholds: only apply subsection-level
+    # filtering to sections that are large enough to benefit from it.
+    _FINE_FILTER_MIN_SUBS = 5       # min ### subsections in a ## section
+    _FINE_FILTER_MIN_CHARS = 8_000  # min characters in a ## section
+    _DEFAULT_TRANSLATE_MENU = [
+        "convert high-level code to target kernel code",
+    ]
 
     def __init__(self, model: str, config_dir: str | Path,
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
@@ -41,6 +46,7 @@ class BuiltLLMAgent(LLMAgent):
         self._isa_sections = self._parse_isa_sections(self._isa_docs_raw)
         self._isa_subsections = self._parse_isa_subsections(self._isa_sections)
         self._optimization_menu = self._load_optimization_menu()
+        self._translate_menu = self._load_translate_menu()
         self._rules = self._load_rules()
 
         # Cache for ISA selection per problem (stores final assembled text)
@@ -48,11 +54,13 @@ class BuiltLLMAgent(LLMAgent):
 
         # Cache for new menu options per candidate
         self._new_menu_cache: dict[str, list[str]] = {}
+        self._translate_menu_warned = False
 
         logger.info(
-            "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, fine_grained_isa=%s",
+            "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, "
+            "%d translate strategies, fine_grained_isa=%s",
             self.config_dir, len(self._isa_sections), len(self._optimization_menu),
-            self.fine_grained_isa,
+            len(self._translate_menu), self.fine_grained_isa,
         )
 
     def __repr__(self):
@@ -72,6 +80,15 @@ class BuiltLLMAgent(LLMAgent):
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         items = data.get("optimizations", [])
+        return [item["strategy"] if isinstance(item, dict) else str(item) for item in items]
+
+    def _load_translate_menu(self) -> list[str]:
+        path = self.config_dir / "translate_menu.yaml"
+        if not path.exists():
+            return []
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        items = data.get("strategies", [])
         return [item["strategy"] if isinstance(item, dict) else str(item) for item in items]
 
     def _load_rules(self) -> dict[str, list[str]]:
@@ -353,23 +370,14 @@ class BuiltLLMAgent(LLMAgent):
             prompt_text += f"{i + 1}. {rule}\n"
         return prompt_text
 
-    def _get_propose_optimizations_prompt(
-        self, candidate: CodeCandidate, prob: Prob,
-        force_opt_menu, prompt_end, analysis, shuffle_opts,
-        give_score_feedback, give_util_feedback, give_hw_feedback,
-        include_ancestors, plan_icl_examples, cur_iter, num_iters,
-        dropout_menu_options, translate,
+    def _build_prompt_scaffold(
+        self, candidate: CodeCandidate, prob: Prob, analysis,
+        give_score_feedback, give_hw_feedback, include_ancestors,
     ) -> str:
-        # Select menu options
-        opt_lst = self.get_opt_menu_options(prob, candidate)
-        if dropout_menu_options < 1 and not force_opt_menu:
-            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
-        if shuffle_opts:
-            random.shuffle(opt_lst)
+        """Build the shared prefix: architecture + ISA + parent history."""
         include_score_feedback = random.random() < give_score_feedback
         include_hw_feedback_flag = random.random() < give_hw_feedback
 
-        # Build parent history
         parents_prompt = ""
         cur_cand = candidate
         while cur_cand is not None:
@@ -392,12 +400,35 @@ class BuiltLLMAgent(LLMAgent):
         if analysis:
             parents_prompt += "\n" + analysis
 
-        # Build prompt: architecture + ISA + code history + menu + rules
         prompt_text = self._architecture + "\n"
         prompt_text += self._get_isa_for_problem(prob, candidate.code) + "\n"
         prompt_text += parents_prompt
+        return prompt_text
 
-        # Optimization menu
+    def _get_propose_optimizations_prompt(
+        self, candidate: CodeCandidate, prob: Prob,
+        force_opt_menu, prompt_end, analysis, shuffle_opts,
+        give_score_feedback, give_util_feedback, give_hw_feedback,
+        include_ancestors, plan_icl_examples, cur_iter, num_iters,
+        dropout_menu_options, translate,
+    ) -> str:
+        if translate:
+            return self._get_translate_prompt(
+                candidate, prob, prompt_end, analysis, shuffle_opts,
+                give_score_feedback, give_hw_feedback, include_ancestors,
+            )
+
+        opt_lst = self.get_opt_menu_options(prob, candidate)
+        if dropout_menu_options < 1 and not force_opt_menu:
+            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+        if shuffle_opts:
+            random.shuffle(opt_lst)
+
+        prompt_text = self._build_prompt_scaffold(
+            candidate, prob, analysis,
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
         menu_text = ""
         for i, opt in enumerate(opt_lst):
             menu_text += f"{i + 1}. {opt}\n"
@@ -415,12 +446,60 @@ class BuiltLLMAgent(LLMAgent):
         else:
             prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
             choose_or_invent = random.random()
-            if choose_or_invent < 0.1 and not translate:
+            if choose_or_invent < 0.1:
                 prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
-            elif choose_or_invent < 0.2 and not translate:
+            elif choose_or_invent < 0.2:
                 prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
             else:
                 prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
+
+        prompt_text += " The plan should be specific to this code and explain how to change it."
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob)
+
+        if prompt_end:
+            prompt_text += "\n" + prompt_end
+        return prompt_text
+
+    def _get_translate_prompt(
+        self, candidate: CodeCandidate, prob: Prob,
+        prompt_end, analysis, shuffle_opts,
+        give_score_feedback, give_hw_feedback, include_ancestors,
+    ) -> str:
+        """Prompt for translation iterations: convert code to the target representation."""
+        if self._translate_menu:
+            opt_lst = list(self._translate_menu)
+        else:
+            if not self._translate_menu_warned:
+                logger.warning(
+                    "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                    "Using generic default. Create a translate_menu.yaml with "
+                    "target-specific strategies for better results.",
+                    self.config_dir,
+                )
+                self._translate_menu_warned = True
+            opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
+        if shuffle_opts:
+            random.shuffle(opt_lst)
+
+        prompt_text = self._build_prompt_scaffold(
+            candidate, prob, analysis,
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
+        menu_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_text += f"{i + 1}. {opt}\n"
+
+        prompt_text += "Please review the code and identify parts that should be converted to the target hardware representation. "
+        prompt_text += "The following conversion strategies are available:\n"
+        prompt_text += "<strategies>:\n" + menu_text + "\n"
+
+        prompt_text += (
+            "You are an expert at translating code to this hardware target. "
+            "Come up with a plan to apply exactly one of the <strategies> to convert "
+            "the above code to the target representation."
+        )
 
         prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
