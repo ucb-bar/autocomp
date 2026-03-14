@@ -1,0 +1,8 @@
+.vscode/
+src/
+node_modules/
+.gitignore
+tsconfig.json
+vite.config.ts
+tailwind.config.ts
+postcss.config.js
