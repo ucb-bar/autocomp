@@ -196,8 +196,9 @@ class SearchStrategy:
 
     def _save_run_metadata(self):
         """Save run configuration metadata to a JSON file in the output directory."""
-        skip = {"repository", "agent", "code_agent", "prob", "output_dir", "eval_backend"}
-        metadata = {k: v for k, v in vars(self).items() if not k.startswith("_") and k not in skip}
+        serializable = (str, int, float, bool, list, tuple, type(None))
+        metadata = {k: v for k, v in vars(self).items()
+                    if not k.startswith("_") and isinstance(v, serializable)}
         try:
             with open(self.output_dir / "run_metadata.json", "w") as f:
                 json.dump(metadata, f, indent=2, default=str)

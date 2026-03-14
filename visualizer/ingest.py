@@ -27,23 +27,10 @@ def parse_run_config(dirname: str, run_dir: Path = None) -> dict:
         try:
             with open(run_dir / "run_metadata.json") as f:
                 meta = json.load(f)
-            config["metric"] = meta.get("metric")
-            config["simulator"] = meta.get("simulator")
+            config.update(meta)
             all_models = sorted(set(meta.get("plan_models", []) + meta.get("code_models", [])))
             if all_models:
                 config["models"] = all_models
-            config["plan_models"] = meta.get("plan_models", [])
-            config["code_models"] = meta.get("code_models", [])
-            config["problem"] = meta.get("problem")
-            if meta.get("beam_size"):
-                config["beam_size"] = meta["beam_size"]
-            if meta.get("num_plan_candidates"):
-                config["num_plan_candidates"] = meta["num_plan_candidates"]
-            if meta.get("num_code_candidates"):
-                config["num_code_candidates"] = meta["num_code_candidates"]
-            config["give_score_feedback"] = meta.get("give_score_feedback")
-            config["give_hw_feedback"] = meta.get("give_hw_feedback")
-            config["include_ancestors"] = meta.get("include_ancestors")
             return config
         except Exception:
             pass

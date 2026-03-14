@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Fragment } from "react";
 import type { RunData, RunIndexEntry, BeamCandidate, FailedCandidate } from "./lib/types";
 import { formatModel } from "./lib/format";
 import ScoreChart from "./components/ScoreChart";
@@ -315,19 +315,17 @@ export default function App() {
             </summary>
             <div className="mt-2 rounded-lg border border-stone-150 bg-stone-50 px-4 py-3">
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs font-mono">
-                {run.config.beam_size != null && <><dt className="text-stone-400">beam_size</dt><dd className="text-stone-700">{run.config.beam_size}</dd></>}
-                {run.config.num_plan_candidates != null && <><dt className="text-stone-400">num_plan_candidates</dt><dd className="text-stone-700">{run.config.num_plan_candidates}</dd></>}
-                {run.config.num_code_candidates != null && <><dt className="text-stone-400">num_code_candidates</dt><dd className="text-stone-700">{run.config.num_code_candidates}</dd></>}
                 <dt className="text-stone-400">iterations</dt><dd className="text-stone-700">{run.iterations.length - 1}</dd>
-                {run.config.metric && <><dt className="text-stone-400">metric</dt><dd className="text-stone-700">{run.config.metric}</dd></>}
-                {run.config.simulator && <><dt className="text-stone-400">simulator</dt><dd className="text-stone-700">{run.config.simulator}</dd></>}
-                {run.config.hardware && <><dt className="text-stone-400">hardware</dt><dd className="text-stone-700">{run.config.hardware}</dd></>}
-                {run.config.instance && <><dt className="text-stone-400">instance</dt><dd className="text-stone-700">{run.config.instance}</dd></>}
-                {run.config.give_score_feedback != null && <><dt className="text-stone-400">give_score_feedback</dt><dd className="text-stone-700">{String(run.config.give_score_feedback)}</dd></>}
-                {run.config.give_hw_feedback != null && <><dt className="text-stone-400">give_hw_feedback</dt><dd className="text-stone-700">{String(run.config.give_hw_feedback)}</dd></>}
-                {run.config.include_ancestors != null && <><dt className="text-stone-400">include_ancestors</dt><dd className="text-stone-700">{String(run.config.include_ancestors)}</dd></>}
-                {(run.config.plan_models?.length ?? 0) > 0 && <><dt className="text-stone-400">plan_models</dt><dd className="text-stone-700">{run.config.plan_models!.map(formatModel).join(", ")}</dd></>}
-                {(run.config.code_models?.length ?? 0) > 0 && <><dt className="text-stone-400">code_models</dt><dd className="text-stone-700">{run.config.code_models!.map(formatModel).join(", ")}</dd></>}
+                {Object.entries(run.config)
+                  .filter(([k, v]) => k !== "raw_name" && k !== "models" && v != null && v !== "")
+                  .map(([k, v]) => (
+                    <Fragment key={k}>
+                      <dt className="text-stone-400">{k}</dt>
+                      <dd className="text-stone-700 break-all">
+                        {Array.isArray(v) ? v.map(formatModel).join(", ") : String(v)}
+                      </dd>
+                    </Fragment>
+                  ))}
                 <dt className="text-stone-400">raw_name</dt><dd className="text-stone-700 break-all">{run.config.raw_name}</dd>
               </dl>
             </div>
