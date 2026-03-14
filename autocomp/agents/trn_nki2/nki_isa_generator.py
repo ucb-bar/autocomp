@@ -1653,6 +1653,32 @@ class NkiIsaGenerator:
             isa_string += "\n"
         return isa_string
 
+    def get_all_instruction_names(self) -> list[str]:
+        return list(self.isa_dict.keys())
+
+    def get_standard_instruction_names(self) -> list[str]:
+        return list(self.kernel_insts_dict.get("standard", []))
+
+    def get_instruction_summary(self, name: str) -> str:
+        """Return header + description for an instruction (no examples)."""
+        entry = self.isa_dict.get(name)
+        if entry is None:
+            return ""
+        if isinstance(entry, list):
+            parts = []
+            for item in entry:
+                h = item.get("header", "")
+                d = item.get("description", "")
+                parts.append((h + "\n" + d).strip())
+            return "\n".join(parts)
+        h = entry.get("header", "")
+        d = entry.get("description", "")
+        return (h + "\n" + d).strip()
+
+    def generate_isa_from_names(self, names: Iterable[str]) -> str:
+        """Assemble full ISA text (header + description + examples) for the given instruction names."""
+        return self.generate_isa_string(names)
+
     def generate_isa(self, prob_or_name: Prob | int | str):
         if isinstance(prob_or_name, Prob):
             name = self.prob_to_name[prob_or_name.prob_type][prob_or_name.prob_id]

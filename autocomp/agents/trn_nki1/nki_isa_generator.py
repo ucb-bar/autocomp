@@ -12,7 +12,7 @@ workload_to_kernel_dict = {
 }
 
 prob_to_name = {
-    "trn-tutorial": {
+    "trn-tutorial-nki1": {
         0: "rmsnorm",
         1: "layernorm",
         2: "gemm",
@@ -20,7 +20,7 @@ prob_to_name = {
         4: "attention",
         5: "attention",
     },
-    "trn-advanced": {
+    "trn-advanced-nki1": {
         0: "cumsum",
         1: "transpose",
         2: "maxpool",
