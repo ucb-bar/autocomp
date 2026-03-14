@@ -5,13 +5,13 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
-from autocomp.agents.trn.prompts import fusion_example
-from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
+from autocomp.agents.trn_nki1.prompts import fusion_example
+from autocomp.agents.trn_nki1.nki_isa_generator import NkiIsaGenerator
 from autocomp.hw_config.trn_config import TrnHardwareConfig
 from autocomp.backend.eval_backend import EvalBackend
 
 
-class TrnLLMAgent(LLMAgent):
+class TrnNki1LLMAgent(LLMAgent):
     def __init__(self, model, hw_config: TrnHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
         self.hw_config = hw_config
@@ -19,7 +19,7 @@ class TrnLLMAgent(LLMAgent):
         self.nki_isa_generator = NkiIsaGenerator()
 
     def __repr__(self):
-        return f"TrnLLMAgent({self.llm_client.model})"
+        return f"TrnNki1LLMAgent({self.llm_client.model})"
 
     def _get_convert_to_nki_menu_options(self) -> list[str]:
         return [
@@ -231,7 +231,7 @@ class TrnLLMAgent(LLMAgent):
     def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
-            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+            raise ValueError("TrnNki1LLMAgent requires prob parameter to be provided")
         prompt_text += self.nki_isa_generator.generate_isa(prob)
 
         if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
@@ -272,7 +272,7 @@ class TrnLLMAgent(LLMAgent):
         Generate a prompt to reimplement failed code based on stdout/stderr feedback.
         """
         if prob is None:
-            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+            raise ValueError("TrnNki1LLMAgent requires prob parameter to be provided")
 
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += self.nki_isa_generator.generate_isa(prob)

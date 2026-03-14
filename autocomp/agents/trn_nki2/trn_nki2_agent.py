@@ -5,21 +5,87 @@ from autocomp.common import logger
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
 from autocomp.agents.llm_agent import LLMAgent
-from autocomp.agents.trn.prompts import fusion_example
-from autocomp.agents.trn.nki_isa_generator import NkiIsaGenerator
+from autocomp.agents.trn_nki2.prompts import fusion_example
+from autocomp.agents.trn_nki2.nki_isa_generator import NkiIsaGenerator
 from autocomp.hw_config.trn_config import TrnHardwareConfig
 from autocomp.backend.eval_backend import EvalBackend
 
 
-class TrnLLMAgent(LLMAgent):
+class TrnNki2LLMAgent(LLMAgent):
     def __init__(self, model, hw_config: TrnHardwareConfig, eval_backend: EvalBackend):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.nki_isa_generator = NkiIsaGenerator()
+        self._isa_selection_cache: dict[str, str] = {}
 
     def __repr__(self):
-        return f"TrnLLMAgent({self.llm_client.model})"
+        return f"TrnNki2LLMAgent({self.llm_client.model})"
+
+    def _match_names_from_llm(self, prompt: str, valid_names: list[str]) -> list[str]:
+        """Send a selection prompt to the LLM and fuzzy-match the response to valid names."""
+        try:
+            responses = self.llm_client.chat(prompt=prompt, num_candidates=1, temperature=0)
+            raw = responses[0] if responses else ""
+            selected: list[str] = []
+            for line in raw.strip().split("\n"):
+                line = line.strip().lstrip("- ").strip()
+                if not line:
+                    continue
+                if line in valid_names:
+                    if line not in selected:
+                        selected.append(line)
+                else:
+                    for name in valid_names:
+                        if line.lower() in name.lower() or name.lower() in line.lower():
+                            if name not in selected:
+                                selected.append(name)
+                            break
+            return selected if selected else valid_names
+        except Exception:
+            logger.warning("LLM ISA selection failed, falling back to all instructions")
+            return valid_names
+
+    def _select_isa_instructions(self, prob: Prob, code: str) -> list[str]:
+        """Use LLM to select which ISA instructions are relevant for the given code."""
+        all_names = self.nki_isa_generator.get_all_instruction_names()
+        standard_names = self.nki_isa_generator.get_standard_instruction_names()
+        non_standard_names = [n for n in all_names if n not in standard_names]
+
+        summary_parts = []
+        for name in non_standard_names:
+            summary = self.nki_isa_generator.get_instruction_summary(name)
+            if summary:
+                summary_parts.append(f"- {name}: {summary}")
+            else:
+                summary_parts.append(f"- {name}")
+        summary_list = "\n".join(summary_parts)
+
+        prob_context = getattr(prob, "context", "")
+        prompt = (
+            "Given the following NKI kernel code and problem context, select which ISA "
+            "instructions/APIs are relevant for optimizing this code. Return ONLY the "
+            "instruction names, one per line.\n\n"
+            f"Problem type: {prob.prob_type}\n"
+            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+            f"Code:\n```\n{code}\n```\n\n"
+            f"Available ISA instructions:\n{summary_list}\n\n"
+            "Relevant instructions (one per line):"
+        )
+        selected = self._match_names_from_llm(prompt, non_standard_names)
+        return standard_names + selected
+
+    def _get_isa_for_problem(self, prob: Prob, code: str) -> str:
+        """Get ISA documentation for a problem, using LLM selection with caching."""
+        cache_key = f"{prob.prob_type}:{prob.prob_id}"
+        if cache_key in self._isa_selection_cache:
+            return self._isa_selection_cache[cache_key]
+
+        selected_names = self._select_isa_instructions(prob, code)
+        logger.debug("LLM selected %d ISA instructions for %s", len(selected_names), cache_key)
+        isa_text = self.nki_isa_generator.generate_isa_from_names(selected_names)
+        self._isa_selection_cache[cache_key] = isa_text
+        return isa_text
 
     def _get_convert_to_nki_menu_options(self) -> list[str]:
         return [
@@ -110,29 +176,6 @@ class TrnLLMAgent(LLMAgent):
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
 
-        # Problem-specific rules
-        if prob.prob_type == "trn-e2e" and (prob.prob_id == 0 or prob.prob_id == 1):
-            # Llama-3.2-1B MLP prefill, batch = 1
-            rules.append("You are optimizing for constant shapes: x.shape = (1, 64, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 2 or prob.prob_id == 3):
-            # Llama-3.2-1B MLP decode, batch = 1
-            rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 4 or prob.prob_id == 5):
-            # Llama-3.2-1B attention, batch = 1
-            rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 6 or prob.prob_id == 7):
-            # Llama-3.2-1B logits, batch = 1
-            rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 8 or prob.prob_id == 9):
-            # Llama-3.2-1B attention, batch = 32
-            rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 10 or prob.prob_id == 11):
-            # Llama-3.2-1B MLP decode, batch = 32
-            rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 12 or prob.prob_id == 13):
-            # Llama-3.2-1B logits, batch = 32
-            rules.append("You are optimizing for constant shapes: hidden_states.shape = (32, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
@@ -186,7 +229,7 @@ class TrnLLMAgent(LLMAgent):
 
         # Initialize the prompt with NKI context
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prompt_text += self.nki_isa_generator.generate_isa(prob)
+        prompt_text += self._get_isa_for_problem(prob, candidate.code)
         
         prompt_text += parents_prompt
 
@@ -230,8 +273,8 @@ class TrnLLMAgent(LLMAgent):
     def _get_implement_code_prompt(self, candidate: CodeCandidate, prob: Prob = None, code_icl_examples: bool = True) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         if prob is None:
-            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
-        prompt_text += self.nki_isa_generator.generate_isa(prob)
+            raise ValueError("TrnNki2LLMAgent requires prob parameter to be provided")
+        prompt_text += self._get_isa_for_problem(prob, candidate.parent.code)
 
         if "fusion" in candidate.plan.lower() or "fuse" in candidate.plan.lower():
             rand_val = random.random()
@@ -271,10 +314,10 @@ class TrnLLMAgent(LLMAgent):
         Generate a prompt to reimplement failed code based on stdout/stderr feedback.
         """
         if prob is None:
-            raise ValueError("TrnLLMAgent requires prob parameter to be provided")
+            raise ValueError("TrnNki2LLMAgent requires prob parameter to be provided")
 
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
-        prompt_text += self.nki_isa_generator.generate_isa(prob)
+        prompt_text += self._get_isa_for_problem(prob, candidate.code)
 
         # prompt_text += "The original code is as follows:\n"
         # prompt_text += candidate.parent.code
