@@ -2,40 +2,76 @@ import math
 
 import nki
 import nki.language as nl
+import nki.isa as nisa
 import numpy as np
-import torch
-import torch.nn.functional as F
 
 # SUBSTITUTE HERE
 
 @nki.jit
-def ref(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
-    """
-    Performs 2D max pooling with stride 1 on a 2D tensor.
-    
-    Args:
-        in_tensor: Input tensor with shape [height, width]
-        pool_size: Size of the pooling window (pool_size x pool_size)
-        
-    Returns:
-        Output tensor with shape [height-(pool_size-1), width-(pool_size-1)]
-    """
+def ref(in_tensor, pool_size):
     k = pool_size
     h_in, w_in = in_tensor.shape
-    h_out, w_out = h_in - (k-1), w_in - (k-1)
+    h_out = h_in - (k - 1)
+    w_out = w_in - (k - 1)
     out_tensor = nl.ndarray((h_out, w_out), dtype=in_tensor.dtype, buffer=nl.shared_hbm)
 
-    h_tiles_count = math.ceil(h_in / nl.tile_size.pmax)
-    for h_tile_idx in nl.affine_range(h_tiles_count):
-        in_tile = nl.ndarray((nl.par_dim(nl.tile_size.pmax), k, w_in), dtype=in_tensor.dtype, buffer=nl.sbuf)
-        i_h, i_kh, i_w = nl.mgrid[0:nl.tile_size.pmax, 0:k, 0:w_in]
-        i_h = h_tile_idx * nl.tile_size.pmax + i_h
-        in_tile = nl.load(in_tensor[i_h + i_kh, i_w], mask=(i_h < (h_in - (k-1))))
-        i_h, i_kh, i_w, i_kw = nl.mgrid[0:nl.tile_size.pmax, 0:k, 0:(w_in - (k-1)), 0:k]
-        out_tile = nl.max(in_tile[i_h, i_kh, i_w + i_kw], axis=[1, 3], mask=(h_tile_idx * nl.tile_size.pmax + i_h < h_in))
-        i_h_out, i_w_out = nl.mgrid[0:nl.tile_size.pmax, 0:(w_in - (k-1))]
-        i_h_out = h_tile_idx * nl.tile_size.pmax + i_h_out
-        nl.store(out_tensor[i_h_out, i_w_out], value=out_tile, mask=(i_h_out < h_out))
+    PMAX = nl.tile_size.pmax  # 128
+    W_OUT_TILE = 512
+
+    h_tiles = (h_out + PMAX - 1) // PMAX
+    w_tiles = (w_out + W_OUT_TILE - 1) // W_OUT_TILE
+
+    for h_tile_idx in nl.affine_range(h_tiles):
+        h_start = h_tile_idx * PMAX
+        tile_h = min(PMAX, h_out - h_start)
+
+        for w_tile_idx in nl.affine_range(w_tiles):
+            w_start = w_tile_idx * W_OUT_TILE
+            tile_w_out = min(W_OUT_TILE, w_out - w_start)
+            tile_w_in = tile_w_out + k - 1
+
+            row_max = nl.ndarray((PMAX, W_OUT_TILE + k - 1), dtype=in_tensor.dtype, buffer=nl.sbuf)
+
+            strip0 = nl.ndarray((PMAX, W_OUT_TILE + k - 1), dtype=in_tensor.dtype, buffer=nl.sbuf)
+            nisa.dma_copy(dst=strip0[0:tile_h, 0:tile_w_in],
+                          src=in_tensor[h_start:h_start+tile_h, w_start:w_start+tile_w_in])
+            nisa.tensor_copy(dst=row_max[0:tile_h, 0:tile_w_in],
+                             src=strip0[0:tile_h, 0:tile_w_in])
+
+            if k > 1:
+                strip1 = nl.ndarray((PMAX, W_OUT_TILE + k - 1), dtype=in_tensor.dtype, buffer=nl.sbuf)
+                nisa.dma_copy(dst=strip1[0:tile_h, 0:tile_w_in],
+                              src=in_tensor[h_start+1:h_start+1+tile_h, w_start:w_start+tile_w_in])
+                nisa.tensor_tensor(dst=row_max[0:tile_h, 0:tile_w_in],
+                                   data1=row_max[0:tile_h, 0:tile_w_in],
+                                   data2=strip1[0:tile_h, 0:tile_w_in],
+                                   op=nl.maximum)
+            if k > 2:
+                strip2 = nl.ndarray((PMAX, W_OUT_TILE + k - 1), dtype=in_tensor.dtype, buffer=nl.sbuf)
+                nisa.dma_copy(dst=strip2[0:tile_h, 0:tile_w_in],
+                              src=in_tensor[h_start+2:h_start+2+tile_h, w_start:w_start+tile_w_in])
+                nisa.tensor_tensor(dst=row_max[0:tile_h, 0:tile_w_in],
+                                   data1=row_max[0:tile_h, 0:tile_w_in],
+                                   data2=strip2[0:tile_h, 0:tile_w_in],
+                                   op=nl.maximum)
+
+            col_max = nl.ndarray((PMAX, W_OUT_TILE), dtype=in_tensor.dtype, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=col_max[0:tile_h, 0:tile_w_out],
+                             src=row_max[0:tile_h, 0:tile_w_out])
+
+            if k > 1:
+                nisa.tensor_tensor(dst=col_max[0:tile_h, 0:tile_w_out],
+                                   data1=col_max[0:tile_h, 0:tile_w_out],
+                                   data2=row_max[0:tile_h, 1:1+tile_w_out],
+                                   op=nl.maximum)
+            if k > 2:
+                nisa.tensor_tensor(dst=col_max[0:tile_h, 0:tile_w_out],
+                                   data1=col_max[0:tile_h, 0:tile_w_out],
+                                   data2=row_max[0:tile_h, 2:2+tile_w_out],
+                                   op=nl.maximum)
+
+            nisa.dma_copy(dst=out_tensor[h_start:h_start+tile_h, w_start:w_start+tile_w_out],
+                          src=col_max[0:tile_h, 0:tile_w_out])
 
     return out_tensor
 

@@ -2,92 +2,63 @@ import nki
 import nki.language as nl
 import nki.isa as nisa
 import numpy as np
-import time
 
 # SUBSTITUTE HERE
 
 
+def div_ceil(n, d):
+    return (n + d - 1) // d
+
+
 @nki.jit
-def ref(img_ref, filter_ref, **kwargs):
-    def _div_ceil(n, d):
-        return (n + d - 1) // d
-    def _create_indices(*tripcounts):
-        rank = len(tripcounts)
-        if tripcounts[-1] == 1:
-            assert tripcounts[-2] != 1, "Unhandled case"
-            rank -= 1
-        indices = []
-        colon = slice(None, None, None)
-        cur_rank = 0
-        for c in tripcounts:
-            if c > 1:
-                access = [None] * rank
-                access[cur_rank] = colon
-                indices.append(nl.arange(c)[tuple(access)])
-            else:
-                indices.append(0)
-            cur_rank += 1
-        return indices
-    padding = kwargs['padding']
+def ref(img_ref, filter_ref, padding=None):
     W_padding_l, W_padding_r = padding[1]
 
-    N, C_in, H, W = img_ref.shape        # bf01
+    N, C_in, H, W = img_ref.shape
     C_out, _, H_f, W_f = filter_ref.shape
 
-    # Compute output spatial sizes from inputs + padding + filter
-    K0 = H - H_f + 1                      # here H==1 and H_f==1 -> 1
+    K0 = H - H_f + 1
     K1 = W + W_padding_l + W_padding_r - W_f + 1
-    out_image_size = K0 * K1
-    image_size = H * (W + W_padding_l + W_padding_r)
-    window_size = H_f * W_f
+    padded_W = W + W_padding_l + W_padding_r
     dtype = img_ref.dtype
 
-    # Allocate output in HBM and return it later
     out_hbm = nl.ndarray((N, C_out, K0, K1), dtype=dtype, buffer=nl.shared_hbm)
 
-    C_NUM_TILES, C_TILE_SIZE = _div_ceil(C_in, 128), min(C_in, 128)
-
-    img_local_prefetch_raw = nl.zeros(shape=(N, C_NUM_TILES, nl.par_dim(C_TILE_SIZE), image_size),
-                                      dtype=dtype, buffer=nl.sbuf, name='a0_img_local_prefetch')
-    for i_n in nl.affine_range(N):
-        for c_tile in nl.affine_range(C_NUM_TILES):
-            i_cin_tile, i_w = _create_indices(C_TILE_SIZE, W)
-            i_cin = i_cin_tile + c_tile * 128
-            i_h = 0
-            i_image = W_padding_l + i_w
-            img_local_prefetch_raw[i_n, c_tile, i_cin_tile, i_image] = nl.load(img_ref[i_n, i_cin, i_h, i_w])
-
-    filter_local = nl.zeros(shape=(C_NUM_TILES, nl.par_dim(C_TILE_SIZE), window_size),
-                            dtype=dtype, buffer=nl.sbuf, name='a0_filter_local')
-    for c_tile in nl.affine_range(C_NUM_TILES):
-        i_cin_tile, i_w = _create_indices(C_TILE_SIZE, W_f)
-        i_cin = i_cin_tile + c_tile * 128
-        i_h = 0
-        filter_local[c_tile, i_cin_tile, i_w * H_f + i_h] = nl.load(filter_ref[i_cin, i_h, i_h, i_w])
-
-    out_sb = nl.zeros((N, C_NUM_TILES, nl.par_dim(C_TILE_SIZE), out_image_size),
-                      dtype=dtype, buffer=nl.sbuf, name='output')
+    C_NUM_TILES = div_ceil(C_in, 128)
+    C_TILE_SIZE = min(C_in, 128)
 
     for i_n in nl.affine_range(N):
         for c_tile in nl.affine_range(C_NUM_TILES):
-            for i_out in nl.affine_range(out_image_size):
-                i_p_a = nl.arange(C_TILE_SIZE)[:, None]
-                i_f_a = nl.arange(W_f)[None, :]
-                prod = nisa.tensor_tensor(
-                    img_local_prefetch_raw[i_n, c_tile, i_p_a, i_f_a + i_out],
-                    filter_local[c_tile, i_p_a, i_f_a],
-                    np.multiply
-                )
-                out_sb[i_n, c_tile, i_p_a, i_out] = nisa.tensor_reduce(np.add, prod[i_p_a, i_f_a], axis=[1])
+            c_start = c_tile * C_TILE_SIZE
+            c_end = min(c_start + C_TILE_SIZE, C_in)
+            tile_c = c_end - c_start
 
-    # Write SBUF -> HBM result and return it
-    for n in nl.affine_range(N):
-        for c_tile in nl.affine_range(C_NUM_TILES):
-            i_cout, i_k0, i_k1 = _create_indices(C_TILE_SIZE, K0, K1)
-            c_out = c_tile * C_TILE_SIZE + i_cout
-            i_out = i_k1 * K0 + i_k0
-            mask = (c_out < C_out)
-            nl.store(out_hbm[n, c_out, i_k0, i_k1], out_sb[n, c_tile, i_cout, i_out], mask=mask)
+            # P=C_TILE_SIZE=128, F=padded_W: load padded image row
+            img_local = nl.ndarray((C_TILE_SIZE, padded_W), dtype=dtype, buffer=nl.sbuf)
+            nisa.memset(dst=img_local, value=0.0)
+            img_row = nl.ndarray((C_TILE_SIZE, W), dtype=dtype, buffer=nl.sbuf)
+            nisa.dma_copy(dst=img_row[0:tile_c, 0:W],
+                          src=img_ref[i_n, c_start:c_end, 0, 0:W])
+            nisa.tensor_copy(dst=img_local[0:tile_c, W_padding_l:W_padding_l+W],
+                             src=img_row[0:tile_c, 0:W])
+
+            # P=C_TILE_SIZE=128, F=W_f: load filter row
+            filt_local = nl.ndarray((C_TILE_SIZE, W_f), dtype=dtype, buffer=nl.sbuf)
+            nisa.dma_copy(dst=filt_local[0:tile_c, 0:W_f],
+                          src=filter_ref[c_start:c_end, 0, 0, 0:W_f])
+
+            for i_out in nl.affine_range(K1):
+                prod = nl.ndarray((C_TILE_SIZE, W_f), dtype=dtype, buffer=nl.sbuf)
+                nisa.tensor_tensor(dst=prod[0:tile_c, 0:W_f],
+                                   data1=img_local[0:tile_c, i_out:i_out+W_f],
+                                   data2=filt_local[0:tile_c, 0:W_f],
+                                   op=nl.multiply)
+                out = nl.ndarray((C_TILE_SIZE, 1), dtype=dtype, buffer=nl.sbuf)
+                nisa.tensor_reduce(dst=out[0:tile_c, 0:1],
+                                   op=nl.add, data=prod[0:tile_c, 0:W_f],
+                                   axis=1, keepdims=True)
+                nisa.dma_copy(dst=out_hbm[i_n, c_start:c_end, 0, i_out:i_out+1],
+                              src=out[0:tile_c, 0:1])
 
     return out_hbm
 
