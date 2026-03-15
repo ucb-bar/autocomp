@@ -1,4 +1,5 @@
 import pathlib
+import os
 
 from autocomp.common import logger
 
@@ -11,7 +12,7 @@ def copy_candidate(candidate: 'CodeCandidate') -> 'CodeCandidate':
         plan=candidate.plan,
         code=candidate.code,
         score=candidate.score,
-        hw_feedback=candidate.hw_feedback[:],  # Copy the hw_feedback list
+        spad_acc_stats=candidate.spad_acc_stats[:],  # Copy the spad_acc_stats list
         plan_gen_model=candidate.plan_gen_model,
         code_gen_model=candidate.code_gen_model,
         stdout=candidate.stdout,
@@ -28,7 +29,7 @@ class CodeCandidate:
     """
     Represents a single version of the code with an associated optimization plan.
     """
-    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, hw_feedback: list[str]=None,
+    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, spad_acc_stats: list[str]=None,
                  plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
@@ -40,10 +41,10 @@ class CodeCandidate:
             self.implemented = True
             self.code = code
 
-        if hw_feedback is None:
-            self.hw_feedback = list()
+        if spad_acc_stats is None:
+            self.spad_acc_stats = list()
         else:
-            self.hw_feedback = hw_feedback # hw_feedback to pass to the next iteration
+            self.spad_acc_stats = spad_acc_stats # spad_acc_stats to pass to the next iteration
 
         self.plan_gen_model = plan_gen_model
         self.code_gen_model = code_gen_model
@@ -58,11 +59,11 @@ class CodeCandidate:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
         escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
         return repr_str
 
-    def update_hw_feedback(self, hw_feedback: list[str]) -> None:
-        self.hw_feedback.extend(hw_feedback)
+    def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:
+        self.spad_acc_stats.extend(spad_acc_stats)
 
 class CodeRepository:
     """
@@ -102,7 +103,8 @@ class CodeRepository:
         """Save the code of the candidates for a given iteration."""
         for c_i, candidate in enumerate(self.get_candidates(iteration)):
             path = save_dir / f"candidate_{c_i}.txt"
-            with open(path, "w") as f:
+            # Use UTF-8 explicitly to avoid Windows cp1252 encoding errors.
+            with open(path, "w", encoding="utf-8", errors="replace") as f:
                 f.write(repr(candidate))
             logger.debug("Saved candidate code to %s", path)
 
@@ -112,12 +114,14 @@ class CodeRepository:
         candidates = []
         for path in candidate_paths:
             try:
-                cand = eval(path.read_text())
+                cand = eval(path.read_text(encoding="utf-8", errors="replace"))
                 logger.debug("Loaded candidate from %s", path)
                 candidates.append(cand)
             except Exception as e:
                 logger.error("Error loading candidate from %s: %s", path, e)
-                import pdb; pdb.set_trace()
+                # Avoid dropping into an interactive debugger during normal runs.
+                if os.getenv("AUTOCOMP_DEBUG_PDB", "").strip():
+                    import pdb; pdb.set_trace()
                 continue
         self.add_candidates(candidates, iteration)
         return len(candidates)

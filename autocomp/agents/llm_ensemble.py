@@ -6,6 +6,11 @@ from autocomp.search.prob import Prob
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.code_repo import CodeCandidate
 
+
+def _safe_model_suffix(model: str) -> str:
+    return str(model).replace("/", "_")
+
+
 class LLMEnsemble:
     def __init__(self, llms: list[LLMAgent]):
         self.llms = llms
@@ -57,7 +62,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model))
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model))
 
         responses = []
         for result in self._run_parallel(tasks):
@@ -84,7 +90,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                this_model_save_strs = [save_str + "_" + model for save_str in save_strs]
                 tasks.append((llm.propose_optimizations_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs,
                                     prob,
                                     force_opt_menu_lst, 
@@ -127,7 +134,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                tasks.append((llm.propose_optimizations, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model,
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                tasks.append((llm.propose_optimizations, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model,
                                     prob,
                                     force_opt_menu, 
                                     prompt_end, 
@@ -154,7 +162,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                this_model_save_strs = [save_str + "_" + model for save_str in save_strs]
                 tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
 
         cands = []
@@ -167,7 +176,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                tasks.append((llm.implement_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, code_icl_examples, prob))
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                tasks.append((llm.implement_code, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model, code_icl_examples, prob))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -179,7 +189,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                tasks.append((llm.combine_candidates, candidates, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob))
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                tasks.append((llm.combine_candidates, candidates, num_to_gen_per_agent[i], save_dir, save_str + "_" + model, prob))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -195,7 +206,8 @@ class LLMEnsemble:
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                model = _safe_model_suffix(self.llms[i].llm_client.model)
+                this_model_save_strs = [save_str + "_" + model for save_str in save_strs]
                 tasks.append((llm.reimplement_failed_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob))
 
         cands = []

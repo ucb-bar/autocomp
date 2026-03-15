@@ -28,55 +28,44 @@ class TpuLLMAgent(LLMAgent):
 
     def get_opt_menu_options(self, prob: Prob):
         """Get optimization menu options for Pallas/TPU kernels"""
-        return [
-            "eliminate loads and stores as much as possible, keeping data in VMEM instead",
-            "minimize data movement between HBM and VMEM",
-            "overlap data movement and compute using pipelining",
-            "improve data layout and access patterns in VMEM",
-            "loop reordering and restructuring",
-            "avoid rematerializing intermediate tensors",
-            "inline a function so it can be more easily optimized and fused",
-            "skip computation when it is not needed (e.g. it is completely masked out)",
-            "fuse loops (reordering if necessary)",
-            "increase reuse by keeping data in VMEM across outer loop iterations",
-            "hoist redundant operations out of loops",
-            "delay softmax division until after all reductions are complete",
-            "Perform matrix operations on large contiguous blocks within their own loop to maximize compute throughput.",
-            "Group matrix operations into larger blocks, organizing inputs ahead of time, to maximize TPU utilization.",
-            "do operations in lower precision such as bfloat16",
-            "double buffering",
-            "fuse multiple operations into one kernel",
-            "software pipelining",
-            "keep data in VMEM instead of storing to and loading from HBM",
-            "stronger tiling for contraction / moving-free split",
-            "reorder operations to improve locality",
-            "fuse dependent operations",
-            "fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM",
-            "fuse loops that iterate over the same dimension to improve intermediate data reuse",
-            "allocate a larger tile in VMEM so we can keep data in it rather than storing to and loading from HBM",
-            "allocate buffers in lower precision such as bfloat16",
-            "downcast to lower precision during operations",
-            "keep data in the same layout to avoid transpose operations",
-            "eliminate intermediate tensor materialization by using in-place operations (storing the output in the same buffer as the input)",
-            "use the streaming softmax with running max and scaling trick",
-            "optimize accumulation patterns in VMEM",
-            "optimize reduction by fusing tile-wise reductions with transformation passes",
-            "Load larger blocks of data to increase VMEM data reuse and reduce memory traffic",
-            "Add additional loop levels so larger blocks of data can be loaded (multi-level tiling)",
-            "Combine adjacent tiles into contiguous blocks before storing to maximize memory throughput.",
-            "Scan carry-over to parallelize the scan operation",
-            "Hoist memory load operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→VMEM transfers.",
-            "Kernel Fusion via VMEM residency",
-            "Modify one particular parameter to maximize performance",
-            "Target the specific data shapes and shapes of the input and output tensors to maximize performance",
-            "Tile operations in loops to coalesce them",
-            "Use a different TPU operation for better performance",
-            "Overlap execution across compute units through pipelining",
-            "Swap stationary and moving tensors in matrix operations",
-            "Use conditional execution instead of masking, or vice versa",
-            "Simplify or eliminate any unnecessary code",
-            "Other methods not listed here.",
+        base = [
+            "Fuse the reduction loop into a single kernel invocation so partial outputs stay in VMEM/registers and are written once at the end.",
+            "Use smaller autotuned block sizes for M, N, and especially K to improve parallelism, pipelining, and hardware utilization.",
+            "Use multi-level tiling so outer tiles maximize reuse and inner tiles match TPU vector/matmul execution better.",
+            "Keep accumulator tiles resident in VMEM/registers across reduction steps instead of repeatedly reading and writing output tiles.",
+            "Minimize HBM↔VMEM transfers by reusing staged tiles as much as possible before loading new ones.",
+            "Pipeline data movement and compute so the next tiles are loaded while the current tiles are being processed.",
+            "Use asynchronous copies instead of synchronous copies when possible to overlap memory traffic with compute.",
+            "Use double buffering or deeper buffering for input tiles so one buffer can be filled while another is used for compute.",
+            "Choose between compiler-managed staging and manual VMEM scratch staging based on which gives better overlap and lower overhead.",
+            "Reorder loops so the stationary operand is reused longer and the moving operand is streamed efficiently.",
+            "Hoist invariant loads, address calculations, and shape/layout logic out of inner loops.",
+            "Improve VMEM layout and access patterns so tile loads/stores are contiguous and aligned with TPU-friendly access patterns.",
+            "Preserve or transform operand layouts to avoid unnecessary transpose-like movement inside the kernel.",
+            "Use larger contiguous compute blocks only when they improve reuse without causing excessive VMEM or register pressure.",
+            "Use lower precision for inputs and temporary buffers when allowed, while accumulating in higher precision if needed.",
+            "Reduce intermediate tensor materialization by fusing dependent operations into the same kernel.",
+            "Use in-place accumulation/update patterns when safe to avoid unnecessary temporaries.",
+            "Increase parallel work across output tiles so more compute resources stay busy.",
+            "Select a different TPU primitive or matmul form if it maps better to the hardware than the current implementation.",
+            "Target tile sizes, layouts, and scheduling choices to the exact input/output shapes being benchmarked.",
+            "Simplify or remove unnecessary control flow, masking, and bookkeeping inside hot inner loops.",
+            "Other TPU-specific optimizations not listed here."
         ]
+        if prob is not None and getattr(prob, 'prob_type', None) == 'tpu' and getattr(prob, 'prob_id', None) == 0:
+            base = [
+                "Cast inputs to bfloat16 before the matmul while keeping the accumulator in float32. The MXU processes bf16 at 2x the throughput of fp32. Use jax.lax.dot with preferred_element_type=jnp.float32 inside the kernel, or cast x_ref/y_ref to bfloat16 before the @ operator.",
+                "Use jax.lax.dot or jax.lax.dot_general instead of the @ operator inside the kernel to enable explicit transpose fusion and precision control via preferred_element_type.",
+                "Use pltpu.emit_pipeline for the inner K-reduction loop inside an outer pallas_call that partitions M/N tiles across megacore TensorCores. The outer kernel receives full HBM refs (memory_space=pl.ANY) and emit_pipeline manages all HBM->VMEM pipelining automatically.",
+                "Tune tile sizes (bm, bn, bk) jointly for the exact benchmark shapes. Maximize bm*bn for MXU reuse while ensuring m_tiles*n_tiles >= 2*num_cores for megacore utilization. Keep bk small (128-256) for pipelining depth.",
+                "Use pl.Buffered with use_lookahead=True on input BlockSpecs so the compiler begins prefetching tiles as soon as a buffer slot is free, rather than waiting until the iteration before they are needed.",
+                "On the first K iteration (kk==0) write the matmul result directly to z_ref instead of zeroing then accumulating. This eliminates a full-tile zero-store and avoids an unnecessary output-tile prefetch on the first iteration.",
+                "Reorder the grid axes or swap which operand is stationary vs streaming to improve data reuse. For example, making the LHS (x) stationary across consecutive j iterations can reduce redundant HBM->VMEM transfers.",
+                "Use scratch_shapes to allocate explicit VMEM scratch buffers for manual double-buffering or for staging intermediate results, giving more control than compiler-managed pipelining alone.",
+                "Increase parallel work by ensuring the grid has enough output tiles for both TensorCores. If bm and bn are too large, the grid may have too few tiles to keep both cores busy.",
+                "Simplify or remove unnecessary control flow, helper functions, assertions, and Python-level overhead inside the kernel and the pallas_call setup. Minimize compilation complexity.",
+            ]
+        return base
 
     def _get_pallas_isa_documentation(self, prob: Prob = None) -> str:
         """Generate Pallas/TPU ISA documentation for prompts"""
@@ -113,7 +102,7 @@ Memory operations:
 - Can use slicing: x_ref[0:128, 0:64] for partial reads/writes
 
 Important constraints:
-- VMEM size is limited (typically 128KB per core)
+- VMEM size is limited (For reference, the VMEM of a TPU (for generations v4/v5) is typically on the order of 10-100MB, whereas HBM ranges from 10-100GB.)
 - Operations should be tiled to fit in VMEM
 - Use jax.block_until_ready() after kernel calls to ensure completion before timing
 - Kernel functions should be pure (no side effects except through refs)
@@ -375,6 +364,45 @@ def emit_pipeline(
   ... # Returns a custom pipeline given an inner kernel and BlockSpecs.
 The dimension_semantics and core_axis arguments are used for partitioning the kernel grid over Megacore (see below).
 
+jax.experimental.pallas.tpu.emit_pipeline
+jax.experimental.pallas.tpu.emit_pipeline(body, *, grid, in_specs=(), out_specs=(), tiling=None, should_accumulate_out=False, core_axis=None, core_axis_name=None, dimension_semantics=None, trace_scopes=True, no_pipelining=False, _explicit_indices=False)[source]
+Creates a function to emit a manual pallas pipeline.
+
+This has the same semantics as pallas_call but is meant to be called inside pallas_call for nesting grids. This is useful when you need to have separate windowing strategies for communication and computation.
+
+The new argument should_accumulate_out can be used to specify which outputs we should accumulate into automatically within and across pipeline invocations.
+
+Parameters
+:
+body – pallas kernel to set up pipeline for.
+
+grid (tuple[int | jax.Array, ...]) – a pallas grid definition.
+
+in_specs – input pallas block specs
+
+out_specs – output pallas block specs
+
+tiling (tpu_info.Tiling | None) – optional tiling to assume for the refs.
+
+should_accumulate_out (bool) – booleans to indicate which outputs should be treated as accumulators.
+
+core_axis (tuple[int, ...] | int | None) – optional int or tuple of int, indicates whether or not to partition the grid along the core axis.
+
+core_axis_name (tuple[str, ...] | str | None) – optional str or tuple of str, indicates whether or not to partition the grid along the core axis.
+
+dimension_semantics (tuple[GridDimensionSemantics, ...] | None) – optional tuple of GridDimensionSemantics (e.g. PARALLEL or ARBITRARY).
+
+trace_scopes (bool) – optional bool, indicates whether to annotate each region in the pipeline using named_scope.
+
+no_pipelining (bool) – If True, turns off pipelining and all copies will be made synchronous. This is useful for debugging multiple-buffering related bugs.
+
+_explicit_indices (bool) – If True, the body will receive the iteration indices as its first argument. This parameter is meant for internal use only.
+
+"For matmul, emit_pipeline can be used for the inner K-reduction loop inside an outer pallas_call that handles M/N tiling and megacore parallelism. Example pattern:\n"
+"  outer pallas_call with grid=(m_tiles, n_tiles) and dimension_semantics=('parallel','parallel')\n"
+"  inner emit_pipeline with grid=(k_tiles,) handling HBM->VMEM pipelining for K reduction\n"
+
+
 Lookahead Prefetch
 Lookahead prefetch is a pipelining feature where the pipeline will attempt to prefetch the next input block as soon as a buffering slot is available, rather than the iteration directly before it would be used. For example, if the kernel had a grid of (8,) and the block indices to fetch on each iteration were 0, 0, 0, 0, 1, 1, 1, 1, then lookahead prefetch will begin fetching both blocks 0 and 1 on iteration 0, whereas the standard pipeline schedule would fetch block 0 on iteration 0 but not begin fetching block 1 until iteration 3. There is a small amount of control flow overhead in performing lookahead so it is disabled by default.
 
@@ -508,16 +536,151 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
 )(x, y)
 5. Performance DebuggingUse these to see what the compiler (and your AutoComp agent) is actually doing.Inspect IR: print(jax.make_jaxpr(your_func)(*args)) (See the "Jaxpr" graph).Force Execution: result.block_until_ready() (Required for accurate timing).Shape/Type: jax.eval_shape(fn, *args) (Dry-run to see output shapes without computing).6. TPU-Specific ConstraintsPadding: Always try to keep dimensions as multiples of 128.Dtypes: Use jnp.bfloat16 for maximum speed on TPU Matrix Units (MXU).Scalar vs Vector: If you see jax.lax.convert_element_type or heavy scalar indexing in your Jaxpr, your code is likely falling back to the slow Scalar Unit.
 """
+        if prob is not None and getattr(prob, 'prob_type', None) == 'tpu' and getattr(prob, 'prob_id', None) == 0:
+            doc += """
+
+High-performance pipelined matmul on TPU
+=========================================
+To match or beat the XLA matmul kernel (jnp.matmul), a Pallas matmul MUST overlap HBM->VMEM data movement with MXU compute. A single-tile or full-K approach with synchronous copies leaves the MXU idle during transfers and achieves very low utilization.
+
+Why pipelining matters for matmul:
+- The MXU can compute a tile matmul in far less time than it takes to load the next tiles from HBM.
+- Without pipelining, the kernel alternates between "loading" and "computing" phases with the MXU idle during loads.
+- With pipelining (double/triple buffering), the DMA engine loads the NEXT tile while the MXU computes the CURRENT tile, keeping both busy simultaneously.
+- This is exactly what XLA's optimized matmul does internally, and what a Pallas kernel must replicate.
+
+Approach 1: Standard 3D grid with compiler-managed pipelining (recommended starting point)
+Use grid=(m_tiles, n_tiles, k_tiles) with K as the LAST axis. The Pallas compiler automatically double-buffers input tiles: while the MXU computes x[i,kk] @ y[kk,j], the DMA prefetches x[i,kk+1] and y[kk+1,j] into a second VMEM buffer. This gives pipelining for free.
+
+```python
+def matmul_kernel(x_ref, y_ref, z_ref):
+    @pl.when(pl.program_id(2) == 0)
+    def _():
+        z_ref[...] = jnp.zeros_like(z_ref)
+    z_ref[...] += x_ref[...] @ y_ref[...]
+
+def matmul(x, y, bm=128, bk=128, bn=128):
+    m, k = x.shape
+    _, n = y.shape
+    return pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+        in_specs=[
+            pl.BlockSpec((bm, bk), lambda i, j, kk: (i, kk)),
+            pl.BlockSpec((bk, bn), lambda i, j, kk: (kk, j)),
+        ],
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, kk: (i, j)),
+        grid=(m // bm, n // bn, k // bk),
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=("parallel", "parallel", "arbitrary")
+        ),
+    )(x, y)
+```
+Key: bk should be SMALL (128-256) so that k_tiles > 1, giving the compiler multiple iterations to pipeline over. Using bk=K (full-K, single iteration) disables pipelining entirely.
+
+Deeper buffering with pl.Buffered:
+By default the compiler uses 2 buffers (double buffering). For matmul with small K tiles, triple buffering can hide more latency:
+```python
+pl.BlockSpec((bm, bk), lambda i, j, kk: (i, kk),
+             pipeline_mode=pl.Buffered(buffer_count=3))
+```
+
+Approach 2: emit_pipeline with megacore (highest performance)
+For maximum performance, use an outer pallas_call that partitions over cores, and an inner emit_pipeline that handles tiling and pipelining. The outer kernel receives full HBM refs (memory_space=pl.ANY), and emit_pipeline manages all HBM->VMEM transfers with automatic pipelining.
+
+```python
+def matmul_kernel_body(x_ref, y_ref, z_ref):
+    @pl.when(pl.program_id(2) == 0)
+    def _():
+        z_ref[...] = jnp.zeros_like(z_ref)
+    z_ref[...] += x_ref[...] @ y_ref[...]
+
+def outer_kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref):
+    pltpu.emit_pipeline(
+        matmul_kernel_body,
+        grid=(m_tiles, n_tiles, k_tiles),
+        in_specs=[
+            pl.BlockSpec((bm, bk), lambda i, j, kk: (i, kk)),
+            pl.BlockSpec((bk, bn), lambda i, j, kk: (kk, j)),
+        ],
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, kk: (i, j)),
+        core_axis=0,
+        dimension_semantics=("parallel", "parallel", "arbitrary"),
+    )(x_hbm_ref, y_hbm_ref, z_hbm_ref)
+
+result = pl.pallas_call(
+    outer_kernel,
+    out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+    in_specs=[pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pl.ANY)],
+    out_specs=pl.BlockSpec(memory_space=pl.ANY),
+    grid=(num_cores,),
+    compiler_params=pltpu.CompilerParams(
+        dimension_semantics=("parallel",)),
+)(x, y)
+```
+
+Tile size guidance for matmul:
+- bk (K tile): Use 128 or 256. This is the most important parameter. Small bk = more K iterations = more pipelining opportunities. bk=K (full reduction in one step) means NO pipelining at all.
+- bm, bn (output tile): Use 128-512. Larger tiles improve MXU reuse but reduce grid parallelism. Balance so that m_tiles * n_tiles >= 2 * num_cores for megacore utilization.
+- Grid ordering: The K axis MUST be last (it is the reduction/"arbitrary" axis). For the M and N axes, order them so the operand that benefits most from reuse is stationary across consecutive iterations.
+- All tile dimensions in the last two axes must be divisible by 8 and 128 respectively.
+
+Common anti-patterns that prevent matching XLA matmul performance:
+- Using bk=K (full K dimension) which creates only 1 K iteration and disables pipelining.
+- Using bm=M, bn=N (full output) which creates only 1 output tile and prevents megacore parallelism.
+- Using manual sync_copy in a fori_loop instead of letting BlockSpec + compiler handle pipelining automatically.
+- Not setting dimension_semantics, which leaves the second TensorCore idle.
+"""
         return doc
 
     def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
+        is_matmul = (prob is not None
+                     and getattr(prob, 'prob_type', None) == 'tpu'
+                     and getattr(prob, 'prob_id', None) == 0)
+
         rules = [
-            "The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.",
-            "Maintain correct tensor shapes and indexing patterns.",
+            "The rewritten program must remain semantically equivalent to the original program, within a small numerical tolerance.",
+            "Maintain correct tensor shapes, dtypes, indexing patterns, and output layout.",
             "The following imports have already been run: import jax; import jax.numpy as jnp; from jax.experimental import pallas as pl; from jax.experimental.pallas import tpu as pltpu; import numpy as np;",
-            "Use pl.pallas_call() to wrap kernel functions and make them callable from JAX.",
-            "Kernel functions should receive memory references (x_ref, y_ref, o_ref, etc.) and operate on them.",
-            "Use jax.block_until_ready() after kernel calls to ensure completion before timing.",
+            "Use pl.pallas_call() to wrap TPU kernel functions and make them callable from JAX.",
+            "Kernel functions should receive memory references (x_ref, y_ref, o_ref, etc.) and operate on them directly.",
+            "Use jax.block_until_ready() on the final result before timing or returning from the benchmark harness.",
+        ]
+
+        if is_matmul:
+            rules += [
+                "For matmul, the most important optimization is overlapping HBM->VMEM data movement with MXU compute via pipelining. Use a 3D grid (m_tiles, n_tiles, k_tiles) with SMALL K tiles (bk=128 or 256) so the Pallas compiler can automatically double-buffer input tiles across K iterations.",
+                "With the standard 3D grid approach, the output tile (z_ref) is kept in VMEM by the compiler across all K iterations for a given (i,j). The pattern z_ref[...] += x_ref[...] @ y_ref[...] does NOT cause HBM read-modify-write; it is VMEM-resident accumulation. This is safe and efficient.",
+                "Do NOT use bk=K (full K dimension in one tile) because it creates only 1 K iteration and completely disables compiler pipelining. Small bk with many K iterations is essential.",
+                "Do NOT use bm=M and bn=N (full output in one tile) because it creates only 1 output tile and prevents megacore parallelism. Use bm=128-512 and bn=128-512.",
+                "Do NOT use manual pltpu.sync_copy in a fori_loop for the K reduction. Let BlockSpec + the Pallas compiler handle all HBM->VMEM data movement and pipelining automatically.",
+                "Use dimension_semantics=('parallel', 'parallel', 'arbitrary') so both TensorCores are utilized. The K axis must be 'arbitrary' (last).",
+                "Consider pltpu.emit_pipeline for the inner tiling loop with an outer pallas_call that partitions over megacore TensorCores for maximum performance.",
+                "Consider pl.Buffered(buffer_count=3) on input BlockSpecs for deeper prefetching beyond the default double buffering.",
+                "Prefer hardware-friendly tile sizes: last two dims divisible by 8 and 128 respectively. Tune bm, bn, bk for the specific input shapes.",
+            ]
+        else:
+            rules += [
+                "Prefer kernel structures that reduce HBM↔VMEM traffic, especially by keeping accumulator tiles resident and writing outputs once when possible.",
+                "Prefer tiling strategies that create enough tile-level parallelism and enough K-tiles to support reuse and pipelining; do not default to a single giant tile unless it is clearly best.",
+                "When optimizing contractions or matmuls, strongly consider fusing the reduction loop inside one kernel invocation so partial outputs are not repeatedly read and written.",
+                "Prefer hardware-friendly tile sizes for M, N, and especially K; treat tile sizes as tunable rather than fixed.",
+                "Prefer smaller K tiles when they enable better overlap of memory movement and compute.",
+                "Consider both compiler-managed staging via BlockSpec/memory spaces and manual staging into VMEM scratch buffers; choose the simpler option unless manual staging clearly improves performance.",
+                "When staging tiles manually, prefer asynchronous copies and pipelined execution over purely synchronous copy-then-compute structure.",
+                "Consider double buffering when there is repeated tile loading and enough work per step to hide memory latency.",
+                "Do not introduce extra output-tile read-modify-write traffic across reduction steps unless there is a clear reason.",
+            ]
+
+        rules += [
+            "Prefer loop orders and grid orders that maximize reuse of stationary operands across adjacent iterations.",
+            "Preserve or improve operand layout and access patterns so reads/writes are contiguous, aligned, and TPU-friendly.",
+            "Avoid unnecessary transpose-like data movement or layout conversions inside hot loops.",
+            "Use lower precision inputs or temporary buffers such as bfloat16 when allowed by the problem, while preserving required output accuracy.",
+            "Hoist invariant computations, indexing math, and shape-dependent logic out of hot inner loops whenever possible.",
+            "Avoid rematerializing intermediate tensors or allocating unnecessary temporaries inside inner loops.",
+            "Do not make optimization changes that only affect code style or boilerplate without improving the generated kernel structure.",
         ]
         if planning:
             rules.append("Limit the scope of the plan to the selected optimization.")
@@ -529,7 +692,6 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
         if coding:
             rules.append("Optimize the test() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
-        rules.append("Ensure that loop dependencies are not violated.")
 
         # Problem-specific rules can be added here if needed
         # if prob and prob.prob_type == "tpu-tutorial" and prob.prob_id == 0:
@@ -556,48 +718,6 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
                                           dropout_menu_options: float,
                                           translate: bool,
                                          ) -> str:
-        def _extract_util_percent(text: str | None) -> float | None:
-            if not text:
-                return None
-            for line in text.split("\n"):
-                l = line.strip()
-                if not l:
-                    continue
-                m = re.search(r"(?i)\\b(utilization|util)\\b\\s*[:=]\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(%)?", l)
-                if not m:
-                    continue
-                val = float(m.group(2))
-                has_pct = m.group(3) is not None
-                if not has_pct and 0.0 <= val <= 1.0:
-                    val *= 100.0
-                if val < 0 or val > 1000:
-                    continue
-                return round(val, 3)
-            return None
-
-        def _extract_spad_acc_lines(text: str | None) -> list[str]:
-            if not text:
-                return []
-            lines = []
-            for raw in text.split("\n"):
-                l = raw.strip()
-                if not l:
-                    continue
-                ll = l.lower()
-                if any(k in ll for k in ("spad", "scratchpad", "vmem", "accumulator", "acc ", "acc=", "acc:")) and any(
-                    k in ll for k in ("util", "usage", "used", "bytes", "kb", "mb", "capacity")
-                ):
-                    lines.append(l)
-            # Deduplicate preserve order
-            seen = set()
-            out = []
-            for l in lines:
-                if l in seen:
-                    continue
-                seen.add(l)
-                out.append(l)
-            return out
-
         # Select which menu options will appear
         menu_options_text = ""
         if translate:
@@ -609,8 +729,6 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
             if shuffle_opts:
                 random.shuffle(opt_lst)
         include_score_feedback = random.random() < give_score_feedback
-        include_util_feedback = random.random() < give_util_feedback
-        include_spad_acc_feedback = random.random() < give_spad_acc_feedback
 
         parents_prompt = ""
         cur_cand = candidate
@@ -618,24 +736,6 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
             # Go up to each parent and append to front of prompt
             if include_score_feedback and (cur_cand.score is not None):
                 parents_prompt = f"The latency of this code was {cur_cand.score} ms.\n" + parents_prompt
-
-            # TPU utilization feedback (if present in stdout/stderr).
-            if include_util_feedback:
-                util = _extract_util_percent(getattr(cur_cand, "stdout", None)) or _extract_util_percent(getattr(cur_cand, "stderr", None))
-                if util is not None:
-                    parents_prompt = f"The TPU utilization of this code was {util}%.\n" + parents_prompt
-
-            # Scratchpad/accumulator feedback. Prefer persisted spad_acc_stats if present.
-            if include_spad_acc_feedback:
-                spad_lines: list[str] = []
-                if hasattr(cur_cand, "spad_acc_stats") and cur_cand.spad_acc_stats:
-                    spad_lines = list(cur_cand.spad_acc_stats)[-6:]
-                else:
-                    spad_lines = _extract_spad_acc_lines(getattr(cur_cand, "stdout", None)) or _extract_spad_acc_lines(getattr(cur_cand, "stderr", None))
-                if spad_lines:
-                    # Keep it short and high-signal.
-                    bullet_lines = "\n".join([f"- {l}" for l in spad_lines[:6]])
-                    parents_prompt = "Scratchpad/accumulator feedback:\n" + bullet_lines + "\n" + parents_prompt
 
             if not include_ancestors:
                 parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
@@ -660,6 +760,10 @@ result = jax.lax.fori_loop(0, 100, lambda i, val: val + i, 0)
             menu_options_text += f"{i+1}. {opt}\n"
         
         prompt_text += "Please carefully review the Pallas code to identify any inefficiencies. "
+        if prob is not None and getattr(prob, 'prob_type', None) == 'tpu' and getattr(prob, 'prob_id', None) == 0:
+            prompt_text += "The goal is to match or beat XLA's optimized jnp.matmul, which achieves ~0.08ms for 1024x1024x1024 float32 on TPU v6e. "
+            prompt_text += "The key to reaching that level is overlapping HBM->VMEM data movement with MXU compute via pipelining, using the right precision, and maximizing MXU throughput. "
+            prompt_text += "Do NOT repeat optimizations that have already been applied to the current code. Choose a fundamentally different approach from what is already there. "
         prompt_text += "Performance can be improved by using the following optimizations:\n"
         prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
         

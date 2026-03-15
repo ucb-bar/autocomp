@@ -314,7 +314,7 @@ class SearchStrategy:
     def init_wandb(self):
         # start a new wandb run to track this script
         wandb.init(
-            entity=,
+            entity="charleshong3-team",
             # set the wandb project where this run will be logged
             project=None,
             # track hyperparameters and run metadata
@@ -767,6 +767,10 @@ def main():
     # Initialize eval backend and agent ensembles
     eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
 
+    # if backend_name == "tpu" and hasattr(eval_backend, "start_tpu_vm"):
+    #     logger.info("Starting TPU VM before search...")
+    #     eval_backend.start_tpu_vm()
+
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
     elif search_strategy == "beam":
@@ -777,7 +781,15 @@ def main():
                                        prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent)
 
     # Start the optimization process
-    optimizer.optimize(iterations)
+    try:
+        optimizer.optimize(iterations)
+    finally:
+        if backend_name == "tpu" and hasattr(eval_backend, "stop_tpu_vm"):
+            logger.info("Stopping TPU VM after search...")
+            try:
+                eval_backend.stop_tpu_vm()
+            except Exception as e:
+                logger.error("Failed to stop TPU VM: %s", e)
 
 if __name__ == "__main__":
     main()

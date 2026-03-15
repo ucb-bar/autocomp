@@ -72,7 +72,7 @@ class TpuHardwareBackend(EvalBackend):
 		ssh_identity_file: str | None = None,
 		ssh_extra_args: list[str] | None = None,
 	):
-		self.tpu_name = tpu_name or "my-v6e-tpu"
+		self.tpu_name = tpu_name or "tpu-node"
 		self.tpu_zone = tpu_zone or "us-east5-a"
 		# Ensure gcloud commands target the same project the TPU was created in.
 		# Default matches the create command in _ensure_tpu_vm_running().
@@ -183,6 +183,38 @@ class TpuHardwareBackend(EvalBackend):
 		cmd += [source, dest]
 		return cmd
 
+	def start_tpu_vm(self) -> None:
+		gcloud = _gcloud_bin()
+		if shutil.which(gcloud) is None:
+			raise FileNotFoundError("gcloud not found on PATH; cannot start TPU VM.")
+		cmd = [
+			gcloud, "compute", "tpus", "tpu-vm", "start", self.tpu_name,
+			f"--zone={self.tpu_zone}",
+			f"--project={self.tpu_project}",
+		]
+		logger.info("Starting TPU VM: %s", " ".join(cmd))
+		proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+		if proc.returncode != 0:
+			logger.error("Failed to start TPU VM (exit %s). stderr:\n%s", proc.returncode, proc.stderr)
+			raise RuntimeError(f"Failed to start TPU VM '{self.tpu_name}' (exit {proc.returncode}).")
+		logger.info("TPU VM '%s' started successfully.", self.tpu_name)
+
+	def stop_tpu_vm(self) -> None:
+		gcloud = _gcloud_bin()
+		if shutil.which(gcloud) is None:
+			raise FileNotFoundError("gcloud not found on PATH; cannot stop TPU VM.")
+		cmd = [
+			gcloud, "compute", "tpus", "tpu-vm", "stop", self.tpu_name,
+			f"--zone={self.tpu_zone}",
+			f"--project={self.tpu_project}",
+		]
+		logger.info("Stopping TPU VM: %s", " ".join(cmd))
+		proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+		if proc.returncode != 0:
+			logger.error("Failed to stop TPU VM (exit %s). stderr:\n%s", proc.returncode, proc.stderr)
+			raise RuntimeError(f"Failed to stop TPU VM '{self.tpu_name}' (exit {proc.returncode}).")
+		logger.info("TPU VM '%s' stopped successfully.", self.tpu_name)
+
 	def open_tpu_shell(self) -> int:
 		cmd = self._build_ssh_cmd(remote_command=None, allocate_tty=True, batch_mode=False)
 		logger.info("Opening TPU shell: %s", " ".join(cmd))
@@ -194,9 +226,6 @@ class TpuEvalBackend(TpuHardwareBackend):
 
 	def ensure_tpu_vm(self) -> None:
 
-		#if direct ssh
-		if self._transport_mode() != "gcloud":
-			return
 		if self._tpu_vm_checked:
 			return
 		_ensure_tpu_vm_running(
@@ -224,63 +253,6 @@ class TpuEvalBackend(TpuHardwareBackend):
 				except ValueError:
 					continue
 		return None
-
-	def _extract_util_percent(self, output_text: str) -> float | None:
-		for line in output_text.split("\n"):
-			l = line.strip()
-			if not l:
-				continue
-			m = re.search(r"(?i)\b(utilization|util)\b\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(%)?", l)
-			if not m:
-				continue
-			val = float(m.group(2))
-			has_pct = m.group(3) is not None
-			if not has_pct and 0.0 <= val <= 1.0:
-				val *= 100.0
-			if val < 0 or val > 1000:
-				continue
-			return round(val, 3)
-		return None
-
-	def _extract_spad_acc_feedback_lines(self, output_text: str) -> list[str]:
-		lines: list[str] = []
-		for raw in output_text.split("\n"):
-			l = raw.strip()
-			if not l:
-				continue
-			ll = l.lower()
-			if any(k in ll for k in ("spad", "scratchpad", "vmem", "accumulator", "acc " , "acc=" , "acc:")) and any(
-				k in ll for k in ("util", "usage", "used", "bytes", "kb", "mb", "capacity")
-			):
-				lines.append(l)
-		seen = set()
-		uniq: list[str] = []
-		for l in lines:
-			if l in seen:
-				continue
-			seen.add(l)
-			uniq.append(l)
-		return uniq
-
-	def _append_autocomp_hw_feedback_block(
-		self, *, stdout_text: str, stderr_text: str
-	) -> tuple[str, float | None, list[str]]:
-		util = self._extract_util_percent(stdout_text) or self._extract_util_percent(stderr_text)
-		spad_acc_lines = self._extract_spad_acc_feedback_lines(stdout_text)
-		if not spad_acc_lines:
-			spad_acc_lines = self._extract_spad_acc_feedback_lines(stderr_text)
-
-		if util is None and not spad_acc_lines:
-			return stdout_text, None, []
-
-		block_lines: list[str] = ["", "AUTOCOMP TPU FEEDBACK:"]
-		if util is not None:
-			block_lines.append(f"util: {util}%")
-		for l in spad_acc_lines[:8]:
-			block_lines.append(l)
-		block_lines.append("END AUTOCOMP TPU FEEDBACK")
-		block = "\n".join(block_lines) + "\n"
-		return stdout_text + block, util, spad_acc_lines
 
 	def _run_scp(self, local_path: pathlib.Path, remote_path: str) -> subprocess.CompletedProcess:
 		#upload file to tpu
@@ -375,6 +347,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		
 import os
 import time
+import timeit
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -383,44 +356,11 @@ from jax.experimental.pallas import tpu as pltpu
 
 """
 		harness = r"""
-def _default_peak_tflops(dtype) -> float:
-    override = os.getenv("AUTOCOMP_TPU_PEAK_TFLOPS")
-    if override:
-        try:
-            return float(override)
-        except ValueError:
-            pass
-    dt = jnp.dtype(dtype)
-    if dt in (jnp.bfloat16, jnp.float16):
-        return float(os.getenv("AUTOCOMP_TPU_V6E_BF16_TFLOPS", "918"))
-    if dt == jnp.float32:
-        return float(os.getenv("AUTOCOMP_TPU_V6E_FP32_TFLOPS", "459"))
-    return float(os.getenv("AUTOCOMP_TPU_V6E_BF16_TFLOPS", "918"))
-
-
-def _print_hw_feedback(*, M: int, K: int, N: int, dtype, latency_ms: float) -> None:
-    flops = 2.0 * M * K * N
-    secs = max(1e-9, latency_ms / 1000.0)
-    achieved_tflops = flops / secs / 1e12
-    peak_tflops = max(1e-9, _default_peak_tflops(dtype))
-    util_pct = max(0.0, min(100.0, achieved_tflops / peak_tflops * 100.0))
-
-    print(f"Utilization: {util_pct:.2f}%")
-    print(f"Achieved TFLOP/s: {achieved_tflops:.3f} (peak={peak_tflops:.3f})")
-
-    itemsize = np.dtype(np.array(0, dtype=np.dtype(jnp.dtype(dtype))).dtype).itemsize
-    scratchpad_bytes = (K + N) * itemsize
-    acc_bytes = N * np.dtype(np.float32).itemsize
-    print(f"Scratchpad utilization is {scratchpad_bytes/1024.0:.1f}KB (estimate).")
-    print(f"Accumulator utilization is {acc_bytes/1024.0:.1f}KB (estimate).")
-
-
 def _run_autocomp_harness():
-    # Fixed problem size for consistent evaluation across all iterations/candidates.
-    # Intentionally not configurable so search results are comparable run-to-run.
     M = 1024
     K = 1024
     N = 1024
+    NTRIALS = 100
     dtype_str = os.getenv("AUTOCOMP_TPU_DTYPE", "float32")
     dtype = getattr(jnp, dtype_str, jnp.float32)
 
@@ -439,15 +379,13 @@ def _run_autocomp_harness():
         print("FAIL: Verification failed.")
         raise SystemExit(1)
 
-    # Timed run.
-    t0 = time.perf_counter()
-    out2 = test(x, y)
-    jax.block_until_ready(out2)
-    t1 = time.perf_counter()
-
-    latency_ms = (t1 - t0) * 1000.0
+    # Timed run: use timeit over multiple trials for stable measurement.
+    total_secs = timeit.timeit(
+        lambda: jax.block_until_ready(test(x, y)),
+        number=NTRIALS,
+    )
+    latency_ms = (total_secs / NTRIALS) * 1000.0
     print(f"Latency: {latency_ms:.3f} ms")
-    _print_hw_feedback(M=M, K=K, N=N, dtype=dtype, latency_ms=latency_ms)
     print("SUCCESS: test() matches JAX baseline.")
 
 
@@ -458,7 +396,7 @@ if __name__ == "__main__":
 
 	def run_file_on_tpu(self, file_path: str | pathlib.Path, remote_filename: str = "remote_upload.py") -> dict:
 		
-		self.ensure_tpu_vm()
+		# self.ensure_tpu_vm()
 		local_file = pathlib.Path(file_path)
 		if not local_file.exists():
 			raise FileNotFoundError(f"File not found: {file_path}")
@@ -468,8 +406,6 @@ if __name__ == "__main__":
 			"latency": None,
 			"stdout": "",
 			"stderr": "",
-			"util": None,
-			"spad_acc_stats": [],
 		}
 		
 		# Upload file to TPU
@@ -516,13 +452,8 @@ if __name__ == "__main__":
 		except ValueError:
 			prog_rc = 1
 
-		enriched_stdout, util, spad_acc_lines = self._append_autocomp_hw_feedback_block(
-			stdout_text=prog_stdout, stderr_text=prog_stderr
-		)
-		result_dict["stdout"] = enriched_stdout
+		result_dict["stdout"] = prog_stdout
 		result_dict["stderr"] = prog_stderr if prog_stderr else (run_proc.stderr or "")
-		result_dict["util"] = util
-		result_dict["spad_acc_stats"] = spad_acc_lines
 
 		if prog_rc != 0:
 			logger.error(
@@ -545,7 +476,7 @@ if __name__ == "__main__":
 		return result_dict
 
 	def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
-		self.ensure_tpu_vm()
+		# self.ensure_tpu_vm()
 
 		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 		eval_dir = pathlib.Path(__file__).parent / "eval_outputs" / timestamp
@@ -565,8 +496,6 @@ if __name__ == "__main__":
 				"latency": None,
 				"stdout": "",
 				"stderr": "",
-				"util": None,
-				"spad_acc_stats": [],
 			}
 
 			# Write candidate code locally, upload, run, then scp back outputs.
@@ -621,19 +550,14 @@ if __name__ == "__main__":
 			except ValueError:
 				prog_rc = 1
 
-			enriched_stdout, util, spad_acc_lines = self._append_autocomp_hw_feedback_block(
-				stdout_text=prog_stdout, stderr_text=prog_stderr
-			)
-			result_dict["stdout"] = enriched_stdout
+			result_dict["stdout"] = prog_stdout
 			result_dict["stderr"] = prog_stderr if prog_stderr else (run_proc.stderr or "")
-			result_dict["util"] = util
-			result_dict["spad_acc_stats"] = spad_acc_lines
 
 			# Always write a per-candidate combined output for debugging.
 			output_path = eval_dir / f"candidate_{idx}_output.txt"
 			with open(output_path, "w", encoding="utf-8", errors="replace") as f:
 				f.write("=== PROGRAM STDOUT ===\n")
-				f.write(enriched_stdout)
+				f.write(prog_stdout)
 				f.write("\n=== PROGRAM STDERR ===\n")
 				f.write(prog_stderr)
 				f.write("\n=== SSH STDERR ===\n")
@@ -683,7 +607,7 @@ if __name__ == "__main__":
 	file_path = sys.argv[1]
 
 	# Ensure TPU VM exists before attempting to scp/ssh.
-	backend.ensure_tpu_vm()
+	# backend.ensure_tpu_vm()
 	
 	
 	print(f"Running {file_path} on TPU...")
