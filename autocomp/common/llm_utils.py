@@ -14,7 +14,6 @@ from google.genai import types
 import anthropic
 from anthropic import AsyncAnthropic
 from together import Together, AsyncTogether
-from mistralai_gcp import MistralGoogleCloud
 
 from autocomp.common import logger
 
@@ -668,8 +667,6 @@ class LLMClient():
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
             self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
-        # elif self.provider == "mistralgcp":
-        #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
@@ -887,15 +884,6 @@ class LLMClient():
                             responses.append(c.message.content)
                     else:
                         responses.append(str(openai_response))
-        elif isinstance(self.client, MistralGoogleCloud):
-            for _ in range(num_candidates):
-                mistral_response = self.client.chat.complete(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    n=1,
-                    temperature=temperature,
-                )
-                responses.append(mistral_response.choices[0].message.content)
         elif isinstance(self.client, genai.Client):
             # call separately since candidates are limited to 8
             gemini_response = self.client.models.generate_content(
