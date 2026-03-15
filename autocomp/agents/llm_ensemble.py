@@ -102,6 +102,28 @@ class LLMEnsemble:
                                     translate,
                                     ))
 
+        # Generate optimized menu options per code candidate.
+        # Distribute work across models, similarly to how we divide plans, making a total of BEAM_SIZE calls.
+        # In each iteration, each candidate is processed by one LLMAgent in the ensemble.
+        # Then, the proposed menu options for that candidate are shared with the other LLMAgents in the ensemble.
+        if getattr(self.llms[0], "menu_strategy", "static") != "static":
+            num_to_handle_per_agent = self.divide_work(len(candidate_lst))
+            tasks_new_menus = []
+            curr_candidate_idx = 0
+            for i, llm in enumerate(self.llms):
+                n = num_to_handle_per_agent[i]
+                if n > 0:
+                    candidate_subset = candidate_lst[curr_candidate_idx:curr_candidate_idx+n]
+                    tasks_new_menus.append((llm.propose_new_menu_parallel, prob, candidate_subset))
+                    curr_candidate_idx += n
+
+            new_menu = {}
+            for result in self._run_parallel(tasks_new_menus):
+                new_menu.update(result)
+
+            for llm in self.llms:
+                llm.update_new_menu_cache(new_menu)
+
         cands = []
         for result in self._run_parallel(tasks):
             cands.extend(result)

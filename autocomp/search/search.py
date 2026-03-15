@@ -1,10 +1,11 @@
 import pathlib
 import random
 import json
+from pathlib import Path
 
 import wandb
 
-from autocomp.common import logger, SOLS_DIR
+from autocomp.common import logger, SOLS_DIR, REPO_ROOT
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
@@ -14,6 +15,7 @@ from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
 from autocomp.agents.tpu.tpu_agent import TpuLLMAgent
+from autocomp.agent_builder.built_agent import BuiltLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -26,7 +28,7 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: "Prob", models: list, code_models: list = None):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static", fine_grained_isa: bool = False):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -64,8 +66,25 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "tpu":
         agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+    elif agent_name.startswith("built:") or Path(agent_name).is_dir():
+        # "built:<name>" resolves to .built/<name>/; direct paths also accepted
+        _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
+        if agent_name.startswith("built:"):
+            built_name = agent_name[len("built:"):]
+            config_dir = _BUILT_DIR / built_name
+        else:
+            config_dir = Path(agent_name)
+        if not config_dir.is_dir():
+            available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
+            raise ValueError(
+                f"Built agent config not found at '{config_dir}'. "
+                f"Available: {available}"
+            )
+        logger.info("Using built agent from %s", config_dir)
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in code_models]) if code_models else None
     else:
-        raise ValueError(f"Unknown agent name: {agent_name}")
+        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
     return eval_backend, agent, code_agent
 
@@ -688,7 +707,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "tpu"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "tpu"  # Options: "gemmini", "trn", "cuda"
+    agent_name = "tpu"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TpuHardwareConfig("v6e-1")
@@ -711,7 +730,7 @@ def main():
     prob_id = 0
 
     # Reimplement failed candidates
-    # Only works for trn
+    # Only works for agents for which it is implemented (trn, built agents)
     reimplement_failed = False
 
     # Early stopping parameters
@@ -726,6 +745,14 @@ def main():
     # Translation parameters
     translate_iters = 0
     translate_perf_threshold = 1.2
+
+    # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
+    # Options: "static", "one-shot"
+    menu_strategy = "one-shot"
+    built_menu_strategy_enum = {"static": 0, "one-shot": 1}
+
+    # Fine-grained ISA filtering for BuiltLLMAgent (2-level: ## sections then ### subsections)
+    fine_grained_isa = True
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -758,7 +785,9 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
+    clean_agent_name = pathlib.Path(agent_name).name if "/" in agent_name else agent_name
+    output_str = f"{clean_agent_name}"
+    output_str += f"_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"
     # Sanitize hw description for filesystem
@@ -796,6 +825,10 @@ def main():
         output_str += f"_reimpl1"
     if early_stop_iters > 0:
         output_str += f"_es{early_stop_iters}_{early_stop_threshold}"
+    if menu_strategy:
+        output_str += f"_ms{built_menu_strategy_enum[menu_strategy]}"
+    if fine_grained_isa:
+        output_str += f"_fgisa1"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -809,7 +842,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
