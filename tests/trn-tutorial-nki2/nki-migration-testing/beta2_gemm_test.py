@@ -69,21 +69,15 @@ def test_v13(lhsT, rhs):
 
 
 if __name__ == "__main__":
-    import torch
-    from torch_xla.core import xla_model as xm
-
     device = xm.xla_device()
 
-    q_np = np.load("attn_q.npy")
-    k_np = np.load("attn_k.npy")
-    v_np = np.load("attn_v.npy")
+    lhsT_np = np.load("gemm_lhsT.npy")
+    rhs_np = np.load("gemm_rhs.npy")
 
-    q_t = torch.from_numpy(q_np).to(device=device)
-    k_t = torch.from_numpy(k_np).to(device=device)
-    v_t = torch.from_numpy(v_np).to(device=device)
+    lhsT = torch.from_numpy(lhsT_np).to(device=device)
+    rhs = torch.from_numpy(rhs_np).to(device=device)
 
-    out_t = beta2_attention(q_t, k_t, v_t)
+    out_t = test_v13(lhsT, rhs)
 
-    # Move back to CPU and save as numpy
     out_np = out_t.cpu().numpy()
-    np.save("out_beta2_attention.npy", out_np)
+    np.save("out_beta2_gemm.npy", out_np)

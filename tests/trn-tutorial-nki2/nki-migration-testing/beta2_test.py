@@ -13,7 +13,7 @@ TILE_ROWS = 128
 G_BROADCAST_CHUNK_COLS = 512
 
 
-@nki.jit(mode="baremetal")
+@nki.jit
 def test(a_tensor, g_tensor):
   # Compute out_tensor = a_tensor / RMS(a_tensor) * g_tensor
   # where RMS(x) = sqrt((1/N) * sum(x^2)) and N = a_tensor.shape[1].
@@ -88,10 +88,8 @@ if __name__ == "__main__":
   g_np = np.load("g.npy")
 
   device = xm.xla_device()
-  #a = torch.from_numpy(a_np).to(device=device)
-  #g = torch.from_numpy(g_np).to(device=device)
-  a = a_np
-  g = g_np
+  a = torch.from_numpy(a_np).to(device=device)
+  g = torch.from_numpy(g_np).to(device=device)
 
   out = test(a, g)
 
