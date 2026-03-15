@@ -221,6 +221,32 @@ class LLMAgent:
                 new_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
         return new_cands
 
+    def propose_new_menu_parallel(self, prob: Prob, candidates: list[CodeCandidate]) -> dict[str, list[str]]:
+        """Generate workload-specific menu additions for each candidate.
+
+        Returns a dict keyed by candidate.code -> list of new menu option strings.
+        """
+        prompts_lst = [self._get_propose_new_menu_prompt(candidate, prob) for candidate in candidates]
+
+        temperature = 1
+        candidates_to_gen = 1
+
+        responses = self.llm_client.chat_async(
+            prompts_lst=prompts_lst,
+            num_candidates=candidates_to_gen,
+            temperature=temperature,
+        )
+
+        # Format responses, then map with candidates
+        result = {}
+        for candidate, response in zip(candidates, responses):
+            raw = response[0] if response else ""
+            result[candidate.code] = [line.strip() for line in raw.splitlines() if line.strip()]
+        return result
+
+    def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
+        pass
+
     def propose_optimizations(self, candidate: CodeCandidate, num_plans: int, save_dir: pathlib.Path, save_str: str, 
                               prob: Prob,
                               force_opt_menu: int = None, 
@@ -458,7 +484,7 @@ class LLMAgent:
             logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
             loaded_candidates = []
             for c_i in range(num_samples):
-                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i]), code_gen_model=self.llm_client.model)
+                loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i], code_gen_model=self.llm_client.model))
             return loaded_candidates
 
         prompt_text = self._get_combine_candidates_prompt(candidates, prob)

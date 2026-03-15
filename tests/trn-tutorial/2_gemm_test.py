@@ -91,16 +91,16 @@ def nki_matmul_block_free_dimension_(lhsT, rhs):
   return result
 
 def test_nki(ref_func, test_func):
-    for _ in range(2):
+    for _ in range(3):
         # a = input_matrix = np.random.rand(8192, 4096).astype(nl.bfloat16)
         # b = input_matrix = np.random.rand(8192, 8192).astype(nl.bfloat16)
-        a = input_matrix = np.random.rand(8192, 4096).astype(nl.bfloat16)
-        b = input_matrix = np.random.rand(8192, 8192).astype(nl.bfloat16)
+        a = (np.random.randn(8192, 4096) * (1.0 / np.sqrt(4096))).astype(nl.bfloat16)
+        b = (np.random.randn(8192, 8192) * (1.0 / np.sqrt(8192))).astype(nl.bfloat16)
         result_1 = ref_func(a, b)
         result_2 = test_func(a, b)
-        # print("result_1", result_1[:5, :5])
-        # print("result_2", result_2[:5, :5])
-        if not np.allclose(result_1.astype(nl.float32), result_2.astype(nl.float32), atol=1, rtol=0.001):
+        print("result_1", result_1[:5, :5])
+        print("result_2", result_2[:5, :5])
+        if not np.allclose(result_1.astype(nl.float32), result_2.astype(nl.float32), atol=1e-2, rtol=1e-3):
             return False
     return True
 

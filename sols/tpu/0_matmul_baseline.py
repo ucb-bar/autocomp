@@ -51,5 +51,4 @@ def matmul(
 
 def test(x, y):
     out = matmul(x, y)
-    jax.block_until_ready(out)
     return out

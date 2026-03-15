@@ -1,10 +1,11 @@
 import pathlib
 import random
 import json
+from pathlib import Path
 
 import wandb
 
-from autocomp.common import logger, SOLS_DIR
+from autocomp.common import logger, SOLS_DIR, REPO_ROOT
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
@@ -14,6 +15,7 @@ from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
 from autocomp.agents.tpu.tpu_agent import TpuLLMAgent
+from autocomp.agent_builder.built_agent import BuiltLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -26,7 +28,7 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: "Prob", models: list, code_models: list = None):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static", fine_grained_isa: bool = False):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -64,14 +66,34 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "tpu":
         agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+    elif agent_name.startswith("built:") or Path(agent_name).is_dir():
+        # "built:<name>" resolves to .built/<name>/; direct paths also accepted
+        _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
+        if agent_name.startswith("built:"):
+            built_name = agent_name[len("built:"):]
+            config_dir = _BUILT_DIR / built_name
+        else:
+            config_dir = Path(agent_name)
+        if not config_dir.is_dir():
+            available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
+            raise ValueError(
+                f"Built agent config not found at '{config_dir}'. "
+                f"Available: {available}"
+            )
+        logger.info("Using built agent from %s", config_dir)
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in code_models]) if code_models else None
     else:
-        raise ValueError(f"Unknown agent name: {agent_name}")
+        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
     return eval_backend, agent, code_agent
 
 
 def load_initial_code(backend_name: str, prob: "Prob") -> str:
     """Load initial code for the given backend and problem."""
+    if prob.sol_file:
+        return prob.sol_file.read_text()
+
     prob_type, prob_id = prob.prob_type, prob.prob_id
     
     if backend_name == "kernelbench":
@@ -138,6 +160,8 @@ class SearchStrategy:
                  translate_iters: int,
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
+                 early_stop_iters: int = 0,
+                 early_stop_threshold: float = 1.0,
                ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.agent = agent  # The agent used to propose optimizations (planning)
@@ -158,6 +182,8 @@ class SearchStrategy:
         self.prevent_duplicate_level = prevent_duplicate_level
         self.translate_iters = translate_iters
         self.translate_perf_threshold = translate_perf_threshold
+        self.early_stop_iters = early_stop_iters
+        self.early_stop_threshold = early_stop_threshold
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
@@ -316,11 +342,27 @@ class SearchStrategy:
         wandb.init(
             entity="charleshong3-team",
             # set the wandb project where this run will be logged
-            project=None,
+            project="autocomp-tpu",
             # track hyperparameters and run metadata
             config=vars(self),
         )
         logger.info("Initialized wandb run, id: %s", wandb.run.name)
+
+    def should_early_stop(self, losses: list[float], cur_iter: int) -> bool:
+        if self.early_stop_iters <= 0 or cur_iter < self.early_stop_iters + 1:
+            return False
+        old_loss = losses[cur_iter - self.early_stop_iters - 1]
+        new_loss = losses[cur_iter - 1]
+        if old_loss == 0:
+            return False
+        ratio = new_loss / old_loss
+        if ratio >= self.early_stop_threshold:
+            logger.info(
+                "Early stopping: no improvement over %d iters (ratio %.4f >= %.4f)",
+                self.early_stop_iters, ratio, self.early_stop_threshold,
+            )
+            return True
+        return False
 
 class ExhaustiveSearchStrategy(SearchStrategy):
     """
@@ -341,6 +383,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
 
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
+        losses = []
         for i in range(1, iterations + 1):
             logger.info(f"Iteration {i} of optimization:")
 
@@ -351,6 +394,13 @@ class ExhaustiveSearchStrategy(SearchStrategy):
                 logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx-1)
                 cur_cand_idx -= 1
                 current_candidates = self.repository.get_candidates(cur_cand_idx)
+
+            cur_cand_scores = [cand.score for cand in current_candidates]
+            best_loss = min(cur_cand_scores)
+            losses.append(best_loss)
+
+            if self.should_early_stop(losses, i):
+                break
 
             # Step 1: Propose optimizations for each candidate
             save_dir = self.output_dir / f"generated-plans-iter-{i}"
@@ -426,8 +476,10 @@ class BeamSearchStrategy(SearchStrategy):
                  translate_iters: int,
                  translate_perf_threshold: float,
                  code_agent: LLMEnsemble = None,
+                 early_stop_iters: int = 0,
+                 early_stop_threshold: float = 1.0,
                 ):
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -547,6 +599,9 @@ class BeamSearchStrategy(SearchStrategy):
             }})
             losses.append(best_loss)
 
+            if self.should_early_stop(losses, i):
+                break  # post-loop wandb log skipped; this iter's best was already logged above
+
             # If candidates already exist for this iteration, load them and skip all other steps
             save_dir = self.output_dir / f"candidates-iter-{i}"
             num_cands_loaded = self.repository.load_candidates(i, save_dir)
@@ -642,48 +697,62 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
-
-        last_iter_cands = self.repository.get_candidates(iterations)
-        wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-            "best-loss": min([cand.score for cand in last_iter_cands]),
-        }})
+        else:
+            last_iter = len(self.repository.candidates_per_iteration) - 1
+            last_iter_cands = self.repository.get_candidates(last_iter)
+            wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
+                "best-loss": min([cand.score for cand in last_iter_cands]),
+            }})
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "tpu"  # Options: "gemmini", "trn", "kernelbench", "gpumode"
-    agent_name = "tpu"  # Options: "gemmini", "trn", "cuda"
+    agent_name = "tpu"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TpuHardwareConfig("tpu-vm-1s")
+    hw_config = TpuHardwareConfig("v6e-1")
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
+    # hw_config = TpuHardwareConfig("v6e-1")
 
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    # models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "aws::moonshotai.kimi-k2.5"]  # Models for planning
-    models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
+    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "gcp::gemini-3.1-pro-preview"]  # Models for planning
+    # models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 7
+    iterations = 6
     prob_type = "tpu" # see README.md or sols directory for available problems
     prob_id = 0
 
     # Reimplement failed candidates
-    # Only works for trn
-    reimplement_failed = True
+    # Only works for agents for which it is implemented (trn, built agents)
+    reimplement_failed = False
+
+    # Early stopping parameters
+    early_stop_iters = 0       # 0 = disabled; stop after N iters without improvement
+    early_stop_threshold = 1.0 # ratio threshold: current_best / best_N_ago >= threshold means no improvement
 
     # Beam search parameters
-    num_plan_candidates=6
+    num_plan_candidates=5
     num_code_candidates=2
     beam_size=3
 
     # Translation parameters
     translate_iters = 0
     translate_perf_threshold = 1.2
+
+    # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
+    # Options: "static", "one-shot"
+    menu_strategy = "one-shot"
+    built_menu_strategy_enum = {"static": 0, "one-shot": 1}
+
+    # Fine-grained ISA filtering for BuiltLLMAgent (2-level: ## sections then ### subsections)
+    fine_grained_isa = True
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -716,7 +785,9 @@ def main():
         for i in range(len(code_models)):
             code_models[i] = code_models[i].replace("/", "_")
 
-    output_str = f"{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
+    clean_agent_name = pathlib.Path(agent_name).name if "/" in agent_name else agent_name
+    output_str = f"{clean_agent_name}"
+    output_str += f"_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"
     # Sanitize hw description for filesystem
@@ -752,6 +823,12 @@ def main():
         output_str += f"_cicl1"
     if reimplement_failed:
         output_str += f"_reimpl1"
+    if early_stop_iters > 0:
+        output_str += f"_es{early_stop_iters}_{early_stop_threshold}"
+    if menu_strategy:
+        output_str += f"_ms{built_menu_strategy_enum[menu_strategy]}"
+    if fine_grained_isa:
+        output_str += f"_fgisa1"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -765,20 +842,20 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa)
 
     # if backend_name == "tpu" and hasattr(eval_backend, "start_tpu_vm"):
     #     logger.info("Starting TPU VM before search...")
     #     eval_backend.start_tpu_vm()
 
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent)
+        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
     elif search_strategy == "beam":
         optimizer = BeamSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
 
     # Start the optimization process
     try:

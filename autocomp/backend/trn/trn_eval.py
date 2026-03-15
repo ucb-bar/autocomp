@@ -1,3 +1,4 @@
+import os
 import pathlib
 import json
 import re
@@ -213,7 +214,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
             out_name = f"compile_{label}_output.txt"
             try:
                 p = subprocess.run(cmd, capture_output=True, text=True,
-                                   timeout=600)
+                                   timeout=240)
                 with open(temp_dir / out_name, "w") as f:
                     f.write(f"=== STDOUT ===\n{p.stdout}\n"
                             f"=== STDERR ===\n{p.stderr}")
@@ -253,7 +254,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         compiled = {}        # label -> bool
         compile_errors = {}  # label -> error_msg (only for failures)
         all_labels = ["ref"] + list(range(len(code_strs)))
-        max_parallel = min(12, len(all_labels))
+        max_parallel = min(os.cpu_count() or 1, len(all_labels))
         with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             futures = {executor.submit(run_compile, label): label
                        for label in all_labels}
@@ -311,7 +312,7 @@ _neff_paths = {repr(neff_paths)}
 _compile_errors = {repr(candidate_compile_errors)}
 _num_candidates = {num_candidates}
 _all_results = [None] * _num_candidates
-_NUM_CORRECTNESS_ROUNDS = 2
+_NUM_CORRECTNESS_ROUNDS = 3
 
 nrt_init()
 
@@ -357,7 +358,7 @@ for _idx in range(_num_candidates):
             for _r, _c in zip(_ro, _co):
                 if not np.allclose(
                     _r.astype(np.float32), _c.astype(np.float32),
-                    atol=1, rtol=1e-2,
+                    atol=1e-3, rtol=1e-3,
                 ):
                     _passed = False
                     break
@@ -531,12 +532,16 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                     "trn_eval" / timestamp)
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        test_dir = TESTS_DIR / prob.prob_type
-        test_file = list(test_dir.glob(f"{prob.prob_id}_*.py"))[0]
-        if not test_file:
-            raise FileNotFoundError(
-                f"No test file found for {prob.prob_type} {prob.prob_id} "
-                f"in {test_dir}")
+        if prob.test_file:
+            test_file = prob.test_file
+        else:
+            test_dir = TESTS_DIR / prob.prob_type
+            matches = list(test_dir.glob(f"{prob.prob_id}_*.py"))
+            if not matches:
+                raise FileNotFoundError(
+                    f"No test file found for {prob.prob_type} {prob.prob_id} "
+                    f"in {test_dir}")
+            test_file = matches[0]
         test_code = test_file.read_text()
 
         results = None
