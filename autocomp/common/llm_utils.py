@@ -812,6 +812,7 @@ class LLMClient():
                 kwargs["max_tokens"] = 16384
             if is_openai_reasoning_model(self.model) and reasoning_effort is not None:
                 kwargs["reasoning"] = {"effort": reasoning_effort}
+                kwargs.pop("temperature", None)
             responses = self._run_async(fetch_completions(self.async_client, prompts_lst, **kwargs))
             return responses
         else:
@@ -851,6 +852,7 @@ class LLMClient():
                 kwargs["timeout"] = 1200
             if is_openai_reasoning_model(self.model):
                 kwargs["reasoning"] = {"effort": "high"}
+                kwargs.pop("temperature", None)
                 # Query 8 plans at a time - make multiple calls for responses API
                 single_kwargs = {k: v for k, v in kwargs.items() if k != "n"}
                 while len(responses) < num_candidates:

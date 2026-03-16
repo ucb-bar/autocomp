@@ -28,7 +28,7 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static", fine_grained_isa: bool = False):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -81,8 +81,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
                 f"Available: {available}"
             )
         logger.info("Using built agent from %s", config_dir)
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
@@ -366,20 +366,43 @@ class SearchStrategy:
 
 class ExhaustiveSearchStrategy(SearchStrategy):
     """
-    Manages the iterative optimization process, including proposing, filtering, 
-    and refining code candidates.
+    Tries every optimization menu option exhaustively, generating plans and
+    implementations in parallel batches.
     """
-    def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path) -> list[CodeCandidate]:
-        """
-        Propose a plan for each optimization in the menu.
-        Returns a list of plan strings, one for each optimization in the menu.
-        """
-        unimplemented_candidates = []
-        for candidate in parent_candidates:
-            for opt_menu_option in range(len(self.agent.get_opt_menu_options())):
-                new_cand = self.agent.propose_optimizations(candidate, num_plans=1, save_dir=save_dir, save_str=None, prob=self.prob, force_opt_menu=opt_menu_option)[0]
-                unimplemented_candidates.append(new_cand)
-        return unimplemented_candidates
+    def __init__(self, *args, plans_per_option: int = 1, num_code_candidates: int = 1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.plans_per_option = plans_per_option
+        self.num_code_candidates = num_code_candidates
+
+    def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path,
+                                   cur_iter: int = None, num_iters: int = None) -> list[CodeCandidate]:
+        menu_options = list(range(1, len(self.agent.get_opt_menu_options()) + 1))
+
+        duplicated_candidates: list[CodeCandidate] = []
+        duplicated_save_strs: list[str] = []
+        duplicated_force_opt_menu: list[int] = []
+        for p_i, parent_cand in enumerate(parent_candidates):
+            for menu_opt in menu_options:
+                duplicated_candidates.append(parent_cand)
+                duplicated_save_strs.append(f"parent{p_i}_opt{menu_opt}")
+                duplicated_force_opt_menu.append(menu_opt)
+
+        return self.agent.propose_optimizations_parallel(
+            candidate_lst=duplicated_candidates,
+            num_plans=self.plans_per_option,
+            save_dir=save_dir,
+            save_strs=duplicated_save_strs,
+            prob=self.prob,
+            force_opt_menu_lst=duplicated_force_opt_menu,
+            give_score_feedback=self.give_score_feedback,
+            give_util_feedback=self.give_util_feedback,
+            give_hw_feedback=self.give_hw_feedback,
+            include_ancestors=self.include_ancestors,
+            plan_icl_examples=self.plan_icl_examples,
+            dropout_menu_options=self.dropout_menu_options,
+            cur_iter=cur_iter,
+            num_iters=num_iters,
+        )
 
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
@@ -388,10 +411,10 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             logger.info(f"Iteration {i} of optimization:")
 
             # Get current candidates (use initial code if it's the first iteration)
-            cur_cand_idx = i-1
+            cur_cand_idx = i - 1
             current_candidates = self.repository.get_candidates(cur_cand_idx)
             while len(current_candidates) == 0:
-                logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx-1)
+                logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx - 1)
                 cur_cand_idx -= 1
                 current_candidates = self.repository.get_candidates(cur_cand_idx)
 
@@ -402,20 +425,20 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             if self.should_early_stop(losses, i):
                 break
 
-            # Step 1: Propose optimizations for each candidate
+            # Step 1: Propose optimizations for each candidate x each menu option
             save_dir = self.output_dir / f"generated-plans-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
-            plan_only_candidates = self.propose_optimizations_iter(current_candidates, save_dir)
+            plan_only_candidates = self.propose_optimizations_iter(current_candidates, save_dir, cur_iter=i, num_iters=iterations)
             logger.info(f"Proposed {len(plan_only_candidates)} new optimizations.")
 
-            # Step 2: Generate code candidates for each optimization plan
+            # Step 2: Generate code implementations in parallel
             save_dir = self.output_dir / f"generated-code-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
-            impl_candidates = []
-            for plan_idx, plan_only_cand in enumerate(plan_only_candidates):
-                parent_idx = current_candidates.index(plan_only_cand.parent)
-                this_plan_impl_candidates = self.code_agent.implement_code(plan_only_cand, 1, save_dir, save_str=f"{parent_idx}_{plan_idx}", prob=self.prob)
-                impl_candidates.extend(this_plan_impl_candidates)
+            save_strs = [f"plan{p_i}" for p_i in range(len(plan_only_candidates))]
+            impl_candidates = self.code_agent.implement_code_parallel(
+                plan_only_candidates, self.num_code_candidates, save_dir,
+                save_strs=save_strs, prob=self.prob,
+            )
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             # Step 3: Evaluate the code candidates
@@ -425,7 +448,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             logger.info(f"Evaluated {len(evaluated_code_candidates)} code candidates.")
 
             # Step 4: Filter and rank the code candidates
-            improving_candidates = self.filter_code_candidates(evaluated_code_candidates) # No num_to_keep means keep all improving candidates
+            improving_candidates = self.filter_code_candidates(evaluated_code_candidates)
             candidates_for_next_iter = self.filter_code_candidates(improving_candidates, num_to_keep=1)
 
             # Step 5: Save the improving candidates and update the repository
@@ -438,7 +461,6 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             save_dir = self.output_dir / f"candidates-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
             self.repository.save_candidates(i, save_dir)
-            # Show latest candidates
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
@@ -746,13 +768,16 @@ def main():
     translate_iters = 0
     translate_perf_threshold = 1.2
 
-    # Menu strategy for BuiltLLMAgent (only for BuiltLLMAgent for now)
-    # Options: "static", "one-shot"
+    ### BuiltLLMAgent-specific parameters ###
+    # Menu strategy
+    # Options: None (static menu), "one-shot"
     menu_strategy = "one-shot"
-    built_menu_strategy_enum = {"static": 0, "one-shot": 1}
-
+    built_menu_strategy_enum = {None: 0, "one-shot": 1}
     # Fine-grained ISA filtering for BuiltLLMAgent (2-level: ## sections then ### subsections)
     fine_grained_isa = True
+    # Per-example probability of including a code example in the planning prompt.
+    # Each LLM-selected example is independently included with this probability.
+    example_rate = 0.25
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -829,6 +854,8 @@ def main():
         output_str += f"_ms{built_menu_strategy_enum[menu_strategy]}"
     if fine_grained_isa:
         output_str += f"_fgisa1"
+    if example_rate > 0:
+        output_str += f"_ex{example_rate}"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -842,7 +869,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)

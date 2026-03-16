@@ -102,9 +102,6 @@ class CudaLLMAgent(LLMAgent):
             "Any other optimizations that you think are relevant",
         ]
 
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
-        return []
-    
     def _get_prompt_rules(self, planning: bool, coding: bool) -> str:
         rules = []
         rules.extend(self.hw_config.get_hw_config_specific_rules())

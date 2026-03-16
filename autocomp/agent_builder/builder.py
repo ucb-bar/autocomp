@@ -27,7 +27,7 @@ class AgentBuilder:
     """
 
     def __init__(self, llm_model: str, light_llm_model: str | None = None,
-                 description: str = "", context_budget: int = 150_000):
+                 agent_scope: str = "", context_budget: int = 150_000):
         """
         Args:
             llm_model: Model identifier for synthesis LLM calls.
@@ -35,13 +35,13 @@ class AgentBuilder:
                        or just the model name for auto-detection.
             light_llm_model: Optional cheaper/faster model for high-token extraction tasks.
                              Uses the same "provider::model" syntax. Falls back to llm_model if not set.
-            description: User-provided context about what the agent is for.
+            agent_scope: Defines what the agent covers and what is out of scope.
                          This is prepended to every LLM prompt and strongly
                          influences content routing, ISA filtering, and strategy
                          generation. Be specific about:
                          - What level of code the agent optimizes (e.g., kernels,
                            operators, full models)
-                         - The programming interface (e.g., NKI, CUDA, HLO)
+                         - The target hardware and programming interface
                          - What's out of scope (e.g., deployment, serving, distributed)
                          Example: "Optimizing NKI kernel code on AWS Trainium 1.
                          The agent rewrites single-kernel source code for better
@@ -63,7 +63,7 @@ class AgentBuilder:
                 lp, lm = None, light_llm_model
             self._light_llm_client = LLMClient(lm, lp)
 
-        self._description = description
+        self._agent_scope = agent_scope
         self._context_budget = context_budget
         self._ingestor = KnowledgeIngestor()
 
@@ -100,7 +100,7 @@ class AgentBuilder:
         # Stage 2: Synthesize
         logger.info("AgentBuilder: Stage 2 -- synthesizing components")
         synthesizer = ComponentSynthesizer(
-            self._llm_client, self._light_llm_client, description=self._description,
+            self._llm_client, self._light_llm_client, agent_scope=self._agent_scope,
             context_budget=self._context_budget,
         )
         components = synthesizer.synthesize(indices)
@@ -111,7 +111,7 @@ class AgentBuilder:
         build_metadata = {
             "main_model": self._llm_client.model,
             "light_model": (self._light_llm_client.model if self._light_llm_client else self._llm_client.model),
-            "description": self._description,
+            "agent_scope": self._agent_scope,
             "sources": [{"type": st, **kw} for st, kw in self._ingestor._sources],
         }
         config_dir = assembler.assemble(components, agent_name, output_dir, build_metadata=build_metadata)
