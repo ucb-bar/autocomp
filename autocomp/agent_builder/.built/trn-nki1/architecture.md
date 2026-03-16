@@ -1,58 +1,53 @@
-## Hardware Architecture Summary: AWS Trainium1 (NeuronCore-v2)
+## Hardware Architecture Summary: AWS Trainium 1 (NeuronCore-v2)
 
 ### Device Overview
 
-AWS Trainium1 (trn1 instances) contains NeuronDevices, each with 2 NeuronCore-v2 units. Each NeuronCore-v2 is a fully independent heterogeneous compute unit with four parallel engines and software-managed on-chip memory. NKI kernels execute on a single NeuronCore-v2. There is no hardware cache anywhere in the memory hierarchy — all data movement and placement is explicitly managed by the programmer and compiler.
+AWS Trainium 1 (trn1 instances) contains NeuronDevices, each with 2 NeuronCore-v2 compute units, 32 GiB HBM across 2 stacks at 820 GB/s aggregate bandwidth, and 32 DMA engines (16 per NeuronCore). NKI kernels execute on a single NeuronCore. The programming model is tile-based: the programmer explicitly manages data movement between HBM and on-chip SRAM, performs computation on tiles resident in on-chip memory, and stores results back to HBM. There is no hardware cache; all on-chip memory is software-managed. The Neuron compiler handles memory allocation, instruction scheduling, and instruction-level parallelism across engines, but the programmer is responsible for tiling strategy, data layout, and instruction selection.
 
 ### Memory Hierarchy
 
-**HBM (Device Memory):** 32 GiB total per device (shared across 2 NeuronCores), 820 GB/s bandwidth. Linear address space; most performant when accessed sequentially. All kernel inputs and outputs must reside in HBM. Accessed via `nl.load` (HBM→SBUF) and `nl.store` (SBUF→HBM).
+**SBUF (State Buffer)** — 24 MiB total, organized as 128 partitions × 192 KiB each (176 KiB usable per partition after 16 KiB reserved for compiler). This is the primary on-chip working memory accessible by all compute engines. SBUF bandwidth is approximately 20× higher than HBM, sufficient to sustain peak Tensor Engine throughput. Maximum free dimension per tensor is 64K elements. All computation operates on data in SBUF; inputs must be explicitly loaded from HBM via `nl.load` and outputs stored back via `nl.store`.
 
-**SBUF (State Buffer) — Primary On-Chip SRAM:** 24 MiB total per NeuronCore, organized as 128 partitions × 192 KiB each (16 KiB reserved per partition, leaving 176 KiB usable). 2D memory structure with a partition dimension (P, up to 128) and a free dimension (F, up to 64K elements per partition). SBUF bandwidth is approximately 20× higher than HBM and sufficient to sustain peak compute throughput. Peak bandwidth per read/write interface: 128 elements/cycle at 1.4 GHz when the most-minor free-dimension stride is ≤16 bytes; half bandwidth if stride exceeds 16 bytes. All four compute engines can read from SBUF. Static overhead per tensor access: ~60 cycles.
+**PSUM (Partial Sum Buffer)** — 2 MiB total, organized as 128 partitions × 16 KiB each. Each partition is divided into 8 banks, each holding up to 512 FP32 values. PSUM is the dedicated accumulation buffer for Tensor Engine matmul results, supporting near-memory read-accumulate-write. Maximum free dimension per tensor is 4K elements (512 FP32 values per bank). Matmul results always land in PSUM in FP32. PSUM should be treated as scarce; results should be evicted to SBUF promptly.
 
-**PSUM (Partial Sum Buffer) — Accumulator Memory:** 2 MiB total per NeuronCore, organized as 128 partitions × 16 KiB each. Each partition has 8 banks, each holding up to 512 FP32 values (max free dimension: 4K elements per partition). Supports near-memory read-accumulate-write controlled exclusively by the Tensor Engine. Accumulation is always in FP32. Up to 8 outstanding matmul accumulation groups (one per bank). Vector and Scalar engines can also read/write PSUM. PSUM capacity is limited; results should be evicted to SBUF as soon as possible.
+**HBM (Device Memory)** — 32 GiB total per device, 820 GB/s bandwidth. Linear address space; most performant with sequential access patterns. All kernel input/output tensors must reside in HBM.
 
-**DMA Engines:** 16 DMA engines per NeuronCore, each capable of one transfer at a time at up to 27 GiB/s. All 16 operate in parallel and run concurrently with compute. Each `nl.load`/`nl.store` of 128 partitions maps to 16 parallel transfers (8 partitions per engine). Minimum transfer size for ideal bandwidth: 32 KiB per engine (e.g., 8 partitions × 1024 elements × 4 bytes). Free dimension of ~1024 elements is ideal; beyond 1024 has diminishing returns. `nl.load_transpose2d` has significantly lower bandwidth than `nl.load`.
+### On-Chip Memory Layout
 
-**Spilling:** When live data exceeds SBUF capacity, the compiler automatically inserts spill/reload transfers to HBM. Spill traffic exceeding 30% of total SBUF↔HBM traffic indicates a significant optimization opportunity.
+SBUF and PSUM are 2D memories with a **partition dimension (P)** and a **free dimension (F)**. NKI tiles map `shape[0]` to the partition dimension. The partition dimension has a hard maximum of 128 elements (`pmax = 128`). All active partitions share the same free-dimension access pattern. Free-dimension access supports up to 4D tensorized strided access within each partition. When the most-minor free-dimension stride is less than 16 bytes, peak streaming bandwidth is 128 elements/cycle at 1.4 GHz per read/write interface; strides ≥ 16 bytes reduce bandwidth to approximately 50% of peak. Each tensor access request incurs roughly 60 cycles of static overhead, so large tile dimensions amortize this cost.
 
 ### Compute Engines
 
-All four engines execute asynchronously in parallel, synchronized via compiler-inserted semaphores. Instructions on different engines with no data dependencies run concurrently.
+Each NeuronCore-v2 has four heterogeneous engines that execute asynchronously in parallel, synchronized by compiler-inserted semaphores.
 
-**Tensor Engine (TensorE):** 128×128 systolic array operating at 2.8 GHz. Peak throughput: 92 TFLOPS for BF16/FP16/TF32/cFP8; 23 TFLOPS for FP32 (4× slower). Reads from SBUF, writes to PSUM. Accounts for >90% of NeuronCore FLOPS. Executes `nc_matmul(stationary[K,M], moving[K,N])` → `output[M,N]` via two internal instructions: LoadStationary (LS) then MultiplyMoving (MM). LS can run up to 4× faster than MM with the same free axis size. MM initiation interval: max(N, 64) TensorE cycles for BF16/FP16/TF32/cFP8. FP32 matmul costs ~4× more. Mixed-precision is native: inputs in BF16/FP16/TF32/cFP8, accumulation always in FP32. Also used for on-chip transpose (matmul with identity matrix), broadcast, and partition shuffle, though these consume matmul cycles.
+**Tensor Engine (TensorE)** — 128×128 systolic array, 2.8 GHz. Peak throughput: 92 TFLOPS at BF16/FP16/TF32/cFP8, 23 TFLOPS at FP32. Executes `nc_matmul(stationary[K,M], moving[K,N])` computing `stationary.T @ moving → [M,N]`. Internally decomposes into LoadStationary (LS) and MultiplyMoving (MM) instructions. Tile size constraints: stationary free axis (M) ≤ 128, partition axis (K) ≤ 128, moving free axis (N) ≤ 512. Both inputs must have the contraction dimension K in the partition dimension. MM initiation interval is max(N, 64) TensorE cycles for BF16/FP16/TF32/cFP8; FP32 costs ~4× more. LS can execute up to 4× faster than MM with the same free axis size, so the matrix with the larger free axis should be stationary. Best throughput comes from back-to-back nc_matmul with 128×128 stationary and 128×512 moving tiles. PSUM supports up to 8 outstanding accumulation groups (one per bank). TensorE can also perform 128×128 transposes and partition broadcasts/shuffles using identity or ones matrices, but these block matmul work. The arithmetic intensity threshold to saturate TensorE at BF16 is approximately 222 Flops/Byte.
 
-**Vector Engine (VectorE):** 128 parallel vector lanes at 1.12 GHz, one per SBUF partition. 2.3 TFLOPS FP32. Handles operations where each output depends on multiple inputs: reductions, layer normalization, pooling, element-wise ops between two tensors. Supports all NKI data types with automatic FP32 casting. Can read/write both SBUF and PSUM. Supports 32×32 cross-partition transpose and arbitrary shuffle within groups of 32 partitions.
+**Vector Engine (VectorE)** — 128 parallel vector lanes at 1.12 GHz, 2.3 TFLOPS FP32. Handles operations where each output depends on multiple inputs (reductions, tensor-tensor ops, layer normalization, pooling). Reads from and writes to SBUF and PSUM. Cost for free axis size N > 128: approximately N cycles for one-input ops, 2N cycles for two-input ops. Supports 32×32 transpose and 32-partition shuffle within groups of 32 partitions.
 
-**Scalar Engine (ScalarE):** 128 parallel lanes at 1.4 GHz. 2.9 TFLOPS FP32. Handles element-wise operations where each output depends on one input: activations (GELU, exp, sqrt, etc.), scale, bias. Reads only one input tensor per instruction. Has deeply pipelined stages: `activation(func, data, bias, scale)` computes `func(data * scale + bias)` at the same cost as a plain activation — always fuse multiply-add with nonlinear functions when possible. Also supports pipelined activation+reduction (`activation_reduce`).
+**Scalar Engine (ScalarE)** — 128 parallel lanes at 1.4 GHz, 2.9 TFLOPS FP32. Handles element-wise single-input operations and non-linear functions (Gelu, Sqrt, exp, etc.). Features a pipelined multiply-add-activate path: `out[i][k] = func(in[i][k] * scale[i] + bias[i])` in one instruction, providing 2× speedup over separate operations. Also supports pipelined activation-reduce (activation + reduction with no additional cost for the reduction, plus ~64 ScalarE cycles to write the reduction result). Reduction operator is addition only on NeuronCore-v2.
 
-**GpSimd Engine (GpSimdE):** 8 fully programmable 512-bit SIMD processors at 1.4 GHz, each with 64 KB tightly-coupled memory (3-cycle access). Each processor connects to 16 SBUF partitions. Effective 128 FP32 lanes. Used for custom operations not mappable to other engines (e.g., triangular masking).
+**GpSimd Engine** — 8 fully programmable 512-bit SIMD processors at 1.4 GHz, each with 64 KB tightly-coupled memory (3-cycle latency). Each processor connects to 16 SBUF partitions. Effective parallelism: 128 FP32 lanes. Used for custom operations not expressible through other engines.
 
-**Access Serialization Rules:** VectorE and GpSimdE cannot access SBUF simultaneously. VectorE and ScalarE cannot access PSUM simultaneously. All other engine combinations can access SBUF/PSUM concurrently without interference.
+All engines perform arithmetic in FP32 internally with zero-overhead casting for other data types.
 
-### Tile Size Constraints
+### DMA Subsystem
 
-| Constraint | Limit |
-|---|---|
-| Partition dimension (P) for SBUF and PSUM | ≤ 128 (`pmax`) |
-| PSUM free dimension (F) | ≤ 512 FP32 elements (`psum_fmax`) |
-| Matmul stationary (LHS) free dimension | ≤ 128 (`gemm_stationary_fmax`) |
-| Matmul moving (RHS) free dimension | ≤ 512 (`gemm_moving_fmax`) |
-| Matmul contraction axis (K) | ≤ 128 (must map to P dimension) |
-| SBUF free dimension | ≤ 64K elements per partition |
+16 DMA engines per NeuronCore, each capable of 27 GiB/s peak bandwidth, operating in parallel. A single `nl.load`/`nl.store` with 128 partitions maps to 16 parallel DMA transfers (one per engine, each handling 8 partitions). Minimum transfer size for ideal bandwidth utilization is ≥32 KiB per engine (e.g., 8 partitions × 1024 elements × 4 bytes). Free dimension size of ~1024 elements is ideal; beyond 1024 has diminishing returns. `nl.load_transpose2d` has significantly lower DMA bandwidth than `nl.load`; prefer `nl.load` followed by `nisa.nc_transpose` when TensorE is idle.
 
-### Layout Constraints
+### Key Constraints and Optimization Principles
 
-For matrix multiplication, the contraction axis K of both input tiles must be mapped to the partition dimension (P). For `[M,K] × [K,N]`, inputs are passed as `stationary[K,M]` and `moving[K,N]`. The free axis of the stationary tensor becomes the partition (first) axis of the output; the free axis of the moving tensor becomes the free axis of the output.
+**Tile size constraints:** Partition dimension ≤ 128 (hard limit). PSUM free dimension ≤ 512. Matmul stationary free axis ≤ 128, moving free axis ≤ 512.
 
-For non-matmul operations, the parallel axis should be mapped to the partition dimension to maximize lane utilization.
+**Layout constraints:** Matmul contraction axis must be in the partition dimension for both inputs. Non-matmul operations should map the parallel axis to the partition dimension.
 
-### Key Optimization Principles
+**Compute balance:** TensorE provides ~92 TFLOPS vs. VectorE at 2.3 TFLOPS and ScalarE at 2.9 TFLOPS — a ~30-40× gap. Kernels should maximize TensorE utilization and minimize vector/scalar work or overlap it with tensor compute via engine-level parallelism.
 
-The Tensor Engine is ~30-40× more powerful than Vector/Scalar engines in equivalent precision. Maximizing TensorE utilization and keeping it fed with data is the primary optimization target. The arithmetic intensity threshold for compute-bound behavior on NeuronCore-v2 is 222 Flops/Byte for BF16.
+**Memory management:** SBUF capacity is 24 MiB; exceeding live data capacity causes compiler-inserted spills to HBM. Declare buffers in the innermost loop that uses them. Spill traffic exceeding ~30% of total SBUF read/write bytes warrants optimization. PSUM is only 2 MiB; evict matmul results to SBUF promptly.
 
-All compute engines require at least 128 elements per partition in the free dimension to be efficient. Static instruction overhead is ~100 cycles, making small tiles extremely inefficient. Using fewer than 128 partitions directly under-utilizes compute (e.g., 64 partitions = 50% utilization).
+**Engine parallelism:** All four engines can execute concurrently, but VectorE and GpSimdE cannot access SBUF in parallel, and VectorE and ScalarE cannot access PSUM in parallel (compiler serializes these). Double-buffering or multi-buffering of physical tiles enables overlap of DMA with compute.
 
-PSUM accumulation for tiled matmul requires a specific code pattern: a `nl.zeros` initialized PSUM buffer, an `nl.affine_range` loop, and `+=` accumulation with `nl.matmul`. Using `=` assignment instead of `+=` does not reliably trigger hardware accumulation.
+**Loop constructs:** `nl.affine_range` enables compiler reordering and parallelism (use when no loop-carried dependencies; associative reductions like matmul accumulation via `+=` are permitted). `nl.sequential_range` enforces strict ordering for true loop-carried dependencies.
 
-Prefer mapping the tensor with the smaller free axis to the moving operand of matmul for better throughput (LS is up to 4× faster than MM). Downcast FP32 inputs to BF16/FP16 before matmul to avoid the 4× FP32 penalty.
+**Partition utilization:** Using fewer than 128 partitions underutilizes compute engines proportionally (e.g., 64 partitions = 50% utilization). Partition start alignment depends on partition count: >64 must start at 0; >32 at 0 or 64; ≤32 at 0, 32, 64, or 96.
+
+**Performance targets:** Compute-bound kernels should achieve ≥90% engine utilization. Memory-bound kernels should target ≥60% memory bandwidth utilization. DMA bandwidth utilization below 60% indicates a data movement bottleneck.

@@ -252,15 +252,10 @@ class WebpageLoader(SourceLoader):
         visited: set[str] = set()
         content: dict[str, str] = {}
         headings_by_url: dict[str, list[str]] = {}
-        # Two-tier queue: priority (same prefix) and secondary (other)
-        priority_queue: list[tuple[str, int]] = [(url, 0)]
-        secondary_queue: list[tuple[str, int]] = []
+        queue: list[tuple[str, int]] = [(url, 0)]
 
-        while (priority_queue or secondary_queue) and len(visited) < max_pages:
-            if priority_queue:
-                current_url, depth = priority_queue.pop(0)
-            else:
-                current_url, depth = secondary_queue.pop(0)
+        while queue and len(visited) < max_pages:
+            current_url, depth = queue.pop(0)
             if current_url in visited:
                 continue
             visited.add(current_url)
@@ -292,7 +287,7 @@ class WebpageLoader(SourceLoader):
                 headings.append(f"{indent}{h.get_text(strip=True)}")
             headings_by_url[current_url] = headings
 
-            # Follow same-domain links
+            # Follow links under the same path prefix
             if depth < max_depth:
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
@@ -301,10 +296,9 @@ class WebpageLoader(SourceLoader):
                     abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                     if parsed.netloc != base_domain or abs_url in visited:
                         continue
-                    if parsed.path.startswith(base_path):
-                        priority_queue.append((abs_url, depth + 1))
-                    else:
-                        secondary_queue.append((abs_url, depth + 1))
+                    if not parsed.path.startswith(base_path):
+                        continue
+                    queue.append((abs_url, depth + 1))
 
         logger.info("WebpageLoader: crawled %d pages (content from %d) for %s",
                      len(visited), len(content), url)

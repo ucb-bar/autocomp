@@ -1,6 +1,49 @@
 ## fused_mamba.html
 
-SUMMARY: This document demonstrates how to implement a fused Mamba SSM kernel in NKI, covering associative scan operations, tensor tiling strategies, loop optimization for data reuse, and techniques to minimize memory spilling through strategic loop reordering and seq_len tiling.
+SUMMARY: This document demonstrates how to implement and optimize a Mamba State Space Model layer using NKI, showing progressive kernel optimizations through loop reordering, data tiling, and efficient mapping of operations to NeuronCore compute engines.
+
+```python
+import torch
+import torch_neuronx
+import torch_xla.core.xla_model as xm
+
+def associative_scan(deltaA, deltaB_u):
+    """
+    Args:
+        deltaA: [batch_size, channels, state_size, seq_len]
+        deltaB_u: [batch_size, channels, state_size, seq_len]
+
+    Mamba uses an associative scan operator to aggregate information across
+    time sequentially (sequence length, e.g. sequence of tokens),
+    from the past to the present.
+    """
+    batch_size, channels, state_size, seq_len = deltaA.shape
+    out = torch.empty(batch_size, channels, state_size, seq_len,
+                        device=deltaA.device, dtype=deltaA.dtype)
+    for i in range(seq_len):
+        prev_state = out[..., i - 1] if i > 0 else 0
+        out[..., i] = deltaA[..., i] * prev_state + deltaB_u[..., i]
+    return out
+
+
+def mamba_layer(delta, A, B, u, C):
+    """
+    Args:
+        delta: [batch, channels, seq_len]
+        u: [batch, channels, seq_len]
+        A: [channels, state_size]
+        B: [batch, state_size, seq_len]
+        C: [batch, state_size, seq_len]
+    """
+    # expand the tensors so they all have the same dimensions and compute elementwise products (with broadcast)
+    # deltaA and deltaB_u have shape [batch_size, channels, state_size, seq_len]
+    deltaA = torch.exp(delta[:, :, None, :] * A[None, :, :, None])
+    deltaB_u = delta[:, :, None, :] * B[:, None, :, :] * u[:, :, None, :]
+    scan_res = associative_scan(deltaA, deltaB_u)
+    # y sums over the `state_size` axis and has shape [batch_size, channels, seq_len]
+    mamba_out = (C[:, None, :, :] * scan_res).sum(dim=-2)
+    return mamba_out
+```
 
 ```python
 import neuronxcc.nki as nki
@@ -159,48 +202,9 @@ def mamba_v2(delta, u, A, B, C):
     return output
 ```
 
-```python
-def associative_scan(deltaA, deltaB_u):
-    """
-    Args:
-        deltaA: [batch_size, channels, state_size, seq_len]
-        deltaB_u: [batch_size, channels, state_size, seq_len]
-
-    Mamba uses an associative scan operator to aggregate information across
-    time sequentially (sequence length, e.g. sequence of tokens),
-    from the past to the present.
-    """
-    batch_size, channels, state_size, seq_len = deltaA.shape
-    out = torch.empty(batch_size, channels, state_size, seq_len,
-                        device=deltaA.device, dtype=deltaA.dtype)
-    for i in range(seq_len):
-        prev_state = out[..., i - 1] if i > 0 else 0
-        out[..., i] = deltaA[..., i] * prev_state + deltaB_u[..., i]
-    return out
-
-
-def mamba_layer(delta, A, B, u, C):
-    """
-    Args:
-        delta: [batch, channels, seq_len]
-        u: [batch, channels, seq_len]
-        A: [channels, state_size]
-        B: [batch, state_size, seq_len]
-        C: [batch, state_size, seq_len]
-    """
-    # expand the tensors so they all have the same dimensions and compute elementwise products (with broadcast)
-    # deltaA and deltaB_u have shape [batch_size, channels, state_size, seq_len]
-    deltaA = torch.exp(delta[:, :, None, :] * A[None, :, :, None])
-    deltaB_u = delta[:, :, None, :] * B[:, None, :, :] * u[:, :, None, :]
-    scan_res = associative_scan(deltaA, deltaB_u)
-    # y sums over the `state_size` axis and has shape [batch_size, channels, seq_len]
-    mamba_out = (C[:, None, :, :] * scan_res).sum(dim=-2)
-    return mamba_out
-```
-
 ## matrix_multiplication.html
 
-SUMMARY: This document covers NKI matrix multiplication kernel optimization on AWS Trainium, demonstrating progressive optimization techniques including tiling, load hoisting, blocking, and layout optimization to improve arithmetic intensity and hardware utilization.
+SUMMARY: This document demonstrates NKI kernel programming for matrix multiplication on AWS Trainium, showing progressive optimizations from basic tiling to fully optimized implementations using blocking, load hoisting, and DMA efficiency techniques.
 
 ```python
 import neuronxcc.nki as nki
@@ -221,24 +225,34 @@ def nki_matmul_basic_(lhsT, rhs):
   result = nl.ndarray((64, 512), dtype=lhsT.dtype, buffer=nl.shared_hbm)
 
   # Defining indexes for input LHS.T
+  # - Note: here we take LayoutConstraint #1 into account:
+  # "For MatMult, contraction axis must be mapped to P-dim"
   i_lhsT_p, i_lhsT_f = nl.mgrid[0:128, 0:64]
 
   # Defining indexes for input RHS
+  # - Note: here we take LayoutConstraint #1 into account:
+  # "For MatMult, contraction axis must be mapped to P-dim"
   i_rhs_p, i_rhs_f = nl.mgrid[0:128, 0:512]
 
-  # Defining indexes for the output
+  # Defining indexes for the output ([64,128]@[128,512] -> [64,512])
   i_out_p, i_out_f = nl.mgrid[0:64, 0:512]
 
   # Loading the inputs (HBM->SBUF)
+  # Note: here we take Tile dtype definition into account,
+  # which forces P-dim as the left most index
   lhs_tile = nl.load(lhsT[i_lhsT_p, i_lhsT_f])
   rhs_tile = nl.load(rhs[i_rhs_p, i_rhs_f])
 
   # Perform the matrix-multiplication
+  # Note1: We set transpose_x to True, to indicate that the LHS input is transposed
+  # Note2: A NKI matmul instruction always writes to PSUM in float32 data-type
   result_psum = nl.matmul(lhs_tile, rhs_tile, transpose_x=True)
 
   # Copy the result from PSUM back to SBUF, and cast to expected output data-type
   result_sbuf = nl.copy(result_psum, dtype=result.dtype)
 
+  # The result of a [64,128] x [128,512] matrix multiplication has a shape of [64, 512].
+  # This dictates which indices to use to address the result tile.
   nl.store(result[i_out_p, i_out_f], value=result_sbuf)
 
   return result
@@ -331,6 +345,7 @@ def nki_matmul_hoist_load_(lhsT, rhs):
   # Use affine_range to loop over tiles
   for m in nl.affine_range(M // TILE_M):
     # Load a whole column tiles from lhsT (with K * TILE_N numbers)
+    # This corresponds to the whole row in the original lhs
     lhsT_tiles = nl.ndarray((K // TILE_K, nl.par_dim(TILE_K), TILE_N),
                             dtype=lhsT.dtype,
                             buffer=nl.sbuf)
@@ -509,7 +524,8 @@ def nki_matmul_fully_optimized_(
                             buffer=nl.sbuf)
 
     # Blocking K dimension (the contraction dimension)
-    # Use `sequential_range` because we do not want the compiler to change this loop
+    # Use `sequential_range` because we do not want the compiler to change this loop by, 
+    # for example, vectorizing it
     for k in nl.sequential_range(NUM_BLOCK_K):
       # Loading tiles from rhs
       # setting the load tile to `TILE_K x BLOCK_SIZE_N` to optimize DMA performance
@@ -576,7 +592,7 @@ def nki_matmul_fully_optimized_(
 
 ## layernorm.html
 
-SUMMARY: This document demonstrates how to implement LayerNorm kernels on AWS Trainium using NKI, comparing a naive nki.language API approach with an optimized nki.isa API approach that uses bn_stats/bn_aggr for mean/variance computation and tensor_scalar for fused shift/scale operations.
+SUMMARY: This document demonstrates how to implement LayerNorm kernels on AWS Trainium using NKI, comparing a naive nki.language API approach with an optimized version using nki.isa APIs for efficient mean/variance computation and combined shift/scale operations.
 
 ```python
 import neuronxcc.nki as nki
@@ -708,13 +724,13 @@ def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
 
 ## fused-self-attn.html
 
-SUMMARY: This document demonstrates how to implement a fused self-attention kernel for Stable Diffusion 2.1 using NKI, showing tiling strategies, memory management, softmax computation, and matrix multiplication fusion techniques to optimize attention computation on NeuronCore-v2.
+SUMMARY: This document demonstrates how to implement a fused self-attention kernel for Stable Diffusion 2.1 using NKI, covering tiling strategies, memory management, softmax computation, and matrix multiplication fusion techniques to optimize SBUF usage on AWS Trainium accelerators.
 
 ```python
 import numpy as np
-import neuronxcc.nisa as nisa
-import neuronxcc.nki as nl
-from neuronxcc.nki.language import par_dim
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+from neuronxcc.nki import par_dim
 
 @nki.jit
 def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=False,
@@ -748,7 +764,7 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
   # Use q_ref dtype as the intermediate tensor dtype
   # Assume all IO tensors have the same dtype
   kernel_dtype = q_ref.dtype
-  pe_in_dt = nl.bfloat16 if mixed_precision else np.float32
+  pe_in_dt = nki.bfloat16 if mixed_precision else np.float32
   assert q_ref.dtype == k_ref.dtype == v_ref.dtype
 
   # Shape checking
@@ -758,7 +774,7 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
   assert tuple(k_ref.shape) == (seqlen, d_head), 'Input shape mismatch!'
   assert tuple(v_ref.shape) == (seqlen,d_head), \
   f'Input shape mismatch! Expected: {(seqlen, d_head)} Actual: {tuple(v_ref.shape)}'
-  out_ref = nl.ndarray((seqlen, d_head), dtype=q_ref.dtype, buffer=nl.shared_hbm)
+  out_ref = nki.ndarray((seqlen, d_head), dtype=q_ref.dtype, buffer=nki.shared_hbm)
 
   # Softmax scaling factor, multiplied onto Q
   softmax_scale = 0.125
@@ -774,53 +790,53 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
   ###################################
   # Buffer for v matrix transposed
   # Pre-fetch and keep it in SBUF throughout different softmax tiles
-  trans_v = nl.ndarray((par_dim(v_seq_tile_size), v_seq_n_tiles, d_head), dtype=pe_in_dt)
+  trans_v = nki.ndarray((par_dim(v_seq_tile_size), v_seq_n_tiles, d_head), dtype=pe_in_dt)
 
-  for i_k_seq_tile in nl.affine_range(k_seq_n_tiles):
-    ip_v = nl.arange(v_seq_tile_size)[:, None]
-    if_v = nl.arange(d_head_tile_size)[None, :]
-    trans_v[ip_v, i_k_seq_tile, if_v] = nl.load(
+  for i_k_seq_tile in nki.affine_range(k_seq_n_tiles):
+    ip_v = nki.arange(v_seq_tile_size)[:, None]
+    if_v = nki.arange(d_head_tile_size)[None, :]
+    trans_v[ip_v, i_k_seq_tile, if_v] = nki.load(
       v_ref[i_k_seq_tile * k_seq_tile_size + ip_v, if_v],
       dtype=pe_in_dt)
 
-  q_local = nl.ndarray((q_seq_n_tiles, par_dim(d_head_tile_size), q_seq_tile_size), dtype=pe_in_dt)
-  ip_q = nl.arange(d_head_tile_size)[:, None]
-  if_q = nl.arange(q_seq_tile_size)[None, :]
-  for i_q_seq_tile in nl.affine_range(q_seq_n_tiles):
-    q_local[i_q_seq_tile, ip_q, if_q] = nl.load_transpose2d(
-      q_ref[i_q_seq_tile * q_seq_tile_size + nl.arange(q_seq_tile_size)[:, None],
-            nl.arange(d_head_tile_size)[None, :]
+  q_local = nki.ndarray((q_seq_n_tiles, par_dim(d_head_tile_size), q_seq_tile_size), dtype=pe_in_dt)
+  ip_q = nki.arange(d_head_tile_size)[:, None]
+  if_q = nki.arange(q_seq_tile_size)[None, :]
+  for i_q_seq_tile in nki.affine_range(q_seq_n_tiles):
+    q_local[i_q_seq_tile, ip_q, if_q] = nki.load_transpose2d(
+      q_ref[i_q_seq_tile * q_seq_tile_size + nki.arange(q_seq_tile_size)[:, None],
+            nki.arange(d_head_tile_size)[None, :]
       ],
       dtype=pe_in_dt) * softmax_scale
 
-  k_local = nl.ndarray((k_seq_n_tiles, par_dim(d_head_tile_size), k_seq_tile_size), dtype=pe_in_dt)
-  ip_k = nl.arange(d_head_tile_size)[:, None]
-  if_k = nl.arange(k_seq_tile_size)[None, :]
-  for i_k_seq_tile in nl.affine_range(k_seq_n_tiles):
-    k_local[i_k_seq_tile, ip_k, if_k] = nl.load_transpose2d(
-      k_ref[i_k_seq_tile * k_seq_tile_size + nl.arange(k_seq_tile_size)[:, None],
-            nl.arange(d_head_tile_size)[None, :]],
+  k_local = nki.ndarray((k_seq_n_tiles, par_dim(d_head_tile_size), k_seq_tile_size), dtype=pe_in_dt)
+  ip_k = nki.arange(d_head_tile_size)[:, None]
+  if_k = nki.arange(k_seq_tile_size)[None, :]
+  for i_k_seq_tile in nki.affine_range(k_seq_n_tiles):
+    k_local[i_k_seq_tile, ip_k, if_k] = nki.load_transpose2d(
+      k_ref[i_k_seq_tile * k_seq_tile_size + nki.arange(k_seq_tile_size)[:, None],
+            nki.arange(d_head_tile_size)[None, :]],
       dtype=pe_in_dt)
 
-  for i_q_seq_tile in nl.affine_range(q_seq_n_tiles):  # indent = 2
+  for i_q_seq_tile in nki.affine_range(q_seq_n_tiles):  # indent = 2
     # A SBUF buffer for an independent softmax tile
-    qk_res_buf = nl.ndarray((par_dim(q_seq_tile_size), seqlen), dtype=kernel_dtype)
+    qk_res_buf = nki.ndarray((par_dim(q_seq_tile_size), seqlen), dtype=kernel_dtype)
 
-    neg_max_res = nl.ndarray((par_dim(q_seq_tile_size), k_seq_n_tiles), dtype=kernel_dtype)
-    ip_max = nl.arange(q_seq_tile_size)[:, None]
-    if_max = nl.arange(k_seq_n_tiles)[None, :]
+    neg_max_res = nki.ndarray((par_dim(q_seq_tile_size), k_seq_n_tiles), dtype=kernel_dtype)
+    ip_max = nki.arange(q_seq_tile_size)[:, None]
+    if_max = nki.arange(k_seq_n_tiles)[None, :]
 
     # Loop over RHS free of matmul(stationary=tensor_q, moving=tensor_k, contract=d_head)
-    for i_k_seq_tile in nl.affine_range(k_seq_n_tiles):  # indent = 4
+    for i_k_seq_tile in nki.affine_range(k_seq_n_tiles):  # indent = 4
 
       # Since the K^T tile is the RHS, the q_seq_len dimension will be P in the result
       # PSUM buffer shape: [q_seq_tile_size P, k_seq_tile_size F]
-      qk_psum = nl.zeros((par_dim(q_seq_tile_size), k_seq_tile_size),
-                         dtype=np.float32, buffer=nl.psum)
+      qk_psum = nki.zeros((par_dim(q_seq_tile_size), k_seq_tile_size),
+                         dtype=np.float32, buffer=nki.psum)
 
       # Tensor indices for accessing qk result in k_seq_tile_size
-      ip_qk = nl.arange(q_seq_tile_size)[:, None]
-      if_qk = nl.arange(k_seq_tile_size)[None, :]
+      ip_qk = nki.arange(q_seq_tile_size)[:, None]
+      if_qk = nki.arange(k_seq_tile_size)[None, :]
 
       ##############################################################
       # Step 2. matmul(stationary=tensor_q, moving=tensor_k, contract=d_head)
@@ -832,13 +848,13 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
       # Step 3. Apply optional causal mask
       ###################################
       if use_causal_mask:
-        # Magic number nl.fp32.min to replace -inf similar to what neuronx-cc uses
+        # Magic number nki.fp32.min to replace -inf similar to what neuronx-cc uses
         qk_res_buf[ip_qk, i_k_seq_tile * k_seq_tile_size + if_qk] = nisa.affine_select(
           pred=(i_q_seq_tile * q_seq_tile_size + ip_qk >= i_k_seq_tile * k_seq_tile_size + if_qk),
-          on_true_tile=qk_psum[ip_qk, if_qk], on_false_value=nl.fp32.min, dtype=kernel_dtype)
+          on_true_tile=qk_psum[ip_qk, if_qk], on_false_value=nki.fp32.min, dtype=kernel_dtype)
       else:
         # Simply send psum result back to sbuf
-        qk_res_buf[ip_qk, i_k_seq_tile * k_seq_tile_size + if_qk] = nl.copy(qk_psum[ip_qk, if_qk],
+        qk_res_buf[ip_qk, i_k_seq_tile * k_seq_tile_size + if_qk] = nki.copy(qk_psum[ip_qk, if_qk],
                                                                               dtype=kernel_dtype)
 
       ###################################
@@ -852,13 +868,13 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
       np.min, data=neg_max_res[ip_max, if_max],
       axis=(1,), dtype=kernel_dtype, negate=False)
 
-    ip_softmax = nl.arange(q_seq_tile_size)[:, None]
-    if_softmax = nl.arange(seqlen)[None, :]
-    ip_sum_res = nl.arange(q_seq_tile_size)[:, None]
-    if_sum_res = nl.arange(d_head_tile_size)[None, :]
+    ip_softmax = nki.arange(q_seq_tile_size)[:, None]
+    if_softmax = nki.arange(seqlen)[None, :]
+    ip_sum_res = nki.arange(q_seq_tile_size)[:, None]
+    if_sum_res = nki.arange(d_head_tile_size)[None, :]
 
-    softmax_res = nl.ndarray((par_dim(q_seq_tile_size), seqlen), dtype=pe_in_dt)
-    sum_divisor = nl.ndarray((par_dim(q_seq_tile_size), d_head_tile_size), dtype=kernel_dtype)
+    softmax_res = nki.ndarray((par_dim(q_seq_tile_size), seqlen), dtype=pe_in_dt)
+    sum_divisor = nki.ndarray((par_dim(q_seq_tile_size), d_head_tile_size), dtype=kernel_dtype)
 
     # Simply use a large tile of seq_len in size since this is a "blocking" instruction
     # Assuming the compiler will merge exp and reduce_add into a single instruction on ACT
@@ -868,50 +884,50 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
 
     sum_res = nisa.tensor_reduce(np.add, data=exp_res, axis=(1,),
                           dtype=kernel_dtype)
-    softmax_res[ip_softmax, if_softmax] = nl.copy(exp_res, dtype=pe_in_dt)
+    softmax_res[ip_softmax, if_softmax] = nki.copy(exp_res, dtype=pe_in_dt)
 
     sum_reciprocal_broadcast = (1.0 / sum_res).broadcast_to((q_seq_tile_size, d_head_tile_size))
-    sum_divisor[ip_sum_res, if_sum_res] = nl.copy(sum_reciprocal_broadcast, dtype=kernel_dtype)
+    sum_divisor[ip_sum_res, if_sum_res] = nki.copy(sum_reciprocal_broadcast, dtype=kernel_dtype)
 
     # Buffer for transposed softmax results (FP32 in PSUM)
-    trans_softmax_res = nl.ndarray(
+    trans_softmax_res = nki.ndarray(
       (par_dim(k_seq_tile_size), k_seq_n_tiles, q_seq_tile_size),
       dtype=pe_in_dt)
 
     # Result psum buffer has the hidden dim as P
-    attn_res_psum = nl.zeros((par_dim(d_head_tile_size), q_seq_tile_size),
-                             dtype=np.float32, buffer=nl.psum)
+    attn_res_psum = nki.zeros((par_dim(d_head_tile_size), q_seq_tile_size),
+                             dtype=np.float32, buffer=nki.psum)
 
-    ip_scores_t = nl.arange(k_seq_tile_size)[:, None]
-    if_scores_t = nl.arange(q_seq_tile_size)[None, :]
+    ip_scores_t = nki.arange(k_seq_tile_size)[:, None]
+    if_scores_t = nki.arange(q_seq_tile_size)[None, :]
     # Loop over matmul_1 contraction
-    for i_k_seq_tile in nl.affine_range(k_seq_n_tiles):
+    for i_k_seq_tile in nki.affine_range(k_seq_n_tiles):
       ###################################
       # Step 5. transpose(softmax_res)
       ###################################
-      ip_scores = nl.arange(q_seq_tile_size)[:, None]
-      if_scores = nl.arange(k_seq_tile_size)[None, :]
+      ip_scores = nki.arange(q_seq_tile_size)[:, None]
+      if_scores = nki.arange(k_seq_tile_size)[None, :]
 
       trans_softmax_res[ip_scores_t, i_k_seq_tile, if_scores_t] = nisa.nc_transpose(
         softmax_res[ip_scores, i_k_seq_tile * k_seq_tile_size + if_scores])
 
-    ip_out = nl.arange(d_head_tile_size)[:, None]
-    if_out = nl.arange(q_seq_tile_size)[None, :]
-    for i_k_seq_tile in nl.affine_range(k_seq_n_tiles):
+    ip_out = nki.arange(d_head_tile_size)[:, None]
+    if_out = nki.arange(q_seq_tile_size)[None, :]
+    for i_k_seq_tile in nki.affine_range(k_seq_n_tiles):
       ######################################################################
       # Step 6. matmul_1(stationary=trans_v, moving=trans_softmax_res, contract=seqlen_v=seqlen_k)
       ######################################################################
-      ip_v_t = nl.arange(k_seq_tile_size)[:, None]
-      if_v_t = nl.arange(d_head_tile_size)[None, :]
+      ip_v_t = nki.arange(k_seq_tile_size)[:, None]
+      if_v_t = nki.arange(d_head_tile_size)[None, :]
       attn_res_psum[ip_out, if_out] += \
         nisa.nc_matmul(moving=trans_softmax_res[ip_scores_t, i_k_seq_tile, if_scores_t],
                        stationary=trans_v[ip_v_t, i_k_seq_tile, if_v_t])
 
-    attn_res_sbuf = nl.copy(attn_res_psum[ip_out, if_out], dtype=kernel_dtype)
+    attn_res_sbuf = nki.copy(attn_res_psum[ip_out, if_out], dtype=kernel_dtype)
 
     attn_res_div = attn_res_sbuf * nisa.nc_transpose(sum_divisor[ip_sum_res, if_sum_res])
 
-    nl.store(
+    nki.store(
       out_ref[i_q_seq_tile * q_seq_tile_size + if_out, ip_out],
       value=attn_res_div)
 
@@ -920,7 +936,7 @@ def fused_self_attn_for_SD_small_head_size(q_ref, k_ref, v_ref, use_causal_mask=
 
 ## spmd_tensor_addition.html
 
-SUMMARY: This document demonstrates the NKI SPMD programming model for tensor operations on AWS Trainium, showing how to write a simple element-wise tensor addition kernel that operates on tiled data across multiple parallel instances.
+SUMMARY: This document demonstrates NKI kernel development using the SPMD (Single Program, Multiple Data) programming model for tensor addition on AWS Trainium/Inferentia accelerators, showing how to use NKI APIs for tiling, indexing, loading/storing data, and launching kernels across multiple program instances.
 
 ```python
 import neuronxcc.nki as nki
@@ -988,9 +1004,96 @@ def nki_tensor_add(a_input, b_input):
   return nki_tensor_add_kernel_[grid_x, grid_y](a_input, b_input)
 ```
 
+## neuron_profile_for_nki.html
+
+SUMMARY: This document covers Neuron Profile, a profiling tool for NKI kernels on AWS Neuron devices. It demonstrates how to enable profiling via environment variables, use the `nki.profile` decorator for programmatic profiling, and capture execution traces to identify performance bottlenecks in NKI kernel code.
+
+```python
+import torch
+from neuronxcc import nki
+import neuronxcc.nki.language as nl
+import math
+import os
+
+os.environ["NEURON_FRAMEWORK_DEBUG"] = "1"
+os.environ["NEURON_CC_FLAGS"] = " --disable-dge "
+
+@nki.jit
+def tensor_exp_kernel_(in_tensor):
+    """NKI kernel to compute elementwise exponential of an input tensor
+
+    Args:
+        in_tensor: an input tensor of ANY 2D shape (up to SBUF size)
+    Returns:
+        out_tensor: an output tensor of ANY 2D shape (up to SBUF size)
+    """
+    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                            buffer=nl.shared_hbm)
+
+    sz_p, sz_f = in_tensor.shape
+
+    i_f = nl.arange(sz_f)[None, :]
+
+    for p in nl.affine_range(math.ceil(sz_p / nl.tile_size.pmax)):
+        # Generate tensor indices for the input/output tensors
+        # pad index to pmax, for simplicity
+        i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
+
+        # Load input data from external memory to on-chip memory
+        # only read up to sz_p
+        in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p<sz_p))
+
+        # perform the computation
+        out_tile = nl.exp(in_tile)
+
+        # store the results back to external memory
+        # only write up to sz_p
+        nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p))
+
+    return out_tensor
+```
+
+```python
+from neuronxcc import nki
+from neuronxcc.nki.typing import tensor
+import neuronxcc.nki.language as nl
+import math
+from pathlib import Path
+
+WORKING_DIRECTORY = Path.home() / 'reports'
+
+@nki.profile(working_directory=WORKING_DIRECTORY, save_neff_name='file.neff', save_trace_name='profile.ntff', profile_nth=2)
+def tensor_exp_kernel_(in_tensor):
+    """NKI kernel to compute elementwise exponential of an input tensor
+    Args:
+        in_tensor: an input tensor of ANY 2D shape (up to SBUF size)
+    Returns:
+        out_tensor: an output tensor of ANY 2D shape (up to SBUF size)
+    """
+    out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                            buffer=nl.shared_hbm)
+
+    sz_p, sz_f = in_tensor.shape
+    i_f = nl.arange(sz_f)[None, :]
+    for p in nl.affine_range(math.ceil(sz_p / nl.tile_size.pmax)):
+        # Generate tensor indices for the input/output tensors
+        # pad index to pmax, for simplicity
+        i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
+        # Load input data from external memory to on-chip memory
+        # only read up to sz_p
+        in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p<sz_p))
+        # perform the computation
+        out_tile = nl.exp(in_tile)
+        # store the results back to external memory
+        # only write up to sz_p
+        nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p))
+
+    return out_tensor
+```
+
 ## rmsnorm.html
 
-SUMMARY: This document demonstrates how to implement RMSNorm for 2D tensors on AWS Trainium using NKI, covering key concepts like tensor broadcasting, memory layout optimization, execution masks, and efficient mapping of vector operations to NeuronCore.
+SUMMARY: This document demonstrates how to implement RMSNorm on 2D tensors using NKI, covering key concepts like tensor broadcasting, memory layout optimization, execution masks for boundary handling, and efficient mapping of parallel operations to NeuronCore.
 
 ```python
 import math
@@ -1090,7 +1193,7 @@ def jax_rms_norm(a_tensor, g_tensor):
 
 ## getting_started.html
 
-SUMMARY: This document covers getting started with NKI kernel development on AWS Neuron devices, demonstrating the three-phase kernel structure (load, compute, store) and how to invoke kernels through baremetal, PyTorch, and JAX interfaces.
+SUMMARY: This document covers NKI kernel fundamentals, demonstrating how to implement a simple element-wise tensor addition kernel and invoke it through three different modes (baremetal, PyTorch, and JAX) using the nki.jit decorator and NKI language APIs.
 
 ```python
 from neuronxcc import nki
@@ -1155,94 +1258,14 @@ b = jnp.ones((4, 3), dtype=jnp.float16)
 c = nki_tensor_add_kernel(a, b)
 ```
 
-## getting_started.rst
-
-SUMMARY: This document covers NKI kernel fundamentals, demonstrating how to implement a simple element-wise tensor addition kernel using the NKI programming model with three execution modes (baremetal, PyTorch, JAX), and showcasing the core APIs for loading inputs, performing computation, and storing outputs.
-
-```python
-import neuronxcc.nki as nki
-import neuronxcc.nki.language as nl
-```
-
-```python
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    pass
-```
-
-```python
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    # Check input shapes
-    assert a_input.shape == b_input.shape
-    assert a_input.shape[0] <= nl.tile_size.pmax
-```
-
-```python
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    # Load inputs from device memory to on-chip memory
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-```
-
-```python
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-    
-    # Perform element-wise addition
-    c_tile = nl.add(a_tile, b_tile)
-```
-
-```python
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-    c_tile = nl.add(a_tile, b_tile)
-    
-    # Store output from on-chip memory to device memory
-    c_output = nl.zeros(a_input.shape, dtype=a_input.dtype)
-    nl.store(c_output, c_tile)
-    return c_output
-```
-
-```python
-import numpy as np
-
-a = np.ones((4, 3), dtype=np.float16)
-b = np.ones((4, 3), dtype=np.float16)
-c = nki_tensor_add_kernel(a, b)
-```
-
-```python
-import torch
-import torch_neuronx
-
-a = torch.ones((4, 3), dtype=torch.float16, device='xla:0')
-b = torch.ones((4, 3), dtype=torch.float16, device='xla:0')
-c = nki_tensor_add_kernel(a, b)
-print(c)
-```
-
-```python
-import jax
-import jax.numpy as jnp
-
-a = jnp.ones((4, 3), dtype=jnp.float16)
-b = jnp.ones((4, 3), dtype=jnp.float16)
-c = nki_tensor_add_kernel(a, b)
-```
-
 ## nki_block_dimension_migration_guide.html
 
-SUMMARY: This document explains NKI block dimension migration strategies, demonstrating how to refactor SBUF tensor allocations by either moving block dimensions into free dimensions or hoisting tensors into loops based on data dependency patterns.
+SUMMARY: This document explains how to migrate NKI code from using block dimensions (a removed software concept) to alternative approaches, demonstrating two migration strategies for SBUF tensors and multi-buffering patterns with direct allocation APIs.
 
 ```python
 # Original tensor with block dimensions
 a = nl.ndarray((4, 8, nl.par_dim(128), 2, 512), buffer=nl.sbuf)
+
 # - (4, 8): (B) block dimensions
 # - 128: (P) partition dimension
 # - (2, 512): (F) free dimension
@@ -1262,24 +1285,7 @@ def exp_func(inp):
 ```
 
 ```python
-# Migration: Move block dimension into free dimension
-a = nl.ndarray((8, par_dim(128), 512), buffer=nl.sbuf, dtype=bfloat16)
-# Migrated to:
-a = nl.ndarray((128, 8, 512), buffer=nl.sbuf, dtype=bfloat16)
-```
-
-```python
-@nki.jit
-def sb_blocks(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(8, nl.par_dim(128), 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[i] = nl.load(inp[i])
-    for i in range(8):
-        nl.store(res[i], add_buf[i])
-    return res
-
-# Migrated to:
+# Migration: Move block dimension into free dimension (blocks need to be alive simultaneously)
 @nki.jit
 def sb_blocks_migrated(inp):
     res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
@@ -1292,28 +1298,7 @@ def sb_blocks_migrated(inp):
 ```
 
 ```python
-# Migration: Hoist tensor into loop when blocks don't need to be alive simultaneously
-a = nl.ndarray((8, par_dim(128), 256))
-for i in nl.affine_range(8):
-  # do something with a[i]
-
-# Migrated to:
-for i in nl.affine_range(8):
-  a = nl.ndarray((128, 256))
-  # do something with a
-```
-
-```python
-@nki.jit
-def sb_blocks(inp):
-    res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
-    add_buf = nl.ndarray(shape=(8, nl.par_dim(128), 512), dtype=inp.dtype, buffer=nl.sbuf)
-    for i in range(8):
-        add_buf[i] = nl.load(inp[i])
-        nl.store(res[i], add_buf[i])
-    return res
-
-# Migrated to:
+# Migration: Remove block dimension and hoist down (blocks don't need to be alive simultaneously)
 @nki.jit
 def sb_blocks_migrated(inp):
     res = nl.ndarray(shape=(8, 128, 512), dtype=inp.dtype, buffer=nl.shared_hbm)
@@ -1325,6 +1310,7 @@ def sb_blocks_migrated(inp):
 ```
 
 ```python
+# Multi-buffering with direct allocation (original with block dimensions)
 def interleave_alloc_func(idx, pdim_size, fdim_size):
   idx, = idx
   start_partition = 0
@@ -1340,6 +1326,7 @@ def copy_func(inp):
 ```
 
 ```python
+# Multi-buffering after migration (block dimension removed)
 def interleave_alloc_func(idx, pdim_size, fdim_size):
   assert idx == ()
   start_partition = 0
@@ -1357,7 +1344,7 @@ def exp_func(inp):
 
 ## transpose2d.html
 
-SUMMARY: This document demonstrates how to transpose a 2D tensor along two free-dimension axes in NKI using multi-dimensional indexing and memory access patterns, showing the NKI syntax, programming model, and how to manipulate access patterns for data rearrangement within partitions.
+SUMMARY: This document demonstrates how to transpose a 2D tensor along two free-dimension axes in NKI using multi-dimensional indexing and memory access patterns, showing the NKI programming model for data rearrangement within partitions.
 
 ```python
 import neuronxcc.nki as nki
@@ -1372,20 +1359,6 @@ def tensor_transpose2D_kernel_(in_tensor, shape2D):
   Every row of the input tensor is a flattened row-major 2D matrix.
   The shape2D argument defines the dimensions of the flattened matrices (#rows,#cols).
   Our goal in this kernel is to transpose these flattened 2D matrices, i.e. make them (#cols,#rows).
-
-  Example:
-      in_tensor = [a0,a1,a2,a3,b0,b1,b2,b3,c0,c1,c2,c3]
-      shape2D = (3,4)
-  this means that in_tensor has 3 rows and 4 columns, i.e. can be represented as:
-      [a0,a1,a2,a3]
-      [b0,b1,b2,b3]
-      [c0,c1,c2,c3]
-  after transpose, we expect to get:
-      [a0,b0,c0]
-      [a1,b1,c1]
-      [a2,b2,c2]
-      [a3,b3,c3]
-  Thus, out_tensor is expected to be [a0,b0,c0,a1,b1,c1,a2,b2,c2,a3,b3,c3]
 
   Args:
     in_tensor: an input tensor
@@ -1427,7 +1400,7 @@ def tensor_transpose2D_kernel_(in_tensor, shape2D):
 
 ## average_pool2d.html
 
-SUMMARY: This document demonstrates how to implement a 2D average pooling operation using NKI, showing multi-dimensional memory access patterns, advanced indexing with mgrid, and reduction operations on tensors.
+SUMMARY: This document demonstrates how to implement a 2D average pooling operation using NKI, covering multi-dimensional memory access patterns, advanced indexing with mgrid, and reduction operations on Trainium/Inferentia accelerators.
 
 ```python
 import neuronxcc.nki as nki
@@ -1480,73 +1453,9 @@ def tensor_avgpool_kernel(in_tensor, pool_size):
   return out_tensor
 ```
 
-## nki.isa.nc_matmul.html
-
-SUMMARY: This document covers the `nki.isa.nc_matmul` API for performing matrix multiplication on AWS Trainium using the Tensor Engine, demonstrating basic matmul operations, PSUM accumulation for large contractions, and PE tiling for batched operations.
-
-```python
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-
-# Example 1: Basic matrix multiplication
-# multiply matrix a of shape (128, 128) and matrix b of shape (128, 512)
-# to get matrix c in PSUM of shape (128, 512)
-a_mgrid = nl.mgrid[0:128, 0:128]
-b_mgrid = nl.mgrid[0:128, 0:512]
-c_mgrid = nl.mgrid[0:128, 0:512]
-
-a = nl.load(a_tensor[a_mgrid.p, a_mgrid.x])
-b = nl.load(b_tensor[b_mgrid.p, b_mgrid.x])
-
-c_psum = nisa.nc_matmul(a[a_mgrid.p, a_mgrid.x], b[b_mgrid.p, b_mgrid.x])
-
-nl.store(c_tensor[c_mgrid.p, c_mgrid.x], c_psum)
-```
-
-```python
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-
-# Example 2: PSUM accumulation for large contraction dimension
-# multiply matrix d of shape (256, 128) and matrix e of shape (256, 512)
-# to get matrix f in PSUM of shape (128, 512) using psum accumulation
-d_mgrid = nl.mgrid[0:128, 0:128]
-e_mgrid = nl.mgrid[0:128, 0:512]
-f_mgrid = nl.mgrid[0:128, 0:512]
-
-f_psum = nl.zeros((128, 512), nl.float32, buffer=nl.psum)
-
-for i_contract in nl.affine_range(2):
-  d = nl.load(d_tensor[i_contract * 128 + d_mgrid.p, d_mgrid.x])
-  e = nl.load(e_tensor[i_contract * 128 + e_mgrid.p, e_mgrid.x])
-  f_psum += nisa.nc_matmul(d[d_mgrid.p, d_mgrid.x], e[e_mgrid.p, e_mgrid.x])
-  
-nl.store(f_tensor[f_mgrid.p, f_mgrid.x], f_psum)
-```
-
-```python
-import neuronxcc.nki.isa as nisa
-import neuronxcc.nki.language as nl
-
-# Example 3: Batched matrix multiplication with PE tiling
-# perform batched matrix multiplication on matrix g of shape (16, 64, 64) 
-# and matrix h of shape (16, 64, 512) to get matrix i of (16, 64, 512) 
-# using Tensor Engine PE tiling mode
-g_mgrid = nl.mgrid[0:64, 0:64]
-h_mgrid = nl.mgrid[0:64, 0:512]
-i_mgrid = nl.mgrid[0:64, 0:512]
-
-for i in nl.affine_range(4):
-  for j in nl.affine_range(4):
-    g = nl.load(g_tensor[i * 4 + j, g_mgrid.p, g_mgrid.x])
-    h = nl.load(h_tensor[i * 4 + j, h_mgrid.p, h_mgrid.x])
-    i_psum = nisa.nc_matmul(g, h, tile_position=((i % 2) * 64, (j % 2) * 64), tile_size=(64, 64))
-    nl.store(i_tensor[i * 4 + j, i_mgrid.p, i_mgrid.x], i_psum)
-```
-
 ## nki.baremetal.html
 
-SUMMARY: This document covers the `nki.baremetal` decorator API for compiling and running NKI kernels directly on NeuronDevices without ML frameworks, accepting numpy arrays as inputs/outputs and optionally saving NEFF and NTFF artifacts.
+SUMMARY: This document covers the `nki.baremetal` decorator API for compiling and running NKI kernels directly on NeuronDevices without ML frameworks, accepting numpy arrays as inputs/outputs and optionally saving NEFF and NTFF artifacts for profiling.
 
 ```python
 from neuronxcc.nki import baremetal
@@ -1555,133 +1464,21 @@ import numpy as np
 
 @baremetal(save_neff_name='file.neff', save_trace_name='profile.ntff')
 def nki_tensor_tensor_add(a_tensor, b_tensor):
-    c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
-    
-    a = nl.load(a_tensor)
-    b = nl.load(b_tensor)
-    
-    c = a + b
-    
-    nl.store(c_tensor, c)
-    
-    return c_tensor
-```
+  c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
 
-## mm-nisa-spmd.py
+  a = nl.load(a_tensor)
+  b = nl.load(b_tensor)
 
-SUMMARY: This document demonstrates NKI kernel implementation for matrix multiplication using SPMD (Single Program Multiple Data) programming model with TensorE hardware acceleration on AWS Trainium, showing how to use program IDs for tile indexing, load/store operations, and the nc_matmul instruction.
+  c = a + b
 
-```python
-import neuronxcc.nki.language as nl
-import neuronxcc.nki.isa as nisa
-from neuronxcc import nki
+  nl.store(c_tensor, c)
 
-@nki.jit
-def matmul_128x128x512_spmd(A_T, B):
-    """NKI kernel to compute a 128x128x512 matrix multiplication operation
-    Use SPMD program IDs to index into the full A and B input tensor to get tiles 
-    for 128x128x512 matrix multiplication.
-    
-    Args:
-        A_T: an input tensor of shape [K=128,M=512], a left hand side argument of the matrix multiplication
-        B: an input tensor of shape [K=128,N=1024], a right hand side argument of the matrix multiplication
-    
-    Returns:
-        result: the resulting output tensor of shape [M=512,N=1024]
-    """
-    K, N = A_T.shape
-    K_, M = B.shape
-    assert K == K_
-    
-    # Create output tensor shared between all SPMD instances as result tensor
-    result = nl.ndarray((N, M), dtype=A_T.dtype, buffer=nl.shared_hbm)
-    
-    # Defining starting indexes for input A.T and B using SPMD program IDs
-    i_A_T_col = nl.program_id(0) * 128
-    i_B_col = nl.program_id(1) * 512
-    
-    # Loading the inputs (HBM->SBUF)
-    A_T_tile = nl.load(A_T[0:128, i_A_T_col:i_A_T_col+128])
-    B_tile = nl.load(B[0:128, i_B_col:i_B_col+512])
-    
-    # Perform the matrix-multiplication
-    result_psum = nisa.nc_matmul(A_T_tile, B_tile)
-    
-    # Copy the result from PSUM back to SBUF, and cast to expected output data-type
-    result_sbuf = nl.copy(result_psum, dtype=result.dtype)
-    
-    # Store back into result tile with the correct SPMD offsets
-    nl.store(result[i_A_T_col:i_A_T_col+128, i_B_col:i_B_col+512], value=result_sbuf)
-    
-    return result
-```
-
-## getting_started_baremetal.py
-
-SUMMARY: This document demonstrates basic NKI kernel development on AWS Trainium, showing how to write a simple element-wise tensor addition kernel using NKI's core APIs for loading data, performing computations, and storing results.
-
-```python
-from neuronxcc import nki
-import neuronxcc.nki.language as nl
-
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    """NKI kernel to compute element-wise addition of two input tensors"""
-    # Check all input/output tensor shapes are the same for element-wise operation
-    assert a_input.shape == b_input.shape
-    # Check size of the first dimension does not exceed on-chip memory tile size limit
-    assert a_input.shape[0] <= nl.tile_size.pmax
-    
-    # Load the inputs from device memory to on-chip memory
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-    
-    # Specify the computation (in our case: a + b)
-    c_tile = nl.add(a_tile, b_tile)
-    
-    # Create a HBM tensor as the kernel output
-    c_output = nl.ndarray(a_input.shape, dtype=a_input.dtype, buffer=nl.shared_hbm)
-    # Store the result to c_output from on-chip memory to device memory
-    nl.store(c_output, value=c_tile)
-    
-    return c_output
-```
-
-## getting_started_torch.py
-
-SUMMARY: This document demonstrates basic NKI kernel development for AWS Trainium, showing how to write a simple element-wise tensor addition kernel using the NKI language API with on-chip memory management.
-
-```python
-from neuronxcc import nki
-import neuronxcc.nki.language as nl
-
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    """NKI kernel to compute element-wise addition of two input tensors"""
-    c_output = nl.ndarray(a_input.shape, dtype=a_input.dtype, buffer=nl.shared_hbm)
-    
-    # Check all input/output tensor shapes are the same for element-wise operation
-    assert a_input.shape == b_input.shape
-    
-    # Check size of the first dimension does not exceed on-chip memory tile size limit
-    assert a_input.shape[0] <= nl.tile_size.pmax
-    
-    # Load the inputs from device memory to on-chip memory
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-    
-    # Specify the computation (in our case: a + b)
-    c_tile = nl.add(a_tile, b_tile)
-    
-    # Store the result to c_output from on-chip memory to device memory
-    nl.store(c_output, value=c_tile)
-    
-    return c_output
+  return c_tensor
 ```
 
 ## nki.jit.html
 
-SUMMARY: This document covers the `nki.jit` decorator API that compiles functions to run on NeuronDevices, with automatic framework detection and support for multiple compilation modes including JAX, TorchXLA, and baremetal.
+SUMMARY: This document covers the `nki.jit` decorator API that compiles functions to run on AWS Neuron devices, with support for multiple frameworks (JAX, PyTorch/XLA, baremetal) and compilation modes.
 
 ```python
 from neuronxcc import nki
@@ -1699,54 +1496,4 @@ def nki_tensor_tensor_add(a_tensor, b_tensor):
     nl.store(c_tensor, c)
     
     return c_tensor
-```
-
-## getting_started_jax.py
-
-SUMMARY: This document demonstrates basic NKI kernel development on AWS Trainium, showing how to write a simple element-wise tensor addition kernel using the NKI language API with on-chip memory management.
-
-```python
-from neuronxcc import nki
-import neuronxcc.nki.language as nl
-
-@nki.jit
-def nki_tensor_add_kernel(a_input, b_input):
-    """NKI kernel to compute element-wise addition of two input tensors"""
-    c_output = nl.ndarray(a_input.shape, dtype=a_input.dtype, buffer=nl.shared_hbm)
-    
-    # Check all input/output tensor shapes are the same for element-wise operation
-    assert a_input.shape == b_input.shape
-    
-    # Check size of the first dimension does not exceed on-chip memory tile size limit
-    assert a_input.shape[0] <= nl.tile_size.pmax
-    
-    # Load the inputs from device memory to on-chip memory
-    a_tile = nl.load(a_input)
-    b_tile = nl.load(b_input)
-    
-    # Specify the computation (in our case: a + b)
-    c_tile = nl.add(a_tile, b_tile)
-    
-    # Store the result to c_output from on-chip memory to device memory
-    nl.store(c_output, value=c_tile)
-    
-    return c_output
-```
-
-## nki.language.ds.html
-
-SUMMARY: This document covers the `nki.language.ds()` API for constructing dynamic slices in NKI kernels, demonstrating how to use dynamic slicing as an alternative to native Python slice syntax for tensor indexing on AWS Trainium.
-
-```python
-import neuronxcc.nki.language as nl
-
-@nki.jit(mode="simulation")
-def example_kernel(in_tensor):
-  out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
-                          buffer=nl.shared_hbm)
-  for i in nl.affine_range(in_tensor.shape[1] // 512):
-    # Native slice syntax
-    tile = nl.load(in_tensor[:, (i * 512):((i + 1) * 512)])
-    # Dynamic slice syntax using nl.ds(start, size)
-    tile = nl.load(in_tensor[:, nl.ds(i * 512, 512)])
 ```

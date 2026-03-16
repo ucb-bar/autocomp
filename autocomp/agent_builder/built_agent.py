@@ -421,7 +421,7 @@ class BuiltLLMAgent(LLMAgent):
                 parts.append(self._isa_sections[name])
         return "\n\n".join(parts)
 
-    def _select_code_examples(self, prob: Prob, code: str) -> list[str]:
+    def _select_code_examples(self, prob: Prob, code: str, isa_text: str = "") -> list[str]:
         """LLM-select relevant code example sections using parallel yes/no prompts.
 
         Returns a list of section names. Results are cached per problem.
@@ -436,12 +436,18 @@ class BuiltLLMAgent(LLMAgent):
 
         prob_context = getattr(prob, "context", "")
         code_block = f"Code:\n```\n{code}\n```"
+        isa_hint = ""
+        if isa_text:
+            headers = [ln for ln in isa_text.splitlines() if ln.startswith("## ") or ln.startswith("### ")]
+            if headers:
+                isa_hint = "Selected ISA APIs:\n" + "\n".join(headers) + "\n\n"
 
         names: list[str] = []
         prompts: list[str] = []
         for name, summary, _ in self._code_example_sections:
             names.append(name)
             prompt = (
+                f"{isa_hint}"
                 f"Problem type: {prob.prob_type}\n"
                 f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
                 f"{code_block}\n\n"
@@ -466,6 +472,10 @@ class BuiltLLMAgent(LLMAgent):
         logger.info(
             "%s BuiltLLMAgent: code example selection for %s: %d/%d examples",
             self.llm_client.model, cache_key, len(selected), len(names),
+        )
+        logger.debug(
+            "%s BuiltLLMAgent: Selected code examples: %s",
+            self.llm_client.model, selected,
         )
         return selected
 
@@ -562,10 +572,13 @@ class BuiltLLMAgent(LLMAgent):
         if shuffle_opts:
             random.shuffle(opt_lst)
 
+        # Run ISA selection first (cached) so we can inform code example selection
+        isa_text = self._get_isa_for_problem(prob, candidate.code)
+
         # Stochastically prepend code examples at the top (deprioritized by position)
         examples_prefix = ""
         if self.give_examples_feedback > 0 and self._code_example_sections:
-            selected_names = self._select_code_examples(prob, candidate.code)
+            selected_names = self._select_code_examples(prob, candidate.code, isa_text)
             if selected_names:
                 sampled = [n for n in selected_names if random.random() < self.give_examples_feedback]
                 if sampled:
@@ -573,9 +586,9 @@ class BuiltLLMAgent(LLMAgent):
                     if bodies:
                         parts = [f"### {name}\n{body}" for name, body in bodies.items()]
                         framing = (
-                            "Your plan should be tailored to the target kernel, not reproduce example code.\n\n"
-                            if random.random() < 0.5 else
-                            "Your plan should be tailored to the target kernel. Do NOT generate full code.\n\n"
+                            "Use these reference patterns to inform your optimization plan.\n\n"
+                            if random.random() < 0.75 else
+                            "Use these reference patterns, but don't copy them unless they are directly applicable to the target code.\n\n"
                         )
                         examples_prefix = (
                             "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n" + framing
@@ -669,9 +682,11 @@ class BuiltLLMAgent(LLMAgent):
     def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob):
         prompt_text = ""
 
+        isa_text = self._get_isa_for_problem(prob, candidate.code)
+
         # Include code examples to help discover optimization strategies
         if self._code_example_sections:
-            selected_names = self._select_code_examples(prob, candidate.code)
+            selected_names = self._select_code_examples(prob, candidate.code, isa_text)
             if selected_names:
                 bodies = self._get_code_example_bodies(selected_names)
                 if bodies:
@@ -682,7 +697,7 @@ class BuiltLLMAgent(LLMAgent):
                     )
 
         prompt_text += self._architecture + "\n"
-        prompt_text += self._get_isa_for_problem(prob, candidate.code) + "\n"
+        prompt_text += isa_text + "\n"
         prompt_text += "Here is the kernel to optimize:\n"
         prompt_text += candidate.code + "\n"
         prompt_text += "The following optimization strategies are already in the menu:\n"

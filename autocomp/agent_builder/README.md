@@ -37,9 +37,16 @@ python -m autocomp.agent_builder.run_agent_builder \
 |------|-------------|
 | `--source-dir` | Path to a local directory of code/docs. Text files are read directly; PDFs are automatically extracted. |
 | `--source-file` | Path to a single file -- PDF or text. Can be repeated. |
-| `--source-url` | URL to crawl. Same-domain links are followed. Can be repeated. |
+| `--source-url` | URL to crawl. Only links under the same path prefix are followed (see tip below). Can be repeated. |
 | `--max-depth` | Max link-following depth for `--source-url` (default: 2) |
 | `--max-pages` | Max pages to fetch per `--source-url` (default: 250) |
+
+> **Tip — URL scoping:** The crawler only follows links whose path starts with the parent directory of the URL you provide. For example, `--source-url https://docs.example.com/en/v2.0/api/index.html` crawls pages under `/en/v2.0/api/` and won't follow links to `/en/latest/` or `/en/v3.0/`. If you need content from multiple subtrees, provide a separate `--source-url` for each:
+>
+> ```bash
+> --source-url https://docs.example.com/en/v2.0/api/index.html \
+> --source-url https://docs.example.com/en/v2.0/guides/index.html
+> ```
 
 ### Key options
 
@@ -103,29 +110,33 @@ A built agent produces the following files in `.built/<agent_name>/`:
 | `isa_docs.md` | API/instruction-set reference |
 | `optimization_menu.yaml` | List of optimization strategies |
 | `rules.yaml` | Programming constraints (general, planning, coding) |
-| `code_examples.md` | Annotated code examples (not yet used at runtime; reserved for future ICL support) |
+| `code_examples.md` | Annotated code examples, stochastically included during planning as reference patterns |
 | `translate_menu.yaml` | *(optional, user-created)* Translation strategies for `translate_iters` — see [Translation support](#translation-support) |
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
-A reference example is available at `.built/trn-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.1/nki/index.html)).
+A reference example is available at `.built/trn-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html)).
 
 ## How It Works
 
 The build pipeline has three stages: **ingest** (load and index sources), **synthesize** (LLM-based extraction), and **assemble** (write config files).
 
-The synthesizer first **routes** each document into component buckets (`isa`, `architecture`, `optimization`, `rules`, `examples`) using one LLM call per document. The `--agent-scope` flag drives scope filtering at this stage.
+The synthesizer first runs a **pre-filter** that removes clearly irrelevant documents via parallel yes/no LLM prompts (driven by `--agent-scope`), then **routes** each remaining document into component buckets (`isa`, `architecture`, `optimization`, `rules`, `examples`) using one LLM call per document.
 
 Each component is then synthesized using a **map-reduce** pattern: documents are processed in parallel (map), then the results are merged and deduplicated (reduce). Documents larger than the context budget are automatically split on paragraph boundaries, so the pipeline scales to arbitrarily large documentation sets.
 
 ### ISA filtering
 
-Built agents can have large ISA docs. At runtime, the agent selects only the relevant sections for the current problem using a two-level LLM filter:
+Built agents can have large ISA docs. At runtime, the agent selects only the relevant sections for the current problem using a two-level LLM filter with parallel per-item yes/no prompts:
 
-1. **Level 1:** Selects relevant `##` sections based on the problem and code context.
-2. **Level 2** (`fine_grained_isa=True`): Within large selected sections, further filters individual `###` entries to keep only those relevant to the task.
+1. **Level 1:** Each `##` section is independently evaluated for relevance to the problem and code context. The prompt includes the section preamble and a summary of its subsections.
+2. **Level 2** (`fine_grained_isa=True`): Within selected sections that have `###` subsections, each subsection is independently evaluated. The prompt includes the API signature and a content summary. Sections without subsections are included in full after passing L1.
 
 Both levels are cached per-problem so the filtering cost is paid once.
+
+### Code examples
+
+At runtime, the agent stochastically selects relevant code examples from `code_examples.md` using the same per-item yes/no prompt approach. Selected examples are included as reference patterns at the top of the planning prompt. The inclusion rate is controlled by `give_examples_feedback` (default: 0.3).
 
 ### Optimization menu
 

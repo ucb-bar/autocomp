@@ -46,9 +46,9 @@ _BUCKET_DESCRIPTIONS = {
     "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics, and their inline usage examples/snippets). NOT standalone tutorials or sample programs.",
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
-    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
+    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls)",
     "examples": "code examples, tutorials, sample kernels, example implementations, framework integration docs",
-    "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
+    "skip": "not relevant to any of the above (release notes, changelogs, navigation pages, setup/config, unrelated docs)",
 }
 
 

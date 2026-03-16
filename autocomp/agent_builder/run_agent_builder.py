@@ -388,7 +388,8 @@ def main():
     parser.add_argument("--source-file", action="append", default=None, dest="source_files",
                         help="Path to a single file to ingest (PDF or text; can be repeated)")
     parser.add_argument("--source-url", action="append", default=None, dest="source_urls",
-                        help="URL to ingest (can be repeated)")
+                        help="URL to crawl. Only links under the same path prefix are followed, "
+                             "so provide one URL per doc subtree (can be repeated)")
     parser.add_argument("--max-depth", type=int, default=2,
                         help="Max link-following depth for webpage sources (default: 2)")
     parser.add_argument("--max-pages", type=int, default=250,

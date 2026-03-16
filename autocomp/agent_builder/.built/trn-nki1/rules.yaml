@@ -1,44 +1,48 @@
 general:
 - The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
 - Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
-- The partition dimension (P) must be the first (leftmost) dimension of any SBUF/PSUM tile and must never exceed 128 elements
-  (nl.tile_size.pmax). All NKI compute APIs require tiles with shape[0] as the partition dimension.
-- All kernel inputs and outputs must reside in HBM. Data must be loaded from HBM to SBUF via nl.load before computation, and
-  results must be stored from SBUF to HBM via nl.store. Direct computation on HBM tensors is not permitted.
-- For matrix multiplication (nc_matmul/nl.matmul), the contraction axis K must be mapped to the partition dimension (P) for
-  both operands. Stationary (LHS) free dimension ≤ 128, moving (RHS) free dimension ≤ 512, and K ≤ 128 per tile. Output is
-  always written to PSUM in float32.
-- 'PSUM free dimension must not exceed 512 FP32 elements. PSUM accumulation for tiled matmul requires the specific pattern:
-  nl.zeros(..., buffer=nl.psum) initialization, nl.affine_range loop, and += with nl.matmul. Results must be copied from PSUM
-  to SBUF (via nl.copy) before storing to HBM.'
-- Output tensors must be declared with buffer=nl.shared_hbm, explicitly written to via nl.store, and returned from the kernel.
-  Unwritten output regions contain garbage data.
+- The partition dimension (P) is always the first/leftmost dimension of any SBUF/PSUM tile, has a hard maximum of 128 elements
+  (pmax=128), and all NKI compute APIs require tiles with the partition dimension as the first dimension.
+- All kernel input/output tensors must reside in HBM; data must be explicitly loaded from HBM to SBUF via nl.load before computation,
+  and results must be explicitly stored back via nl.store. Matmul results in PSUM must first be copied to SBUF via nl.copy
+  before storing to HBM.
+- nc_matmul computes stationary.T @ moving, reads both inputs from SBUF, and always writes FP32 results to PSUM. The contraction
+  axis must be in the partition dimension for both operands. Stationary free axis ≤ 128, moving free axis ≤ 512, partition
+  axis ≤ 128.
+- 'PSUM accumulation for matmuls requires exactly this pattern: (1) initialize with nl.zeros(..., buffer=nl.psum), (2) use
+  nl.affine_range for the loop, and (3) accumulate via psum_buf += nl.matmul(...). Using psum_buf[...] = psum_buf + nisa.nc_matmul(...)
+  will NOT trigger PSUM accumulation.'
+- When tile indices may exceed actual tensor dimensions (tensor size not a multiple of tile size), a mask parameter must be
+  passed to nl.load, nl.store, and compute APIs to prevent out-of-bounds access. Mask expressions must be affine expressions
+  of nl.arange, nl.affine_range, or nl.program_id.
 planning:
 - Limit the scope of the plan to the selected optimization.
 - Do not count out any of the optimizations unless they are clearly irrelevant to the code.
-- nl.affine_range must be used for loops without loop-carried dependencies (associative reductions like PSUM accumulation
-  via += are NOT loop-carried dependencies). nl.sequential_range must be used when true loop-carried dependencies exist. Python
-  range() is automatically converted to sequential_range.
-- When tensor dimensions are not exact multiples of tile sizes (128 for partition dim, chosen free dim tile size), a mask
-  parameter must be provided to nl.load, nl.store, and compute APIs to prevent out-of-bounds access.
-- Tiles on SBUF/PSUM must have at least 2 dimensions; 1D tiles cause 'Insufficient rank' errors. Use shapes like (128, 1)
-  instead of (128,). 1D HBM tensors must be reshaped to 2D before loading.
-- SBUF total capacity is 24 MiB per NeuronCore. All live tensors must fit within this budget; exceeding it causes spilling
-  to HBM. Minimize simultaneously live tile count.
-- Mixing direct allocation (ncc.sbuf.alloc/mod_alloc) with automatic allocation (buffer=nl.sbuf or buffer=nl.psum) in the
-  same kernel is not allowed and will cause errors.
+- SBUF capacity is 24 MiB (128 partitions × 176 KiB usable each); PSUM capacity is 2 MiB (128 partitions × 16 KiB each, 8
+  banks × 512 FP32 elements per bank). All simultaneously live tiles must fit within these limits.
+- nl.affine_range must only be used when there are no loop-carried dependencies between iterations; associative reductions
+  (e.g., matmul accumulation via +=) are NOT loop-carried dependencies. nl.sequential_range must be used for true loop-carried
+  dependencies. Python range() is silently converted to sequential_range.
+- 'Tensor Engine tile size constraints: LHS (stationary) up to [128, 128], RHS (moving) up to [128, 512]. If the contraction
+  dimension exceeds 128, it must be split into chunks ≤ 128 and accumulated across multiple nc_matmul calls into the same
+  PSUM buffer.'
+- PSUM free dimension ≤ 512 per tile (one bank). bn_stats free dimension ≤ 512. These are hard hardware limits that constrain
+  tiling strategies.
+- When using direct (manual) memory allocation, ALL tensors must use direct allocation — mixing with automatic allocation
+  (buffer=nl.sbuf/nl.psum) is forbidden. Also, nisa.nc_transpose with TensorEngine and high-level APIs like nl.softmax are
+  not allowed in allocated kernels.
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
-- Use nki.* namespace imports (not neuronxcc.nki.*). Use nki.jit decorator. nki.isa APIs require dst as a parameter and do
-  not accept dtype or mask parameters. nc_matmul does not accept psumAccumulateFlag; use is_moving_onezero instead of is_moving_zero.
-- Partition dimension indices must use nl.arange(N)[:, None] (column vector) and free dimension indices must use nl.arange(M)[None,
-  :] (row vector). Mixing basic indexing (slices) and advanced indexing (nl.arange) in the same index tuple is not supported.
-  Use & to combine masks, not Python 'and'.
-- nisa.activation bias must have free dimension of 1 (shape (P, 1)), must be float32/float16/bfloat16. Scale must be float32
-  scalar or vector of shape (P, 1). The formula is output = f_act(data * scale + bias). On NeuronCore-v2, reciprocal activation
-  does not support bias.
-- Reassigning a tensor variable inside a loop (e.g., data = data + x) creates a new scoped object; use data[...] = data +
-  x for in-place update. Tensors defined inside if/else/for blocks cannot be used outside those blocks. Local variables from
-  inner scopes are not accessible in outer scopes.
-- nl.store requires the value= keyword argument. Partition dimension broadcasting is not supported on operator overloads (+,
-  -, *, /); use nl.add, nl.multiply etc. instead. nl.transpose only supports 2D tensors with free dimension ≤ 128.
+- Tiles in SBUF/PSUM must have at least 2 dimensions; 1D tiles cause 'Insufficient rank' errors. Use shapes like (128, 1)
+  instead of (128,). Buffers with shape [N, 1] or [1, M] must be indexed with both indices explicitly (e.g., my_sbuf[0:N,
+  0]).
+- Partition dimension indices must be column vectors (nl.arange(N)[:, None]) and free dimension indices must be row vectors
+  (nl.arange(M)[None, :]). Mixing basic indexing (slices) and advanced indexing (nl.arange-based) in the same index tuple
+  is not supported.
+- Partition dimension broadcasting is NOT supported on operator overloads (+, -, *, /, etc.); use nl.add, nl.multiply, and
+  other nki.language APIs instead. Free-axis broadcasting works implicitly.
+- Output tensors must be declared with buffer=nl.shared_hbm via nl.ndarray, must be explicitly written to via nl.store, and
+  must be returned from the kernel. Tensors defined inside if/else/for blocks cannot be used outside that scope — declare
+  in outer scope and assign into them.
+- Use & to combine masks (not Python 'and'). Python logical operators (and, or, not) cannot be used on NKI tensors. Control
+  flow conditions (if/while) cannot depend on nl.arange or runtime tensor values — use the mask parameter on APIs instead.
