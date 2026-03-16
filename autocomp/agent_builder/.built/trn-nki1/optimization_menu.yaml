@@ -1,14 +1,17 @@
 optimizations:
 - strategy: reduce data movement
 - strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
 - strategy: loop tiling
 - strategy: loop reordering and restructuring
+- strategy: loop unrolling
 - strategy: fuse operations
 - strategy: use lower precision
 - strategy: double buffering
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
+- strategy: common subexpression elimination
 - strategy: Map contraction axis to partition dimension (P-dim) to satisfy Tensor Engine layout constraints without reshuffling
 - strategy: Use `affine_range` instead of `sequential_range` for loops without true loop-carried dependencies to enable compiler
     parallelization

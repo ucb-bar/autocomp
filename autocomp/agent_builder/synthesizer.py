@@ -685,14 +685,17 @@ JSON array:"""
         defaults = [
             "reduce data movement",
             "overlap data movement and compute",
+            "cache reused data in local memory instead of reloading from main memory",
             "loop tiling",
             "loop reordering and restructuring",
+            "loop unrolling",
             "fuse operations",
             "use lower precision",
             "double buffering",
             "software pipelining",
             "hoist redundant operations out of loops",
             "simplify or remove unnecessary code",
+            "common subexpression elimination",
         ]
 
         if not items:
