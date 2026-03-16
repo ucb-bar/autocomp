@@ -46,9 +46,9 @@ _BUCKET_DESCRIPTIONS = {
     "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics, and their inline usage examples/snippets). NOT standalone tutorials or sample programs.",
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
-    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
+    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls)",
     "examples": "code examples, tutorials, sample kernels, example implementations, framework integration docs",
-    "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
+    "skip": "not relevant to any of the above (release notes, changelogs, navigation pages, setup/config, unrelated docs)",
 }
 
 
@@ -69,10 +69,10 @@ class ComponentSynthesizer:
     DEFAULT_CONTEXT_BUDGET = 150_000
 
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
-                 description: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
+                 agent_scope: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
         self.llm = llm_client
         self.light_llm = light_llm_client or llm_client
-        self._context_prefix = f"Context: {description}\n\n" if description else ""
+        self._context_prefix = f"Agent scope: {agent_scope}\n\n" if agent_scope else ""
         self.context_budget = context_budget
 
     def _chat(self, prompt: str, **kwargs) -> list[str]:
@@ -148,10 +148,17 @@ class ComponentSynthesizer:
         buckets: dict[str, list[tuple[str, str]]] = {b: [] for b in _BUCKET_NAMES}
 
         all_items: list[tuple[str, str]] = []
+        seen_keys: set[str] = set()
         for idx in indices:
             for key, text in idx.content.items():
-                if text and text.strip():
+                if text and text.strip() and key not in seen_keys:
+                    seen_keys.add(key)
                     all_items.append((key, text))
+
+        n_total = sum(len(idx.content) for idx in indices)
+        if len(all_items) < n_total:
+            logger.info("LLM routing: deduplicated %d -> %d items across %d sources",
+                        n_total, len(all_items), len(indices))
 
         if not all_items:
             return buckets
@@ -478,7 +485,7 @@ class ComponentSynthesizer:
 {index_text}
 === END ===
 
-{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
+{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call, conceptual references and explanations, or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
 Do not include standalone tutorials or sample programs, as those belong in the "examples" bucket. Skip release notes, changelogs, and other non-API/instruction documentation.
 
 Return ONLY a JSON array of entry names to keep.
@@ -566,6 +573,7 @@ RULES:
 - KEEP inline code examples/snippets that appear inside an API entry's docstring — these show correct usage patterns and are essential
 - Do NOT overlap line ranges between entries
 - Include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
+- Also include conceptual references and explanations that document how APIs behave or interact
 - Closely related documentation can also be included, such as additional information about particular parts of the API/instruction set.
 - If no API reference content is found, return an empty array []
 
@@ -600,6 +608,8 @@ JSON array:"""
                 if start < 1 or end < start:
                     continue
                 content = "\n".join(lines[start - 1:end])
+                if len(content.strip()) < 20:
+                    continue
                 md = f"### {name}\n\n{content}"
                 entries.append(ISAEntry(
                     name=name, description=desc,
@@ -637,6 +647,10 @@ JSON array:"""
                 f"{self._context_prefix}"
                 "Extract the core code examples that demonstrate API usage.\n\n"
                 "RULES:\n"
+                "- Start with a single line: SUMMARY: followed by a 1-2 sentence "
+                "description of what this document covers and what key concepts, "
+                "APIs, or techniques it demonstrates\n"
+                "- Then include the code examples as fenced code blocks\n"
                 "- Keep the full function bodies including decorators and type hints\n"
                 "- Include necessary imports at the top\n"
                 "- REMOVE test harnesses, benchmarking code, main blocks, "
@@ -671,18 +685,20 @@ JSON array:"""
         defaults = [
             "reduce data movement",
             "overlap data movement and compute",
+            "cache reused data in local memory instead of reloading from main memory",
             "loop tiling",
             "loop reordering and restructuring",
+            "loop unrolling",
             "fuse operations",
             "use lower precision",
             "double buffering",
             "software pipelining",
             "hoist redundant operations out of loops",
+            "eliminate redundant computation",
             "simplify or remove unnecessary code",
         ]
 
         if not items:
-            defaults.append("Other methods not listed here.")
             return defaults
 
         items = _chunk_items(items, self.context_budget)
@@ -696,7 +712,7 @@ JSON array:"""
         """Single-pass optimization menu when content fits in one call."""
         content = _items_to_text(items, max_chars=self.context_budget)
         raw = self._opt_reduce(content, defaults)
-        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw)
 
     def _opt_map_reduce(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
         """Map-reduce optimization menu for large content."""
@@ -711,7 +727,11 @@ JSON array:"""
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
                 f"{self._context_prefix}"
                 f"Extract performance optimization strategies taught or demonstrated "
-                f"in this document. Techniques demonstrated in tutorials and examples have strong potential to be useful optimizations, but make sure to extract the core principle behind the technique.\n\n"
+                f"in this document. Techniques demonstrated in tutorials and examples "
+                f"have strong potential to be useful optimizations.\n\n"
+                f"Most strategies should be general optimization ideas. "
+                f"When a specific API or function is the key enabler of an optimization, "
+                f"it is okay to name it, but focus on the fundamental optimization idea.\n\n"
                 f"These generic strategies are already known (do NOT repeat them):\n"
                 f"{defaults_text}\n\n"
                 f"Return each NEW strategy on its own line, prefixed with \"- \". "
@@ -738,7 +758,6 @@ JSON array:"""
 
         logger.info("Optimization menu: reduce - merge %d candidates into final list", len(candidates))
         if not candidates:
-            defaults.append("Other methods not listed here.")
             return defaults
 
         candidate_text = chr(10).join(f"- {c}" for c in candidates)
@@ -746,7 +765,7 @@ JSON array:"""
 
         # Reduce: merge, deduplicate, and curate
         raw = self._opt_reduce(candidate_text, defaults, is_reduce=True)
-        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw)
 
     def _opt_reduce(self, content: str, defaults: list[str], is_reduce: bool = False) -> str:
         """Run the reduce/synthesis prompt for optimization menu."""
@@ -788,10 +807,12 @@ EXAMPLES of good strategy descriptions:
 - "fuse dependent operations into a single loop to avoid HBM round-trips"
 - "use the streaming softmax with running max and scaling trick"
 - "delay division until after all reductions are complete"
+- "Use `scratch_shapes=[pltpu.VMEM(...)]` as persistent VMEM accumulator to avoid repeated HBM read-modify-write"
 
 {self._context_prefix}RULES:
-- Avoid making the strategies overly specific
-- Each strategy MUST be under 15 words.
+- Most strategies should be general optimization ideas (under 15 words)
+- When a specific API or function is the key enabler of an optimization, it is okay to name it (up to 25 words)
+- Identify both general ideas and API-specific ones, whichever is more important
 - Write as a short action phrase, not a full sentence
 - ONLY optimizations within the agent's scope as described above
 - NOT optimizations outside that scope, even if mentioned in the documentation
