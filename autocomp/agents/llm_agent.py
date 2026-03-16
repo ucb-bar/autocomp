@@ -114,6 +114,14 @@ class LLMAgent:
     def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob) -> str:
         raise NotImplementedError
 
+    def evaluate_code_quality(self, candidates: list[CodeCandidate], save_dir: pathlib.Path = None) -> list[float]:
+        """
+        Evaluate the quality of code candidates using LLM before running benchmarks.
+        Returns a list of quality scores (0.0 to 1.0) where higher is better.
+        """
+        # Default implementation returns neutral scores for all candidates
+        return [0.5] * len(candidates)
+
     def propose_new_menu_parallel(self, prob: Prob, candidates: list[CodeCandidate]) -> dict[str, list[str]]:
         """Generate workload-specific menu additions for each candidate.
 
@@ -168,14 +176,6 @@ class LLMAgent:
 
     def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
         pass
-
-    def evaluate_code_quality(self, candidates: list[CodeCandidate], save_dir: pathlib.Path = None) -> list[float]:
-        """
-        Evaluate the quality of code candidates using LLM before running benchmarks.
-        Returns a list of quality scores (0.0 to 1.0) where higher is better.
-        """
-        # Default implementation returns neutral scores for all candidates
-        return [0.5] * len(candidates)
 
     def propose_optimizations_parallel(self, candidate_lst: list[CodeCandidate], num_plans: int, save_dir: pathlib.Path, save_strs: list[str], 
                               prob: Prob,
