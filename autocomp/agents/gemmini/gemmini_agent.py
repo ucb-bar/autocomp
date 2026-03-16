@@ -223,8 +223,6 @@ Cycles can be reduced by using the following optimizations:
 
         return prompt_text
 
-    def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
-
     def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
         """Analyze current code and identify the most impactful performance bottleneck."""
         if self.pe_dim == 4:
