@@ -27,14 +27,14 @@ class BuiltLLMAgent(LLMAgent):
 
     def __init__(self, model: str, config_dir: str | Path,
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
-                 menu_strategy: str = "static",
+                 menu_strategy: str = None,
                  fine_grained_isa: bool = False,
                  example_rate: float = 0.0):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
-        self.menu_strategy = menu_strategy # choose from: [static, one-shot]
+        self.menu_strategy = menu_strategy
         self.fine_grained_isa = fine_grained_isa
         self.example_rate = example_rate
 
@@ -704,7 +704,7 @@ class BuiltLLMAgent(LLMAgent):
         for i, opt in enumerate(self.get_opt_menu_options(prob)):
             prompt_text += f"{i + 1}. {opt}\n"
 
-        if self.menu_strategy == "one-shot":
+        if self.menu_strategy is not None:
             prompt_text += (
                 "You are an expert performance engineer generating high-performance code "
                 "for this hardware target. Analyze the kernel code and the high-level operation it performs, and identify about 10 new "

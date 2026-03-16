@@ -106,44 +106,6 @@ class GemminiLLMAgent(LLMAgent):
         # "merge high-level operations",
         # "move CPU-based computation to the accelerator",
 
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
-        """
-        Generate an analysis of current code based on performance feedback
-        """
-        if self.pe_dim == 4:
-            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim) + "\n"
-        else:
-            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim) + "\n"
-        for rule in self.hw_config.get_hw_config_specific_rules():
-            prompt_text += rule + "\n"
-        prompt_text += "The original code is as follows:\n" + candidate.code + "\n"
-        prompt_text += "You are an optimizing compiler that produces high-performance Gemmini code. Based on this information, analyze the code and identify the single most impactful bottleneck increasing cycle count."
-        # Save prompt
-        prompt_path = f"prompt{'' if not save_str else '_' + save_str}"
-        prompt_path += ".txt"
-        prompt_path = save_dir / prompt_path
-        with open(prompt_path, "w") as f:
-            f.write(prompt_text)
-        # Call LLM to generate responses
-        messages = [{"role": "user", "content": prompt_text}]
-        temperature = 1
-        responses = self.llm_client.chat(
-            messages=messages,
-            num_candidates=num_to_gen,  # number of candidates,
-            temperature=temperature
-        )
-
-        # Save responses
-        for c_i, c in enumerate(responses):
-            path = f"analyze{'' if not save_str else '_' + save_str}"
-            path += "_" + str(c_i) + ".txt"
-            path = save_dir / path
-            with open(path, "w") as f:
-                f.write(c)
-            logger.debug("Saved select_optimization response to %s", path)
-
-        return responses
-
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
                                           force_opt_menu: int, 
