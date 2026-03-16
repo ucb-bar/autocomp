@@ -484,6 +484,35 @@ class BuiltLLMAgent(LLMAgent):
         lookup = {name: body for name, _, body in self._code_example_sections}
         return {n: lookup[n] for n in names if n in lookup}
 
+    def _get_relevant_code_examples(self, prob: Prob, code: str) -> dict[str, str]:
+        """Select relevant code examples and return their bodies.
+
+        Combines ISA-informed selection (cached), stochastic sampling, and body lookup.
+        Returns {name: code_body} for the selected examples.
+        """
+        if not self._code_example_sections:
+            return {}
+        isa_text = self._get_isa_for_problem(prob, code)
+        selected_names = self._select_code_examples(prob, code, isa_text)
+        if not selected_names:
+            return {}
+        if self.example_rate < 1.0:
+            selected_names = [n for n in selected_names if random.random() < self.example_rate]
+        if not selected_names:
+            return {}
+        return self._get_code_example_bodies(selected_names)
+
+    def _get_problem_context(self, prob: Prob, code: str) -> tuple[str, str]:
+        """Return (isa_text, formatted_examples_text) for this problem."""
+        isa_text = self._get_isa_for_problem(prob, code)
+        bodies = self._get_relevant_code_examples(prob, code)
+        if bodies:
+            parts = [f"### {name}\n{body}" for name, body in bodies.items()]
+            examples_text = "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n"
+        else:
+            examples_text = ""
+        return isa_text, examples_text
+
     # ------------------------------------------------------------------
     # Required overrides
     # ------------------------------------------------------------------
@@ -573,26 +602,16 @@ class BuiltLLMAgent(LLMAgent):
             random.shuffle(opt_lst)
 
         # Run ISA selection first (cached) so we can inform code example selection
-        isa_text = self._get_isa_for_problem(prob, candidate.code)
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
 
-        # Stochastically prepend code examples at the top (deprioritized by position)
         examples_prefix = ""
-        if self.example_rate > 0 and self._code_example_sections:
-            selected_names = self._select_code_examples(prob, candidate.code, isa_text)
-            if selected_names:
-                sampled = [n for n in selected_names if random.random() < self.example_rate]
-                if sampled:
-                    bodies = self._get_code_example_bodies(sampled)
-                    if bodies:
-                        parts = [f"### {name}\n{body}" for name, body in bodies.items()]
-                        framing = (
-                            "Use these reference patterns to inform your optimization plan.\n\n"
-                            if random.random() < 0.75 else
-                            "Use these reference patterns, but don't copy them unless they are directly applicable to the target code.\n\n"
-                        )
-                        examples_prefix = (
-                            "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n" + framing
-                        )
+        if examples_text:
+            framing = (
+                "Use these reference patterns to inform your optimization plan.\n\n"
+                if random.random() < 0.75 else
+                "Use these reference patterns, but don't copy them unless they are directly applicable to the target code.\n\n"
+            )
+            examples_prefix = examples_text + framing
 
         prompt_text = examples_prefix + self._build_prompt_scaffold(
             candidate, prob, analysis,
@@ -680,22 +699,9 @@ class BuiltLLMAgent(LLMAgent):
         return prompt_text
 
     def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob):
-        prompt_text = ""
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
 
-        isa_text = self._get_isa_for_problem(prob, candidate.code)
-
-        # Include code examples to help discover optimization strategies
-        if self._code_example_sections:
-            selected_names = self._select_code_examples(prob, candidate.code, isa_text)
-            if selected_names:
-                bodies = self._get_code_example_bodies(selected_names)
-                if bodies:
-                    parts = [f"### {name}\n{body}" for name, body in bodies.items()]
-                    prompt_text += (
-                        "Reference patterns showing how key APIs are used:\n\n"
-                        + "\n\n".join(parts) + "\n\n"
-                    )
-
+        prompt_text = examples_text
         prompt_text += self._architecture + "\n"
         prompt_text += isa_text + "\n"
         prompt_text += "Here is the kernel to optimize:\n"
@@ -704,7 +710,7 @@ class BuiltLLMAgent(LLMAgent):
         for i, opt in enumerate(self.get_opt_menu_options(prob)):
             prompt_text += f"{i + 1}. {opt}\n"
 
-        if self.menu_strategy is not None:
+        if self.menu_strategy == "one-shot":
             prompt_text += (
                 "You are an expert performance engineer generating high-performance code "
                 "for this hardware target. Analyze the kernel code and the high-level operation it performs, and identify about 10 new "
