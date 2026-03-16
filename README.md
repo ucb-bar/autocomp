@@ -44,6 +44,21 @@ Partially supported hardware targets:
 
 For instructions on adding a new hardware target, see [ADDING_HARDWARE_SUPPORT.md](ADDING_HARDWARE_SUPPORT.md).
 
+### 🏗️ Agent Builder
+
+You can also automatically create a new hardware-specific agent from documentation sources (local directories, PDFs, and webpages) using the **Agent Builder**:
+
+```bash
+pip install "autocomp[agent-builder]"
+
+python -m autocomp.agent_builder.run_agent_builder \
+    --agent-name my_accelerator \
+    --source-dir path/to/docs \
+    --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
+```
+
+For detailed usage, CLI options, Python API, and output format, see [Agent Builder documentation](autocomp/agent_builder/README.md).
+
 ## LLM Setup
 
 Autocomp supports both local and remote endpoint LLM inference. For local inference, we support vLLM's [OpenAI-compatible server](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/). For endpoint inference, we support a variety of providers (see below).
@@ -128,21 +143,6 @@ models = [
 ```
 
 By default the `us-west-2` region is used. Set the `AWS_REGION` environment variable (or add it to `keys.py`) to override.
-
-## 🏗️ Agent Builder
-
-The Agent Builder automatically creates hardware-specific LLM agents from documentation sources (local directories, PDFs, and webpages). It uses a three-stage pipeline (ingest, synthesize, assemble) to produce human-editable config files that define a fully functional Autocomp agent.
-
-```bash
-pip install "autocomp[agent-builder]"
-
-python -m autocomp.agent_builder.run_agent_builder \
-    --agent-name my_accelerator \
-    --source-dir path/to/docs \
-    --description "Optimizing kernels for MyAccelerator using the XYZ programming interface."
-```
-
-For detailed usage, CLI options, Python API, and output format, see [Agent Builder documentation](autocomp/agent_builder/README.md).
 
 ## 🚀 Usage
 
