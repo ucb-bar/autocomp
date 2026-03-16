@@ -396,6 +396,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
         for i in range(1, iterations + 1):
             logger.info(f"Iteration {i} of optimization:")
 
+            # Get current candidates (use initial code if it's the first iteration)
             cur_cand_idx = i - 1
             current_candidates = self.repository.get_candidates(cur_cand_idx)
             while len(current_candidates) == 0:
