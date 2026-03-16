@@ -9,23 +9,23 @@ optimizations:
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
 - strategy: simplify or remove unnecessary code
-- strategy: Accumulate partial sums directly in PSUM across contraction-dimension iterations
-- strategy: Use low-level `nki.isa` APIs for fine-grained hardware instruction control
-- strategy: Tile matmul operands to maximum hardware tile sizes (128×128 stationary, 128×512 moving)
-- strategy: Fuse multiply-add with activation into single scalar engine pipelined instructions
-- strategy: Use `load_transpose2d` to combine load and transpose into one operation
-- strategy: Assign larger free-axis matrix as stationary operand in `nc_matmul`
-- strategy: Use TensorE for data reshaping via multiply with constant matrices when not matmul-bound
-- strategy: Exploit free-dimension broadcasting to avoid explicit broadcast instructions
-- strategy: Use `sequential_range` for accumulation loops to prevent compiler reordering
-- strategy: Coalesce small result tiles into larger contiguous buffers before HBM stores
-- strategy: Apply execution masks for safe partial-tile boundary handling
-- strategy: Use hardware-accelerated specialized intrinsics (rsqrt, bn_stats, activation_reduce)
-- strategy: Hoist tensor declarations into independent loop bodies to avoid false dependencies
-- strategy: Use direct allocation with modulo rotation for explicit multi-buffering control
-- strategy: Maximize partition axis utilization by packing operations across all 128 lanes
-- strategy: Defer normalization divisions until after subsequent matmul contractions
-- strategy: Pre-fetch and cache reused tensors in SBUF across all loop iterations
-- strategy: Choose reduction engine based on data layout to avoid transpositions
-- strategy: Downcast intermediates before transpose to exploit higher transpose throughput
-- strategy: Other methods not listed here.
+- strategy: Maximize partition dimension to 128 lanes per instruction via partition vectorization of independent operations
+- strategy: Fuse multiply, add, and nonlinear ops into single pipelined `nisa.activation` instructions
+- strategy: Swap stationary/moving operand assignment to leverage fast LoadStationary and minimize downstream transposes
+- strategy: Replace DMA-based transposes with `nl.load` followed by `nisa.nc_transpose` when TensorE is idle
+- strategy: Accumulate partial matmul results in PSUM banks across contraction-dimension tiles to avoid HBM round-trips
+- strategy: Ensure DMA transfers are ≥32KiB by maximizing partition and free dimension sizes per load/store
+- strategy: Ensure compute tile free dimensions are ≥128 elements to amortize fixed ~100-cycle instruction overhead
+- strategy: Use `nisa.tensor_tensor_scan` for prefix-sum patterns instead of many sequential dependent scalar operations
+- strategy: Declare temporary SBUF buffers inside inner loops to prevent compiler-induced spilling
+- strategy: Use direct allocation APIs to explicitly control SBUF/PSUM placement and bypass compiler allocator heuristics
+- strategy: Keep reused tensors resident in SBUF across all consuming operations to avoid redundant HBM reloads
+- strategy: Map reduction axis to matching engine (TensorE for P-dim, VectorE for F-dim) to avoid intermediate transposes
+- strategy: Use `affine_range` for dependency-free loops to enable compiler loop vectorization and pipelining
+- strategy: Tile free dimensions to fit all active tiles (LHS, RHS, accumulators) within SBUF budget simultaneously
+- strategy: Broadcast scalar reciprocal and multiply instead of element-wise division for normalization
+- strategy: Pre-transpose inputs outside main compute loops so inner iterations avoid repeated layout conversion
+- strategy: Fuse normalization with quantization in a single kernel pass to eliminate intermediate HBM traffic
+- strategy: Use SPMD grid parallelism with `program_id` offsets to distribute independent tiles across cores
+- strategy: Leverage multiple PSUM banks to pipeline TensorE accumulation with VectorE/ScalarE consumption
+- strategy: Use execution masks for non-aligned boundary handling instead of padding or conditional logic

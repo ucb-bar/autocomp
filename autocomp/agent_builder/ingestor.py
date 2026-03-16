@@ -264,6 +264,8 @@ class WebpageLoader(SourceLoader):
             if current_url in visited:
                 continue
             visited.add(current_url)
+            logger.debug("WebpageLoader: [%d/%d depth=%d] %s",
+                         len(visited), max_pages, depth, current_url)
 
             try:
                 resp = requests.get(current_url, timeout=15, headers={"User-Agent": "autocomp-agent-builder/1.0"})
@@ -304,6 +306,8 @@ class WebpageLoader(SourceLoader):
                     else:
                         secondary_queue.append((abs_url, depth + 1))
 
+        logger.info("WebpageLoader: crawled %d pages (content from %d) for %s",
+                     len(visited), len(content), url)
         # Build structural metadata
         meta_lines = [f"Webpage: {url} ({len(content)} pages fetched)"]
         for page_url, headings in headings_by_url.items():

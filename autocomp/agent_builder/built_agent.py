@@ -21,10 +21,6 @@ class BuiltLLMAgent(LLMAgent):
     config directory (produced by AgentBuilder) instead of hardcoding them.
     """
 
-    # Fine-grained ISA filtering thresholds: only apply subsection-level
-    # filtering to sections that are large enough to benefit from it.
-    _FINE_FILTER_MIN_SUBS = 5       # min ### subsections in a ## section
-    _FINE_FILTER_MIN_CHARS = 8_000  # min characters in a ## section
     _DEFAULT_TRANSLATE_MENU = [
         "convert high-level code to target kernel code",
     ]
@@ -190,7 +186,11 @@ class BuiltLLMAgent(LLMAgent):
             for line in sec_text.split("\n"):
                 if line.startswith("### "):
                     if cur_sub is not None:
-                        subs[cur_sub] = "\n".join(cur_lines).strip()
+                        block = "\n".join(cur_lines).strip()
+                        if cur_sub in subs:
+                            subs[cur_sub] += "\n\n" + block
+                        else:
+                            subs[cur_sub] = block
                     cur_sub = line[4:].strip()
                     cur_lines = [line]
                 elif cur_sub is not None:
@@ -199,7 +199,11 @@ class BuiltLLMAgent(LLMAgent):
                     preamble_lines.append(line)
 
             if cur_sub is not None:
-                subs[cur_sub] = "\n".join(cur_lines).strip()
+                block = "\n".join(cur_lines).strip()
+                if cur_sub in subs:
+                    subs[cur_sub] += "\n\n" + block
+                else:
+                    subs[cur_sub] = block
             if preamble_lines:
                 preamble = "\n".join(preamble_lines).strip()
                 if preamble:
@@ -230,7 +234,12 @@ class BuiltLLMAgent(LLMAgent):
         return summary
 
     def _get_isa_for_problem(self, prob: Prob, code: str) -> str:
-        """Select relevant ISA sections (and optionally subsections) for a problem."""
+        """Select relevant ISA sections (and optionally subsections) for a problem.
+
+        Two-level filtering:
+        - L1: parallel yes/no per ## section
+        - Fine-grained mode additionally runs L2 on large sections that pass L1
+        """
         cache_key = f"{prob.prob_type}:{prob.prob_id}"
 
         if cache_key in self._isa_selection_cache:
@@ -240,10 +249,10 @@ class BuiltLLMAgent(LLMAgent):
             self._isa_selection_cache[cache_key] = self._isa_docs_raw
             return self._isa_docs_raw
 
-        # Level 1: select ## sections
+        # L1: per-section yes/no
         selected_sections = self._select_sections(prob, code)
         logger.info(
-            "%s BuiltLLMAgent: ISA selection for %s: %d/%d sections",
+            "%s BuiltLLMAgent: ISA L1 for %s: %d/%d sections selected",
             self.llm_client.model, cache_key,
             len(selected_sections), len(self._isa_sections),
         )
@@ -257,18 +266,17 @@ class BuiltLLMAgent(LLMAgent):
             self._isa_selection_cache[cache_key] = text
             return text
 
-        # Level 2: within large selected sections, filter ### subsections
+        # Fine-grained: for sections that passed L1, include small sections
+        # in full and run L2 subsection filtering on large sections.
         parts: list[str] = []
         sections_to_filter: list[str] = []
         for name in selected_sections:
             subs = self._isa_subsections.get(name, {})
             real_subs = {k: v for k, v in subs.items() if k != "_preamble"}
-            sec_text = self._isa_sections.get(name, "")
-            if (len(real_subs) >= self._FINE_FILTER_MIN_SUBS
-                    and len(sec_text) >= self._FINE_FILTER_MIN_CHARS):
+            if real_subs:
                 sections_to_filter.append(name)
             else:
-                parts.append(sec_text)
+                parts.append(self._isa_sections[name])
 
         if sections_to_filter:
             filtered = self._select_subsections(prob, code, sections_to_filter)
@@ -280,108 +288,131 @@ class BuiltLLMAgent(LLMAgent):
                 for sub_name in kept_subs:
                     if sub_name in subs:
                         sec_parts.append(subs[sub_name])
-                parts.append("\n\n".join(sec_parts))
+                if sec_parts:
+                    parts.append("\n\n".join(sec_parts))
 
         text = "\n\n".join(parts)
         self._isa_selection_cache[cache_key] = text
         logger.info(
-            "%s BuiltLLMAgent: Fine-grained ISA for %s: %d chars (filtered %d sections)",
-            self.llm_client.model, cache_key, len(text), len(sections_to_filter),
+            "%s BuiltLLMAgent: Fine-grained ISA for %s: %d chars "
+            "(%d small sections included, %d sections filtered at L2)",
+            self.llm_client.model, cache_key, len(text),
+            len(selected_sections) - len(sections_to_filter),
+            len(sections_to_filter),
         )
         return text
 
     def _select_sections(self, prob: Prob, code: str) -> list[str]:
-        """Level-1: LLM selects which ## sections are relevant."""
-        section_list = "\n".join(f"- {name}" for name in self._isa_sections.keys())
+        """Level-1: parallel yes/no per ## section."""
         prob_context = getattr(prob, "context", "")
+        code_block = f"Code:\n```\n{code}\n```"
 
-        prompt = (
-            "Given the following code and problem context, select which ISA "
-            "documentation sections are relevant for optimizing this code. "
-            "Include sections for APIs the code uses now AND sections that "
-            "cover APIs or techniques the code could benefit from. "
-            "When in doubt, include the section. Return ONLY the section names, "
-            "one per line.\n\n"
-            f"Problem type: {prob.prob_type}\n"
-            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
-            f"Code:\n```\n{code}\n```\n\n"
-            f"Available ISA sections:\n{section_list}\n\n"
-            "Relevant sections (one per line):"
+        section_names = list(self._isa_sections.keys())
+        prompts: list[str] = []
+        for name in section_names:
+            subs = self._isa_subsections.get(name, {})
+            # Build a content preview: preamble + subsection summaries
+            preview_parts: list[str] = [f"## {name}"]
+            preamble = subs.get("_preamble", "")
+            if preamble:
+                preamble_text = preamble[:500]
+                if len(preamble) > 500:
+                    preamble_text += "…"
+                preview_parts.append(preamble_text)
+            for sub_name, content in subs.items():
+                if sub_name == "_preamble":
+                    continue
+                summary = self._subsection_summary(content)
+                if summary:
+                    preview_parts.append(f"- {sub_name}: {summary}")
+                else:
+                    preview_parts.append(f"- {sub_name}")
+            preview = "\n".join(preview_parts)
+
+            prompt = (
+                f"Problem type: {prob.prob_type}\n"
+                f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+                f"{code_block}\n\n"
+                f"ISA documentation section:\n{preview}\n\n"
+                "Could this documentation section be relevant for understanding, "
+                "implementing, or optimizing this code? Answer Yes or No."
+            )
+            prompts.append(prompt)
+
+        all_responses = self.llm_client.chat_async(
+            prompts, num_candidates=1, temperature=0,
         )
-        return self._match_names_from_llm(prompt, list(self._isa_sections.keys()))
+
+        selected: list[str] = []
+        for name, responses in zip(section_names, all_responses):
+            answer = responses[0].strip().lower() if responses and responses[0] else ""
+            is_yes = "yes" in answer.split()[:5] or answer.startswith("yes")
+            logger.debug(
+                "%s BuiltLLMAgent: L1 %s -> %s (%s)",
+                self.llm_client.model, name,
+                "YES" if is_yes else "NO",
+                answer[:80],
+            )
+            if is_yes:
+                selected.append(name)
+
+        # If nothing was selected, fall back to including everything
+        return selected if selected else section_names
 
     def _select_subsections(
         self, prob: Prob, code: str, section_names: list[str],
     ) -> dict[str, list[str]]:
-        """Level-2: for each large section, LLM selects which ### APIs are needed."""
+        """Level-2: parallel yes/no per ### subsection within selected sections."""
         prob_context = getattr(prob, "context", "")
+        code_block = f"Code:\n```\n{code}\n```"
+
         all_sub_names: list[str] = []
         sec_for_sub: list[str] = []
-        sub_descriptions: list[str] = []
+        prompts: list[str] = []
+
         for sec_name in section_names:
             for sub_name, content in self._isa_subsections[sec_name].items():
                 if sub_name == "_preamble":
                     continue
                 all_sub_names.append(sub_name)
                 sec_for_sub.append(sec_name)
-                sub_descriptions.append(self._subsection_summary(content))
 
-        sub_list_parts: list[str] = []
-        for name, desc in zip(all_sub_names, sub_descriptions):
-            if desc:
-                sub_list_parts.append(f"- {name}: {desc}")
-            else:
-                sub_list_parts.append(f"- {name}")
-        sub_list = "\n".join(sub_list_parts)
+                summary = self._subsection_summary(content)
+                prompt = (
+                    f"Problem type: {prob.prob_type}\n"
+                    f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+                    f"{code_block}\n\n"
+                    f"API documentation (from section \"{sec_name}\"):\n"
+                    f"### {sub_name}\n{summary}\n\n"
+                    "Could this API be relevant for understanding, implementing, "
+                    "or optimizing this code? Answer Yes or No."
+                )
+                prompts.append(prompt)
 
-        prompt = (
-            "Given the following code, select which APIs/instructions "
-            "are relevant for optimizing it. Include APIs the code currently uses "
-            "AND APIs it could benefit from using. Return ONLY the API names, one per line.\n\n"
-            f"Problem type: {prob.prob_type}\n"
-            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
-            f"Code:\n```\n{code}\n```\n\n"
-            f"Available APIs:\n{sub_list}\n\n"
-            "Needed APIs (one per line):"
+        if not prompts:
+            return {name: [] for name in section_names}
+
+        all_responses = self.llm_client.chat_async(
+            prompts, num_candidates=1, temperature=0,
         )
-        kept = self._match_names_from_llm(prompt, all_sub_names)
 
         result: dict[str, list[str]] = {name: [] for name in section_names}
-        for sub_name in kept:
-            idx = all_sub_names.index(sub_name)
-            result[sec_for_sub[idx]].append(sub_name)
+        for sub_name, sec_name, responses in zip(
+            all_sub_names, sec_for_sub, all_responses,
+        ):
+            answer = responses[0].strip().lower() if responses and responses[0] else ""
+            is_yes = "yes" in answer.split()[:5] or answer.startswith("yes")
+            if is_yes:
+                result[sec_name].append(sub_name)
 
         for sec_name in section_names:
             total = len([k for k in self._isa_subsections[sec_name] if k != "_preamble"])
             logger.debug(
-                "%s BuiltLLMAgent: Fine-grained %s: %d/%d subsections",
+                "%s BuiltLLMAgent: Fine-grained %s: %d/%d subsections: %s",
                 self.llm_client.model, sec_name,
-                len(result[sec_name]), total,
+                len(result[sec_name]), total, result[sec_name],
             )
         return result
-
-    def _match_names_from_llm(self, prompt: str, valid_names: list[str]) -> list[str]:
-        """Send a selection prompt to the LLM and fuzzy-match the response to valid names."""
-        try:
-            responses = self.llm_client.chat(prompt=prompt, num_candidates=1, temperature=0)
-            raw = responses[0] if responses else ""
-            selected: list[str] = []
-            for line in raw.strip().split("\n"):
-                line = line.strip().lstrip("- ").strip()
-                if not line:
-                    continue
-                if line in valid_names:
-                    if line not in selected:
-                        selected.append(line)
-                else:
-                    for name in valid_names:
-                        if (line.lower() in name.lower() or name.lower() in line.lower()):
-                            if name not in selected:
-                                selected.append(name)
-                            break
-            return selected if selected else valid_names
-        except Exception:
-            return valid_names
 
     def _assemble_isa_sections(self, section_names: list[str]) -> str:
         parts = []
@@ -391,7 +422,7 @@ class BuiltLLMAgent(LLMAgent):
         return "\n\n".join(parts)
 
     def _select_code_examples(self, prob: Prob, code: str) -> list[str]:
-        """LLM-select relevant code example sections for a problem.
+        """LLM-select relevant code example sections using parallel yes/no prompts.
 
         Returns a list of section names. Results are cached per problem.
         """
@@ -403,30 +434,38 @@ class BuiltLLMAgent(LLMAgent):
             self._code_example_cache[cache_key] = []
             return []
 
-        example_list_parts: list[str] = []
-        valid_names: list[str] = []
-        for i, (name, summary, _) in enumerate(self._code_example_sections, 1):
-            example_list_parts.append(f"{i}. {name} -- {summary}")
-            valid_names.append(name)
-        example_list = "\n".join(example_list_parts)
-
         prob_context = getattr(prob, "context", "")
-        prompt = (
-            "Given the following code and problem context, select which code "
-            "examples are most relevant for learning optimization patterns "
-            "applicable to this code. Return ONLY the example names, one per "
-            "line.\n\n"
-            f"Problem type: {prob.prob_type}\n"
-            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
-            f"Code:\n```\n{code}\n```\n\n"
-            f"Available code examples:\n{example_list}\n\n"
-            "Relevant examples (one per line):"
+        code_block = f"Code:\n```\n{code}\n```"
+
+        names: list[str] = []
+        prompts: list[str] = []
+        for name, summary, _ in self._code_example_sections:
+            names.append(name)
+            prompt = (
+                f"Problem type: {prob.prob_type}\n"
+                f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+                f"{code_block}\n\n"
+                f"Code example: {name}\nSummary: {summary}\n\n"
+                "Is this code example relevant for learning optimization patterns "
+                "applicable to the code above? Answer Yes or No."
+            )
+            prompts.append(prompt)
+
+        all_responses = self.llm_client.chat_async(
+            prompts, num_candidates=1, temperature=0,
         )
-        selected = self._match_names_from_llm(prompt, valid_names)
+
+        selected: list[str] = []
+        for name, responses in zip(names, all_responses):
+            answer = responses[0].strip().lower() if responses and responses[0] else ""
+            is_yes = "yes" in answer.split()[:5] or answer.startswith("yes")
+            if is_yes:
+                selected.append(name)
+
         self._code_example_cache[cache_key] = selected
         logger.info(
             "%s BuiltLLMAgent: code example selection for %s: %d/%d examples",
-            self.llm_client.model, cache_key, len(selected), len(valid_names),
+            self.llm_client.model, cache_key, len(selected), len(names),
         )
         return selected
 
@@ -653,7 +692,7 @@ class BuiltLLMAgent(LLMAgent):
         if self.menu_strategy == "one-shot":
             prompt_text += (
                 "You are an expert performance engineer generating high-performance code "
-                "for this hardware target. Analyze the kernel and identify about 10 new "
+                "for this hardware target. Analyze the kernel code and the high-level operation it performs, and identify about 10 new "
                 "optimization strategies that could improve performance and are NOT already "
                 "listed above. When presenting your final strategies, list them between <strategies> and </strategies> tags, "
                 "one per line prefixed with \"- \". Example:\n\n"
