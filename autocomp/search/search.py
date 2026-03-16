@@ -740,7 +740,7 @@ def main():
 
     # Per-example probability of including a code example in the planning prompt.
     # Each LLM-selected example is independently included with this probability.
-    example_rate = 0.3
+    example_rate = 0.25
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
