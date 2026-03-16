@@ -10,8 +10,8 @@ optimizations:
 - strategy: double buffering
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
 - strategy: simplify or remove unnecessary code
-- strategy: common subexpression elimination
 - strategy: Map contraction axis to partition dimension (P-dim) to satisfy Tensor Engine layout constraints without reshuffling
 - strategy: Use `affine_range` instead of `sequential_range` for loops without true loop-carried dependencies to enable compiler
     parallelization

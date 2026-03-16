@@ -694,8 +694,8 @@ JSON array:"""
             "double buffering",
             "software pipelining",
             "hoist redundant operations out of loops",
+            "eliminate redundant computation",
             "simplify or remove unnecessary code",
-            "common subexpression elimination",
         ]
 
         if not items:
