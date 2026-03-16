@@ -436,6 +436,22 @@ class ComponentSynthesizer:
                          len(all_entries), len(merged), len(all_entries) - len(merged))
         all_entries = merged
 
+        # Content-based dedup: remove entries whose body is a near-duplicate
+        # of an earlier entry (catches same content extracted under different names).
+        deduped: list[ISAEntry] = []
+        seen_bodies: list[str] = []
+        for entry in all_entries:
+            body = entry.markdown.split("\n", 2)[-1].strip() if "\n" in entry.markdown else entry.markdown
+            if any(body in prev or prev in body for prev in seen_bodies):
+                logger.info("  ISA dedup: dropping '%s' (content duplicate)", entry.name)
+                continue
+            seen_bodies.append(body)
+            deduped.append(entry)
+        if len(deduped) < len(all_entries):
+            logger.info("  ISA content dedup: %d -> %d entries",
+                         len(all_entries), len(deduped))
+        all_entries = deduped
+
         categories = self._categorize_isa_entries(all_entries)
         logger.info("  ISA categorization: %d categories", len(categories))
         for cat_name, entry_names in categories.items():

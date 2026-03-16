@@ -171,14 +171,14 @@ Notable parameters:
   - For CUDA/GPU MODE, `gpumode`.
 - `prob_id`: The problem ID to use.
 - `translate_iters`: Number of initial iterations that use translation strategies (converting code to the target representation) instead of optimization strategies. Defaults to `0` (no translation). Only works on supported agents. Built agents load strategies from `translate_menu.yaml`; see [Agent Builder docs](autocomp/agent_builder/README.md#translation-support).
-- `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of the best score (e.g., `1.2` means up to 20% worse). Defaults to `1.2`.
+- `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of the best score (e.g., `1.2` means up to 20% worse).
 
 ## 📁 Repository Structure
 
 **`autocomp/`** - Core Autocomp code.
 - `search/` - Search algorithm (`search.py`) and optimization infrastructure.
 - `agents/` - LLM agents for planning and code generation. Each hardware target has its own subdirectory (e.g., `gemmini/`, `trn/`, `cuda/`) with agent code and prompts.
-- `agent_builder/` - Agent Builder pipeline for creating new hardware-specific agents from documentation sources. See [Agent Builder](#-agent-builder) for details.
+- `agent_builder/` - Agent Builder pipeline for creating new hardware-specific agents from documentation sources. See [Agent Builder documentation](autocomp/agent_builder/README.md) for details.
 - `backend/` - Eval backends for code evaluation. Each eval backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `kernelbench/`, `gpumode/`) with evaluation code and setup instructions. One hardware target can have multiple eval backends.
 - `hw_config/` - Hardware configuration classes. Each hardware target has a config file (e.g., `cuda_config.py`, `gemmini_config.py`, `trn_config.py`).
 - `common/` - Shared utilities (LLM interface, logging, etc.).
