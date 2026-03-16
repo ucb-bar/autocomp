@@ -29,14 +29,14 @@ class BuiltLLMAgent(LLMAgent):
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
                  menu_strategy: str = "static",
                  fine_grained_isa: bool = False,
-                 give_examples_feedback: float = 0.0):
+                 example_rate: float = 0.0):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
         self.menu_strategy = menu_strategy # choose from: [static, one-shot]
         self.fine_grained_isa = fine_grained_isa
-        self.give_examples_feedback = give_examples_feedback
+        self.example_rate = example_rate
 
         # Load all config files
         self._architecture = self._load_text("architecture.md")
@@ -61,10 +61,10 @@ class BuiltLLMAgent(LLMAgent):
         logger.info(
             "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, "
             "%d translate strategies, %d code examples, fine_grained_isa=%s, "
-            "give_examples_feedback=%.2f",
+            "example_rate=%.2f",
             self.config_dir, len(self._isa_sections), len(self._optimization_menu),
             len(self._translate_menu), len(self._code_example_sections),
-            self.fine_grained_isa, self.give_examples_feedback,
+            self.fine_grained_isa, self.example_rate,
         )
 
     def __repr__(self):
@@ -577,10 +577,10 @@ class BuiltLLMAgent(LLMAgent):
 
         # Stochastically prepend code examples at the top (deprioritized by position)
         examples_prefix = ""
-        if self.give_examples_feedback > 0 and self._code_example_sections:
+        if self.example_rate > 0 and self._code_example_sections:
             selected_names = self._select_code_examples(prob, candidate.code, isa_text)
             if selected_names:
-                sampled = [n for n in selected_names if random.random() < self.give_examples_feedback]
+                sampled = [n for n in selected_names if random.random() < self.example_rate]
                 if sampled:
                     bodies = self._get_code_example_bodies(sampled)
                     if bodies:

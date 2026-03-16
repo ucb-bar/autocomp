@@ -26,7 +26,7 @@ from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static", fine_grained_isa: bool = False, give_examples_feedback: float = 0.0):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = "static", fine_grained_isa: bool = False, example_rate: float = 0.0):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -74,8 +74,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
                 f"Available: {available}"
             )
         logger.info("Using built agent from %s", config_dir)
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, give_examples_feedback=give_examples_feedback) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, give_examples_feedback=give_examples_feedback) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
@@ -740,7 +740,7 @@ def main():
 
     # Per-example probability of including a code example in the planning prompt.
     # Each LLM-selected example is independently included with this probability.
-    give_examples_feedback = 0.3
+    example_rate = 0.3
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
@@ -817,8 +817,8 @@ def main():
         output_str += f"_ms{built_menu_strategy_enum[menu_strategy]}"
     if fine_grained_isa:
         output_str += f"_fgisa1"
-    if give_examples_feedback > 0:
-        output_str += f"_ex{give_examples_feedback}"
+    if example_rate > 0:
+        output_str += f"_ex{example_rate}"
     output_dir = pathlib.Path("output/" + output_str)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -832,7 +832,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, give_examples_feedback=give_examples_feedback)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)

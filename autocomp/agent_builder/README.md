@@ -136,7 +136,7 @@ Both levels are cached per-problem so the filtering cost is paid once.
 
 ### Code examples
 
-At runtime, the agent stochastically selects relevant code examples from `code_examples.md` using the same per-item yes/no prompt approach. Selected examples are included as reference patterns at the top of the planning prompt. The inclusion rate is controlled by `give_examples_feedback` (default: 0.3).
+At runtime, the agent stochastically selects relevant code examples from `code_examples.md` using the same per-item yes/no prompt approach. Selected examples are included as reference patterns at the top of the planning prompt. The inclusion rate is controlled by `example_rate` (default: 0.3).
 
 ### Optimization menu
 
