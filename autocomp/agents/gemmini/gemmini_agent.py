@@ -106,6 +106,44 @@ class GemminiLLMAgent(LLMAgent):
         # "merge high-level operations",
         # "move CPU-based computation to the accelerator",
 
+    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
+        """Analyze current code and identify the most impactful performance bottleneck."""
+        if self.pe_dim == 4:
+            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim) + "\n"
+        else:
+            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim) + "\n"
+        for rule in self.hw_config.get_hw_config_specific_rules():
+            prompt_text += rule + "\n"
+        prompt_text += "The original code is as follows:\n" + candidate.code + "\n"
+
+        if candidate.score is not None:
+            prompt_text += f"The latency of this code was {candidate.score} cycles.\n"
+            if prob and prob.prob_type in prob_macs_map and prob.prob_id < len(prob_macs_map[prob.prob_type]):
+                macs = prob_macs_map[prob.prob_type][prob.prob_id]
+                theoretical_min_cycles = macs / (self.pe_dim ** 2)
+                util = theoretical_min_cycles / candidate.score * 100
+                prompt_text += f"The utilization of this code was {round(util)}%.\n"
+
+        if candidate.hw_feedback:
+            prompt_text += "Hardware performance feedback:\n" + "\n".join(candidate.hw_feedback) + "\n"
+
+        prompt_text += "You are an optimizing compiler that produces high-performance Gemmini code. Based on this information, analyze the code and identify the single most impactful bottleneck increasing cycle count."
+
+        prompt_path = save_dir / f"prompt{'_' + save_str if save_str else ''}.txt"
+        with open(prompt_path, "w") as f:
+            f.write(prompt_text)
+
+        messages = [{"role": "user", "content": prompt_text}]
+        responses = self.llm_client.chat(messages=messages, num_candidates=num_to_gen, temperature=1)
+
+        for c_i, c in enumerate(responses):
+            path = save_dir / f"analyze{'_' + save_str if save_str else ''}_{c_i}.txt"
+            with open(path, "w") as f:
+                f.write(c)
+            logger.debug("Saved analyze_code response to %s", path)
+
+        return responses
+
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate,
                                           prob: Prob,
                                           force_opt_menu: int, 
@@ -222,44 +260,6 @@ Cycles can be reduced by using the following optimizations:
         prompt_text += "Optimized code:"
 
         return prompt_text
-
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
-        """Analyze current code and identify the most impactful performance bottleneck."""
-        if self.pe_dim == 4:
-            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim) + "\n"
-        else:
-            prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim) + "\n"
-        for rule in self.hw_config.get_hw_config_specific_rules():
-            prompt_text += rule + "\n"
-        prompt_text += "The original code is as follows:\n" + candidate.code + "\n"
-
-        if candidate.score is not None:
-            prompt_text += f"The latency of this code was {candidate.score} cycles.\n"
-            if prob and prob.prob_type in prob_macs_map and prob.prob_id < len(prob_macs_map[prob.prob_type]):
-                macs = prob_macs_map[prob.prob_type][prob.prob_id]
-                theoretical_min_cycles = macs / (self.pe_dim ** 2)
-                util = theoretical_min_cycles / candidate.score * 100
-                prompt_text += f"The utilization of this code was {round(util)}%.\n"
-
-        if candidate.hw_feedback:
-            prompt_text += "Hardware performance feedback:\n" + "\n".join(candidate.hw_feedback) + "\n"
-
-        prompt_text += "You are an optimizing compiler that produces high-performance Gemmini code. Based on this information, analyze the code and identify the single most impactful bottleneck increasing cycle count."
-
-        prompt_path = save_dir / f"prompt{'_' + save_str if save_str else ''}.txt"
-        with open(prompt_path, "w") as f:
-            f.write(prompt_text)
-
-        messages = [{"role": "user", "content": prompt_text}]
-        responses = self.llm_client.chat(messages=messages, num_candidates=num_to_gen, temperature=1)
-
-        for c_i, c in enumerate(responses):
-            path = save_dir / f"analyze{'_' + save_str if save_str else ''}_{c_i}.txt"
-            with open(path, "w") as f:
-                f.write(c)
-            logger.debug("Saved analyze_code response to %s", path)
-
-        return responses
 
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         if self.pe_dim == 4:
