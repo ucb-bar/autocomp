@@ -39,7 +39,7 @@ from autocomp.common import REPO_ROOT
 
 def build_agent(agent_name: str, output_dir: str,
                 llm_model: str, light_llm_model: str | None = None,
-                description: str = "",
+                agent_scope: str = "",
                 source_dir: str | None = None,
                 source_files: list[str] | None = None,
                 source_urls: list[str] | None = None,
@@ -48,7 +48,7 @@ def build_agent(agent_name: str, output_dir: str,
     """Run the AgentBuilder pipeline on directory, file, and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
     builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
-                           description=description, context_budget=context_budget)
+                           agent_scope=agent_scope, context_budget=context_budget)
     if source_dir:
         builder.add_source("directory", path=source_dir)
     for f in (source_files or []):
@@ -65,7 +65,7 @@ def build_agent(agent_name: str, output_dir: str,
 
 def rerun_component(component: str, config_dir: Path,
                     model: str, light_model: str | None = None,
-                    description: str = "",
+                    agent_scope: str = "",
                     source_dir: str | None = None,
                     source_files: list[str] | None = None,
                     source_urls: list[str] | None = None,
@@ -103,8 +103,21 @@ def rerun_component(component: str, config_dir: Path,
             lp, lm = None, light_model
         light_llm = LLMClient(lm, lp)
 
-    synth = ComponentSynthesizer(llm, light_llm, description=description,
+    synth = ComponentSynthesizer(llm, light_llm, agent_scope=agent_scope,
                                  context_budget=context_budget)
+
+    # If no agent_scope was provided, try to load from existing agent_config.yaml
+    if not agent_scope:
+        cfg_path = config_dir / "agent_config.yaml"
+        if cfg_path.exists():
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            saved_scope = cfg.get("build", {}).get("agent_scope", "") or cfg.get("build", {}).get("description", "")
+            if saved_scope:
+                synth = ComponentSynthesizer(llm, light_llm, agent_scope=saved_scope,
+                                             context_budget=context_budget)
+                print(f"  Agent scope (from agent_config.yaml): {saved_scope[:120]}..."
+                      if len(saved_scope) > 120 else f"  Agent scope (from agent_config.yaml): {saved_scope}")
 
     # Re-ingest and route
     ingestor = KnowledgeIngestor()
@@ -145,7 +158,7 @@ def rerun_component(component: str, config_dir: Path,
         result = synth._synthesize_optimization_menu(items)
         menu_data = {"optimizations": [{"strategy": s} for s in result]}
         with open(config_dir / "optimization_menu.yaml", "w") as f:
-            yaml.dump(menu_data, f, default_flow_style=False)
+            yaml.dump(menu_data, f, default_flow_style=False, width=120)
         print(f"  Wrote optimization_menu.yaml: {len(result)} strategies")
 
     elif component == "isa":
@@ -375,7 +388,8 @@ def main():
     parser.add_argument("--source-file", action="append", default=None, dest="source_files",
                         help="Path to a single file to ingest (PDF or text; can be repeated)")
     parser.add_argument("--source-url", action="append", default=None, dest="source_urls",
-                        help="URL to ingest (can be repeated)")
+                        help="URL to crawl. Only links under the same path prefix are followed, "
+                             "so provide one URL per doc subtree (can be repeated)")
     parser.add_argument("--max-depth", type=int, default=2,
                         help="Max link-following depth for webpage sources (default: 2)")
     parser.add_argument("--max-pages", type=int, default=250,
@@ -384,11 +398,11 @@ def main():
                         help="Name for the built agent")
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT,
                         help="Base output directory for built agents (default: ./output/built)")
-    parser.add_argument("--description", default="",
-                        help="Context prepended to every LLM prompt. Be specific: what "
+    parser.add_argument("--agent-scope", default="",
+                        help="Defines what the agent covers and what is out of scope. "
+                             "Prepended to every LLM prompt. Be specific: what "
                              "code level the agent optimizes (kernels, operators), the "
-                             "programming interface (NKI, CUDA, HLO), and what's out of "
-                             "scope (deployment, serving, distributed training).")
+                             "target hardware, programming interface, and what's excluded.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Test ingestion only (no LLM calls needed)")
     parser.add_argument("--model", default="aws::us.anthropic.claude-opus-4-6-v1",
@@ -425,7 +439,7 @@ def main():
             config_dir=config_dir,
             model=args.model,
             light_model=args.light_model,
-            description=args.description,
+            agent_scope=args.agent_scope,
             source_dir=args.source_dir,
             source_files=args.source_files,
             source_urls=args.source_urls,
@@ -463,7 +477,7 @@ def main():
         output_dir=output_dir,
         llm_model=args.model,
         light_llm_model=args.light_model,
-        description=args.description,
+        agent_scope=args.agent_scope,
         source_dir=args.source_dir,
         source_files=args.source_files,
         source_urls=args.source_urls,
