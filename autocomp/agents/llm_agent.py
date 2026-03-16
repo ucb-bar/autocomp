@@ -91,7 +91,7 @@ class LLMAgent:
     def get_opt_menu_options(self, prob: Prob, candidate: CodeCandidate = None) -> list[str]:
         raise NotImplementedError
 
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
+    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
         raise NotImplementedError
 
     def _get_propose_optimizations_prompt(self, candidate: CodeCandidate, prob: Prob,

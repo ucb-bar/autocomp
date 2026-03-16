@@ -52,12 +52,12 @@ class LLMEnsemble:
     def get_opt_menu_options(self, prob=None):
         return self.llms[0].get_opt_menu_options(prob)
 
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
+    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
         num_to_gen_per_agent = self.divide_work(num_to_gen)
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model))
+                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob))
 
         responses = []
         for result in self._run_parallel(tasks):
