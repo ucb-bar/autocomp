@@ -525,22 +525,22 @@ class BuiltLLMAgent(LLMAgent):
 
         # Stochastically prepend code examples at the top (deprioritized by position)
         examples_prefix = ""
-        if (self.give_examples_feedback > 0
-                and self._code_example_sections
-                and random.random() < self.give_examples_feedback):
+        if self.give_examples_feedback > 0 and self._code_example_sections:
             selected_names = self._select_code_examples(prob, candidate.code)
             if selected_names:
-                max_examples = 2
-                sampled = (random.sample(selected_names, min(max_examples, len(selected_names)))
-                           if len(selected_names) > max_examples else selected_names)
-                bodies = self._get_code_example_bodies(sampled)
-                if bodies:
-                    parts = [f"### {name}\n{body}" for name, body in bodies.items()]
-                    examples_prefix = (
-                        "Reference patterns:" + "\n\n".join(parts) + "\n\n"
-                        "Use the above examples to inform your optimization strategy. "
-                        "Do NOT copy verbatim or generate full code in your plan.\n\n"
-                    )
+                sampled = [n for n in selected_names if random.random() < self.give_examples_feedback]
+                if sampled:
+                    bodies = self._get_code_example_bodies(sampled)
+                    if bodies:
+                        parts = [f"### {name}\n{body}" for name, body in bodies.items()]
+                        framing = (
+                            "Your plan should be tailored to the target kernel, not reproduce example code.\n\n"
+                            if random.random() < 0.5 else
+                            "Your plan should be tailored to the target kernel. Do NOT generate full code.\n\n"
+                        )
+                        examples_prefix = (
+                            "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n" + framing
+                        )
 
         prompt_text = examples_prefix + self._build_prompt_scaffold(
             candidate, prob, analysis,
@@ -634,10 +634,7 @@ class BuiltLLMAgent(LLMAgent):
         if self._code_example_sections:
             selected_names = self._select_code_examples(prob, candidate.code)
             if selected_names:
-                max_examples = 2
-                sampled = (random.sample(selected_names, min(max_examples, len(selected_names)))
-                           if len(selected_names) > max_examples else selected_names)
-                bodies = self._get_code_example_bodies(sampled)
+                bodies = self._get_code_example_bodies(selected_names)
                 if bodies:
                     parts = [f"### {name}\n{body}" for name, body in bodies.items()]
                     prompt_text += (

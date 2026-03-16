@@ -738,8 +738,9 @@ def main():
     # Fine-grained ISA filtering for BuiltLLMAgent (2-level: ## sections then ### subsections)
     fine_grained_isa = True
 
-    # Stochastic code example inclusion in planning prompts (0.0=never, 1.0=always)
-    give_examples_feedback = 0.5
+    # Per-example probability of including a code example in the planning prompt.
+    # Each LLM-selected example is independently included with this probability.
+    give_examples_feedback = 0.3
 
     # Planning prompt knobs
     dropout_menu_options = 0.25
