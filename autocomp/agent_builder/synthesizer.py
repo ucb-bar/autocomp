@@ -485,7 +485,7 @@ class ComponentSynthesizer:
 {index_text}
 === END ===
 
-{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call, conceptual reference sections (type promotion, masking, engine selection, supported operator tables), or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
+{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call, conceptual references and explanations, or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
 Do not include standalone tutorials or sample programs, as those belong in the "examples" bucket. Skip release notes, changelogs, and other non-API/instruction documentation.
 
 Return ONLY a JSON array of entry names to keep.
@@ -573,7 +573,7 @@ RULES:
 - KEEP inline code examples/snippets that appear inside an API entry's docstring — these show correct usage patterns and are essential
 - Do NOT overlap line ranges between entries
 - Include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
-- Also include conceptual reference sections (e.g., type systems, masking rules, engine selection guides, supported operator/activation tables) that document how APIs behave or interact
+- Also include conceptual references and explanations that document how APIs behave or interact
 - Closely related documentation can also be included, such as additional information about particular parts of the API/instruction set.
 - If no API reference content is found, return an empty array []
 
