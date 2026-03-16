@@ -4,7 +4,7 @@ built_at: '2026-03-11T00:00:00+00:00'
 build:
   main_model: us.anthropic.claude-opus-4-6-v1
   light_model: us.anthropic.claude-haiku-4-5-20251001-v1:0
-  description: Optimizing NKI kernel code on AWS Trainium 1. The agent rewrites single-kernel
+  agent_scope: Optimizing NKI kernel code on AWS Trainium 1. The agent rewrites single-kernel
     source code for better performance. Do NOT consider model-level concerns like sharding,
     tensor parallelism, serving, distributed training, and deployment, these are out of scope.
   sources:

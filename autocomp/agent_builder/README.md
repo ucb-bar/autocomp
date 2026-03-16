@@ -12,7 +12,7 @@ pip install "autocomp[agent-builder]"
 python -m autocomp.agent_builder.run_agent_builder \
     --agent-name my_accelerator \
     --source-dir path/to/docs \
-    --description "Optimizing kernels for MyAccelerator using the XYZ programming interface."
+    --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
 
 # Use the built agent in search.py:
 #   agent_name = "built:my_accelerator"
@@ -26,7 +26,7 @@ python -m autocomp.agent_builder.run_agent_builder \
     --source-dir path/to/docs \
     --source-file path/to/manual.pdf \
     --source-url https://docs.example.com/api \
-    --description "Optimizing kernels for MyAccelerator using the XYZ programming interface."
+    --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
 ```
 
 ## CLI Reference
@@ -43,15 +43,15 @@ python -m autocomp.agent_builder.run_agent_builder \
 
 ### Key options
 
-**`--description`** is the most important flag after the source inputs. It is prepended to every LLM prompt and strongly influences which documents are considered relevant, which APIs are extracted, and what optimization strategies are generated. Be specific about:
+**`--agent-scope`** is the most important flag after the source inputs. It is prepended to every LLM prompt and strongly influences which documents are considered relevant, which APIs are extracted, and what optimization strategies are generated. Be specific about:
 
 - What level of code the agent optimizes (kernels, operators, full models)
-- The programming interface (NKI, CUDA, HLO, etc.)
+- The target hardware and programming interface (NKI, CUDA, HLO, etc.)
 - What's out of scope (deployment, serving, distributed training)
 
-Example: `--description "Optimizing NKI kernel code on AWS Trainium 1. The agent rewrites single-kernel source code for better performance. Model-level concerns like sharding, serving, and distributed training are out of scope."`
+Example: `--agent-scope "Optimizing NKI kernel code on AWS Trainium 1. The agent rewrites single-kernel source code for better performance. Model-level concerns like sharding, serving, and distributed training are out of scope."`
 
-Without a description, the pipeline processes all documents without scope filtering, which can dilute the output with irrelevant content.
+Without an agent scope, the pipeline processes all documents without scope filtering, which can dilute the output with irrelevant content.
 
 **`--model`** and **`--light-model`** control which LLMs are used. The main model handles synthesis and reduce steps. The light model handles high-volume parallel work (content routing, pre-filtering, ISA boundary detection). Using a cheaper light model significantly reduces build cost with minimal quality loss.
 
@@ -59,7 +59,7 @@ Without a description, the pipeline processes all documents without scope filter
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--description` | `""` | Agent scope context (see above) |
+| `--agent-scope` | `""` | Agent scope definition (see above) |
 | `--model` | `aws::us.anthropic.claude-opus-4-6-v1` | Main LLM for synthesis and reduce steps |
 | `--light-model` | `aws::us.anthropic.claude-haiku-4-5-20251001-v1:0` | Cheaper LLM for routing, filtering, and extraction |
 | `--context-budget` | `150000` | Max characters (not tokens) per LLM call. ~3-4 chars per token |
@@ -114,7 +114,7 @@ A reference example is available at `.built/trn-nki1/` (auto-generated with Agen
 
 The build pipeline has three stages: **ingest** (load and index sources), **synthesize** (LLM-based extraction), and **assemble** (write config files).
 
-The synthesizer first **routes** each document into component buckets (`isa`, `architecture`, `optimization`, `rules`, `examples`) using one LLM call per document. The `--description` flag drives scope filtering at this stage.
+The synthesizer first **routes** each document into component buckets (`isa`, `architecture`, `optimization`, `rules`, `examples`) using one LLM call per document. The `--agent-scope` flag drives scope filtering at this stage.
 
 Each component is then synthesized using a **map-reduce** pattern: documents are processed in parallel (map), then the results are merged and deduplicated (reduce). Documents larger than the context budget are automatically split on paragraph boundaries, so the pipeline scales to arbitrarily large documentation sets.
 
@@ -173,7 +173,7 @@ from autocomp.agent_builder import AgentBuilder
 builder = AgentBuilder(
     llm_model="aws::us.anthropic.claude-opus-4-6-v1",
     light_llm_model="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    description="Optimizing NKI kernels on AWS Trainium.",
+    agent_scope="Optimizing NKI kernels on AWS Trainium.",
 )
 builder.add_source("directory", path="/path/to/docs")
 builder.add_source("webpage", url="https://docs.example.com", max_depth=2)

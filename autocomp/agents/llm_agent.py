@@ -241,8 +241,44 @@ class LLMAgent:
         result = {}
         for candidate, response in zip(candidates, responses):
             raw = response[0] if response else ""
-            result[candidate.code] = [line.strip() for line in raw.splitlines() if line.strip()]
+            result[candidate.code] = self._parse_menu_response(raw)
         return result
+
+    @staticmethod
+    def _parse_menu_response(raw: str) -> list[str]:
+        """Parse a menu response, extracting from <strategies> tags if present."""
+        raw = raw.strip()
+
+        # Try extracting from <strategies>...</strategies> block first
+        import re
+        m = re.search(r"<strategies>\s*(.*?)\s*</strategies>", raw, re.DOTALL)
+        if m:
+            raw = m.group(1).strip()
+
+        if raw.startswith("["):
+            import ast
+            try:
+                items = ast.literal_eval(raw)
+                if isinstance(items, list):
+                    return [str(item).strip() for item in items if str(item).strip()]
+            except (ValueError, SyntaxError):
+                pass
+        items: list[str] = []
+        for line in raw.splitlines():
+            line = line.strip().lstrip("- ").lstrip("0123456789.").strip()
+            if not line:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                import ast
+                try:
+                    sub = ast.literal_eval(line)
+                    if isinstance(sub, list):
+                        items.extend(str(s).strip() for s in sub if str(s).strip())
+                        continue
+                except (ValueError, SyntaxError):
+                    pass
+            items.append(line)
+        return items
 
     def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
         pass

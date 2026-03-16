@@ -32,13 +32,15 @@ class BuiltLLMAgent(LLMAgent):
     def __init__(self, model: str, config_dir: str | Path,
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
                  menu_strategy: str = "static",
-                 fine_grained_isa: bool = False):
+                 fine_grained_isa: bool = False,
+                 give_examples_feedback: float = 0.0):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
         self.config_dir = Path(config_dir)
         self.menu_strategy = menu_strategy # choose from: [static, one-shot]
         self.fine_grained_isa = fine_grained_isa
+        self.give_examples_feedback = give_examples_feedback
 
         # Load all config files
         self._architecture = self._load_text("architecture.md")
@@ -48,9 +50,13 @@ class BuiltLLMAgent(LLMAgent):
         self._optimization_menu = self._load_optimization_menu()
         self._translate_menu = self._load_translate_menu()
         self._rules = self._load_rules()
+        self._code_example_sections = self._load_code_example_sections()
 
         # Cache for ISA selection per problem (stores final assembled text)
         self._isa_selection_cache: dict[str, str] = {}
+
+        # Cache for code example selection per problem (stores list of section names)
+        self._code_example_cache: dict[str, list[str]] = {}
 
         # Cache for new menu options per candidate
         self._new_menu_cache: dict[str, list[str]] = {}
@@ -58,9 +64,11 @@ class BuiltLLMAgent(LLMAgent):
 
         logger.info(
             "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, "
-            "%d translate strategies, fine_grained_isa=%s",
+            "%d translate strategies, %d code examples, fine_grained_isa=%s, "
+            "give_examples_feedback=%.2f",
             self.config_dir, len(self._isa_sections), len(self._optimization_menu),
-            len(self._translate_menu), self.fine_grained_isa,
+            len(self._translate_menu), len(self._code_example_sections),
+            self.fine_grained_isa, self.give_examples_feedback,
         )
 
     def __repr__(self):
@@ -76,7 +84,7 @@ class BuiltLLMAgent(LLMAgent):
     def _load_optimization_menu(self) -> list[str]:
         path = self.config_dir / "optimization_menu.yaml"
         if not path.exists():
-            return ["Other methods not listed here."]
+            return []
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         items = data.get("optimizations", [])
@@ -102,6 +110,48 @@ class BuiltLLMAgent(LLMAgent):
             "planning": data.get("planning", []),
             "coding": data.get("coding", []),
         }
+
+    def _load_code_example_sections(self) -> list[tuple[str, str, str]]:
+        """Parse code_examples.md into (name, summary, code_body) tuples.
+
+        Expected format per section:
+            ## <filename>
+            SUMMARY: <1-2 sentence description>
+            <code blocks>
+        Falls back to "(no summary available)" if no SUMMARY: line is found.
+        """
+        raw = self._load_text("code_examples.md")
+        if not raw.strip():
+            return []
+
+        sections: list[tuple[str, str, str]] = []
+        current_name: str | None = None
+        current_lines: list[str] = []
+
+        def _flush():
+            if current_name is None:
+                return
+            body = "\n".join(current_lines).strip()
+            summary = "(no summary available)"
+            code_body = body
+            for i, line in enumerate(current_lines):
+                if line.strip().startswith("SUMMARY:"):
+                    summary = line.strip()[len("SUMMARY:"):].strip()
+                    code_body = "\n".join(current_lines[i + 1:]).strip()
+                    break
+            if code_body:
+                sections.append((current_name, summary, code_body))
+
+        for line in raw.split("\n"):
+            if line.startswith("## "):
+                _flush()
+                current_name = line[3:].strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+
+        _flush()
+        return sections
 
     @staticmethod
     def _parse_isa_sections(isa_text: str) -> dict[str, str]:
@@ -247,7 +297,10 @@ class BuiltLLMAgent(LLMAgent):
 
         prompt = (
             "Given the following code and problem context, select which ISA "
-            "documentation sections are relevant. Return ONLY the section names, "
+            "documentation sections are relevant for optimizing this code. "
+            "Include sections for APIs the code uses now AND sections that "
+            "cover APIs or techniques the code could benefit from. "
+            "When in doubt, include the section. Return ONLY the section names, "
             "one per line.\n\n"
             f"Problem type: {prob.prob_type}\n"
             f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
@@ -282,9 +335,9 @@ class BuiltLLMAgent(LLMAgent):
         sub_list = "\n".join(sub_list_parts)
 
         prompt = (
-            "Given the following code, select which specific APIs/instructions "
-            "are needed. Be selective — only include APIs the code actually uses "
-            "or is likely to need. Return ONLY the API names, one per line.\n\n"
+            "Given the following code, select which APIs/instructions "
+            "are relevant for optimizing it. Include APIs the code currently uses "
+            "AND APIs it could benefit from using. Return ONLY the API names, one per line.\n\n"
             f"Problem type: {prob.prob_type}\n"
             f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
             f"Code:\n```\n{code}\n```\n\n"
@@ -337,15 +390,61 @@ class BuiltLLMAgent(LLMAgent):
                 parts.append(self._isa_sections[name])
         return "\n\n".join(parts)
 
+    def _select_code_examples(self, prob: Prob, code: str) -> list[str]:
+        """LLM-select relevant code example sections for a problem.
+
+        Returns a list of section names. Results are cached per problem.
+        """
+        cache_key = f"{prob.prob_type}:{prob.prob_id}"
+        if cache_key in self._code_example_cache:
+            return self._code_example_cache[cache_key]
+
+        if not self._code_example_sections:
+            self._code_example_cache[cache_key] = []
+            return []
+
+        example_list_parts: list[str] = []
+        valid_names: list[str] = []
+        for i, (name, summary, _) in enumerate(self._code_example_sections, 1):
+            example_list_parts.append(f"{i}. {name} -- {summary}")
+            valid_names.append(name)
+        example_list = "\n".join(example_list_parts)
+
+        prob_context = getattr(prob, "context", "")
+        prompt = (
+            "Given the following code and problem context, select which code "
+            "examples are most relevant for learning optimization patterns "
+            "applicable to this code. Return ONLY the example names, one per "
+            "line.\n\n"
+            f"Problem type: {prob.prob_type}\n"
+            f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
+            f"Code:\n```\n{code}\n```\n\n"
+            f"Available code examples:\n{example_list}\n\n"
+            "Relevant examples (one per line):"
+        )
+        selected = self._match_names_from_llm(prompt, valid_names)
+        self._code_example_cache[cache_key] = selected
+        logger.info(
+            "%s BuiltLLMAgent: code example selection for %s: %d/%d examples",
+            self.llm_client.model, cache_key, len(selected), len(valid_names),
+        )
+        return selected
+
+    def _get_code_example_bodies(self, names: list[str]) -> dict[str, str]:
+        """Return {name: code_body} for the given section names."""
+        lookup = {name: body for name, _, body in self._code_example_sections}
+        return {n: lookup[n] for n in names if n in lookup}
+
     # ------------------------------------------------------------------
     # Required overrides
     # ------------------------------------------------------------------
 
     def get_opt_menu_options(self, prob: Prob, candidate: CodeCandidate = None) -> list[str]:
-        base = list(self._optimization_menu)
+        opt_lst = list(self._optimization_menu)
         if candidate is not None:
-            base = base + self._new_menu_cache.get(candidate.code, [])
-        return base
+            opt_lst = opt_lst + self._new_menu_cache.get(candidate.code, [])
+        opt_lst.append("Other methods not listed here.")
+        return opt_lst
 
     def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
         self._new_menu_cache = new_menu
@@ -424,7 +523,26 @@ class BuiltLLMAgent(LLMAgent):
         if shuffle_opts:
             random.shuffle(opt_lst)
 
-        prompt_text = self._build_prompt_scaffold(
+        # Stochastically prepend code examples at the top (deprioritized by position)
+        examples_prefix = ""
+        if (self.give_examples_feedback > 0
+                and self._code_example_sections
+                and random.random() < self.give_examples_feedback):
+            selected_names = self._select_code_examples(prob, candidate.code)
+            if selected_names:
+                max_examples = 2
+                sampled = (random.sample(selected_names, min(max_examples, len(selected_names)))
+                           if len(selected_names) > max_examples else selected_names)
+                bodies = self._get_code_example_bodies(sampled)
+                if bodies:
+                    parts = [f"### {name}\n{body}" for name, body in bodies.items()]
+                    examples_prefix = (
+                        "Reference patterns:" + "\n\n".join(parts) + "\n\n"
+                        "Use the above examples to inform your optimization strategy. "
+                        "Do NOT copy verbatim or generate full code in your plan.\n\n"
+                    )
+
+        prompt_text = examples_prefix + self._build_prompt_scaffold(
             candidate, prob, analysis,
             give_score_feedback, give_hw_feedback, include_ancestors,
         )
@@ -510,7 +628,24 @@ class BuiltLLMAgent(LLMAgent):
         return prompt_text
 
     def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob):
-        prompt_text = self._architecture + "\n"
+        prompt_text = ""
+
+        # Include code examples to help discover optimization strategies
+        if self._code_example_sections:
+            selected_names = self._select_code_examples(prob, candidate.code)
+            if selected_names:
+                max_examples = 2
+                sampled = (random.sample(selected_names, min(max_examples, len(selected_names)))
+                           if len(selected_names) > max_examples else selected_names)
+                bodies = self._get_code_example_bodies(sampled)
+                if bodies:
+                    parts = [f"### {name}\n{body}" for name, body in bodies.items()]
+                    prompt_text += (
+                        "Reference patterns showing how key APIs are used:\n\n"
+                        + "\n\n".join(parts) + "\n\n"
+                    )
+
+        prompt_text += self._architecture + "\n"
         prompt_text += self._get_isa_for_problem(prob, candidate.code) + "\n"
         prompt_text += "Here is the kernel to optimize:\n"
         prompt_text += candidate.code + "\n"
@@ -519,10 +654,18 @@ class BuiltLLMAgent(LLMAgent):
             prompt_text += f"{i + 1}. {opt}\n"
 
         if self.menu_strategy == "one-shot":
-            prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
-            prompt_text += "Identify optimization opportunities specific to this software workload that are NOT already listed above. "
-            prompt_text += "Identify about 10 new optimization strategies that could improve this kernel's performance. The optimization strategies should be high-level and able to be expressed in a few words."
-            prompt_text += "Return ONLY the list of optimization strategies as a Python list of strings. Do NOT include explanations, numbering, bullet points, headers, or any other text.\n"
+            prompt_text += (
+                "You are an expert performance engineer generating high-performance code "
+                "for this hardware target. Analyze the kernel and identify about 10 new "
+                "optimization strategies that could improve performance and are NOT already "
+                "listed above. When presenting your final strategies, list them between <strategies> and </strategies> tags, "
+                "one per line prefixed with \"- \". Example:\n\n"
+                "<strategies>\n"
+                "- strategy 1\n"
+                "- strategy 2\n"
+                "- ...\n"
+                "</strategies>\n"
+            )
 
         return prompt_text
 
