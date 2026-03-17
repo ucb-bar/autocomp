@@ -98,6 +98,7 @@ def benchmark_nki(nki_func):
     print("Latency: {:.3f} ms (P99)".format(p99 / 1000.0))
 
 if __name__ == "__main__":
+    os.environ["NEURON_PLATFORM_TARGET_OVERRIDE"] = "trn1" 
     test_result = test_nki(ref, test)
     if not test_result:
         print("Test failed")

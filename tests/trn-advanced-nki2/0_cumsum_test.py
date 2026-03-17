@@ -104,6 +104,7 @@ def benchmark_nki(nki_func):
   
 if __name__ == "__main__":
     # benchmark_nki(ref)
+    os.environ["NEURON_PLATFORM_TARGET_OVERRIDE"] = "trn1"  
     test_result = test_nki(ref, test)
     if not test_result:
         print("Test failed")
