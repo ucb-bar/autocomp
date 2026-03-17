@@ -75,7 +75,7 @@ def _flash_attention_core(
     num_k_tile_per_large_tile = LARGE_KV_TILE_SIZE // B_F_SIZE
 
     qk_res_buf = nl.ndarray((Q_TILE_SIZE, LARGE_KV_TILE_SIZE), buffer=nl.sbuf, dtype=acc_type)
-    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type)
+    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type, name='max_local', buffer=nl.sbuf)
 
     for k_i in nl.affine_range(num_k_tile_per_large_tile):
         k_i_start = k_i * B_F_SIZE
@@ -154,20 +154,21 @@ def _flash_attention_core(
         (B_P_SIZE, LARGE_KV_TILE_SIZE // B_P_SIZE * Q_TILE_SIZE),
         dtype=kernel_dtype, buffer=nl.sbuf,
     )
-    transpose_p_local_reference_version(
+    transpose_p_local(
         p_local_transposed=p_local_transposed,
         p_local=p_local,
         Q_TILE_SIZE=Q_TILE_SIZE,
         LARGE_KV_TILE_SIZE=LARGE_KV_TILE_SIZE,
     )
 
-    pv_psum = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
+    pv_psum = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf, name='pv_psum')
     nisa.memset(dst=pv_psum, value=0.0)
     v_local = nl.ndarray((B_P_SIZE, LARGE_KV_TILE_SIZE // B_P_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=v_local, src=v[0:B_P_SIZE, 0:LARGE_KV_TILE_SIZE//B_P_SIZE, 0:B_D_SIZE])
 
     for k_i in nl.affine_range(LARGE_KV_TILE_SIZE // B_P_SIZE):
         p_col_start = k_i * Q_TILE_SIZE
+        # v_local[:, k_i, :] is a (B_P_SIZE, B_D_SIZE) slice - use as moving
         v_slice = nl.ndarray((B_P_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
         nisa.tensor_copy(dst=v_slice, src=v_local[0:B_P_SIZE, k_i, 0:B_D_SIZE])
         pv_chunk = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.psum)
@@ -190,6 +191,7 @@ def _flash_attention_core(
     nisa.tensor_copy(dst=olm_buffer[0:Q_TILE_SIZE, B_D_SIZE+1:B_D_SIZE+2], src=m_current)
 
     # o_previous_scaled = o_prev * alpha
+    # alpha is (Q_TILE_SIZE, 1); broadcast to (Q_TILE_SIZE, B_D_SIZE) for tensor_tensor
     o_prev = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=o_prev, src=olm_prev[0:Q_TILE_SIZE, 0:B_D_SIZE])
     o_prev_f32 = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=acc_type, buffer=nl.sbuf)
@@ -287,8 +289,8 @@ def test_nki(ref_func, test_func):
     )
 
     # Extract o, l, m from olm
-    olm_ref_np = olm_ref.detach().cpu().numpy().astype(np.float32)
-    olm_test_np = olm_test.detach().cpu().numpy().astype(np.float32)
+    olm_ref_np = olm_ref.detach().cpu().to(torch.float32).numpy()
+    olm_test_np = olm_test.detach().cpu().to(torch.float32).numpy()
     o_ref = olm_ref_np[:, :B_D_SIZE]
     l_ref = olm_ref_np[:, B_D_SIZE]
     m_ref = olm_ref_np[:, B_D_SIZE + 1]

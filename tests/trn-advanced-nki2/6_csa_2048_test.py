@@ -203,12 +203,12 @@ def test_nki(ref_func, test_func):
   )
 
   fail = False
-  o_ref_np = o_ref.detach().cpu().numpy().astype(np.float32)
-  o_test_np = o_test.detach().cpu().numpy().astype(np.float32)
-  l_ref_np = l_ref.detach().cpu().numpy().astype(np.float32)
-  l_test_np = l_test.detach().cpu().numpy().astype(np.float32)
-  m_ref_np = m_ref.detach().cpu().numpy().astype(np.float32)
-  m_test_np = m_test.detach().cpu().numpy().astype(np.float32)
+  o_ref_np = o_ref.detach().cpu().to(torch.float32).numpy()
+  o_test_np = o_test.detach().cpu().to(torch.float32).numpy()
+  l_ref_np = l_ref.detach().cpu().to(torch.float32).numpy()
+  l_test_np = l_test.detach().cpu().to(torch.float32).numpy()
+  m_ref_np = m_ref.detach().cpu().to(torch.float32).numpy()
+  m_test_np = m_test.detach().cpu().to(torch.float32).numpy()
   if not np.allclose(o_ref_np, o_test_np, atol=0.01, rtol=0.001):
     print(f"FAIL: o_ref != o_test")
     print("o_ref shape:", o_ref_np.shape)

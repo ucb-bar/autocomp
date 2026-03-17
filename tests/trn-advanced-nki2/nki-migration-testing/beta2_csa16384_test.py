@@ -49,7 +49,7 @@ def test(
     num_k_tile_per_large_tile = LARGE_KV_TILE_SIZE // B_F_SIZE
 
     qk_res_buf = nl.ndarray((Q_TILE_SIZE, LARGE_KV_TILE_SIZE), buffer=nl.sbuf, dtype=acc_type)
-    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type)
+    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type, name='max_local', buffer=nl.sbuf)
 
     for k_i in nl.affine_range(num_k_tile_per_large_tile):
         k_i_start = k_i * B_F_SIZE
@@ -135,7 +135,7 @@ def test(
         LARGE_KV_TILE_SIZE=LARGE_KV_TILE_SIZE,
     )
 
-    pv_psum = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
+    pv_psum = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf, name='pv_psum')
     nisa.memset(dst=pv_psum, value=0.0)
     v_local = nl.ndarray((B_P_SIZE, LARGE_KV_TILE_SIZE // B_P_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=v_local, src=v[0:B_P_SIZE, 0:LARGE_KV_TILE_SIZE//B_P_SIZE, 0:B_D_SIZE])

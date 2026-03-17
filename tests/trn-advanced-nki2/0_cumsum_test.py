@@ -17,7 +17,10 @@ def normalize_dim(idx, rank):
     return idx if idx >= 0 else (rank + idx)
 
 def n_elts(shape):
-    return reduce(mul, shape, 1)
+    result = 1
+    for x in shape:
+        result *= x
+    return result
 
 @nki.jit
 def ref(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
@@ -92,8 +95,7 @@ def test_nki(ref_func, test_func):
 def benchmark_nki(nki_func):
     device = xm.xla_device()
     x_np = np.random.rand(2048,2048).astype(np.float32)
-    x = 
-torch.from_numpy(x_np).to(device=device)
+    x = torch.from_numpy(x_np).to(device=device)
     bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
     _ = bench_func(x)
     latency_res = bench_func.benchmark_result.nc_latency

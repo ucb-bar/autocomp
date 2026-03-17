@@ -40,7 +40,7 @@ def test(
     num_k_tile_per_large_tile = LARGE_KV_TILE_SIZE // B_F_SIZE
 
     qk_res_buf = nl.ndarray((Q_TILE_SIZE, LARGE_KV_TILE_SIZE), buffer=nl.sbuf, dtype=acc_type)
-    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type)
+    max_local = nl.zeros((Q_TILE_SIZE, num_k_tile_per_large_tile), dtype=acc_type, name='max_local', buffer=nl.sbuf)
 
     for k_i in nl.affine_range(num_k_tile_per_large_tile):
         k_i_start = k_i * B_F_SIZE
@@ -61,6 +61,7 @@ def test(
             tile_mask_tile = nl.ndarray((Q_TILE_SIZE, B_F_SIZE), dtype=nl.float32, buffer=nl.sbuf)
             nisa.dma_copy(dst=tile_mask_tile, src=tile_mask[0:Q_TILE_SIZE, k_i_start:k_i_start+B_F_SIZE])
 
+            # masked = (qk - NEG_INF) * mask + NEG_INF
             qk_shifted = nl.ndarray((Q_TILE_SIZE, B_F_SIZE), dtype=acc_type, buffer=nl.sbuf)
             nisa.tensor_scalar(dst=qk_shifted, data=qk_sbuf, op0=nl.add, operand0=-NEG_INF)
             masked_shifted = nl.ndarray((Q_TILE_SIZE, B_F_SIZE), dtype=acc_type, buffer=nl.sbuf)
@@ -81,7 +82,7 @@ def test(
     nisa.tensor_reduce(dst=max_, op=nl.maximum, data=max_local, axis=1, keepdims=True)
 
     olm_buffer = nl.ndarray((Q_TILE_SIZE, B_D_SIZE + 2), dtype=kernel_dtype, buffer=nl.sbuf)
-    o_previous_scaled = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
+    o_previous_scaled = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=acc_type, buffer=nl.sbuf)
 
     m_previous = nl.ndarray((Q_TILE_SIZE, 1), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=m_previous, src=olm_prev[0:Q_TILE_SIZE, B_D_SIZE+1:B_D_SIZE+2])
@@ -125,7 +126,8 @@ def test(
         LARGE_KV_TILE_SIZE=LARGE_KV_TILE_SIZE,
     )
 
-    pv_psum = nl.zeros((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.psum)
+    pv_psum = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf, name='pv_psum')
+    nisa.memset(dst=pv_psum, value=0.0)
     v_local = nl.ndarray((B_P_SIZE, LARGE_KV_TILE_SIZE // B_P_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=v_local, src=v[0:B_P_SIZE, 0:LARGE_KV_TILE_SIZE//B_P_SIZE, 0:B_D_SIZE])
 
@@ -134,18 +136,15 @@ def test(
         # v_local[:, k_i, :] is a (B_P_SIZE, B_D_SIZE) slice - use as moving
         v_slice = nl.ndarray((B_P_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
         nisa.tensor_copy(dst=v_slice, src=v_local[0:B_P_SIZE, k_i, 0:B_D_SIZE])
-        pv_psum_chunk = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.psum)
+        pv_chunk = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.psum)
         nisa.nc_matmul(
-            dst=pv_psum_chunk,
+            dst=pv_chunk,
             stationary=p_local_transposed[0:B_P_SIZE, p_col_start:p_col_start+Q_TILE_SIZE],
             moving=v_slice,
         )
         pv_tmp = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=pv_tmp, src=pv_psum_chunk)
-        pv_sbuf = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=pv_sbuf, src=pv_psum)
-        nisa.tensor_tensor(dst=pv_sbuf, data1=pv_sbuf, data2=pv_tmp, op=nl.add)
-        nisa.tensor_copy(dst=pv_psum[0:Q_TILE_SIZE, 0:B_D_SIZE], src=pv_sbuf)
+        nisa.tensor_copy(dst=pv_tmp, src=pv_chunk)
+        nisa.tensor_tensor(dst=pv_psum, data1=pv_psum, data2=pv_tmp, op=nl.add)
 
     # alpha = exp(m_previous + m_current_neg)
     alpha = nl.ndarray((Q_TILE_SIZE, 1), dtype=acc_type, buffer=nl.sbuf)
@@ -157,17 +156,21 @@ def test(
     nisa.tensor_copy(dst=olm_buffer[0:Q_TILE_SIZE, B_D_SIZE+1:B_D_SIZE+2], src=m_current)
 
     # o_previous_scaled = o_prev * alpha
+    # alpha is (Q_TILE_SIZE, 1); broadcast to (Q_TILE_SIZE, B_D_SIZE) for tensor_tensor
     o_prev = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.dma_copy(dst=o_prev, src=olm_prev[0:Q_TILE_SIZE, 0:B_D_SIZE])
-    nisa.tensor_tensor(dst=o_previous_scaled, data1=o_prev, data2=alpha, op=nl.multiply)
+    o_prev_f32 = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=acc_type, buffer=nl.sbuf)
+    nisa.tensor_copy(dst=o_prev_f32, src=o_prev)
+    alpha_broad = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=acc_type, buffer=nl.sbuf)
+    for d in nl.affine_range(B_D_SIZE):
+        nisa.tensor_copy(dst=alpha_broad[0:Q_TILE_SIZE, d:d+1], src=alpha)
+    nisa.tensor_tensor(dst=o_previous_scaled, data1=o_prev_f32, data2=alpha_broad, op=nl.multiply)
 
     # olm_buffer[:, 0:B_D_SIZE] = o_previous_scaled + pv
     pv_final = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
     nisa.tensor_copy(dst=pv_final, src=pv_psum)
-    o_prev_cast = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-    nisa.tensor_copy(dst=o_prev_cast, src=o_previous_scaled)
     o_new = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-    nisa.tensor_tensor(dst=o_new, data1=o_prev_cast, data2=pv_final, op=nl.add)
+    nisa.tensor_tensor(dst=o_new, data1=o_previous_scaled, data2=pv_final, op=nl.add)
     o_new_cast = nl.ndarray((Q_TILE_SIZE, B_D_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
     nisa.tensor_copy(dst=o_new_cast, src=o_new)
     nisa.tensor_copy(dst=olm_buffer[0:Q_TILE_SIZE, 0:B_D_SIZE], src=o_new_cast)

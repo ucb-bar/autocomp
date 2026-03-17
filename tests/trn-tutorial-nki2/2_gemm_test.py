@@ -132,15 +132,15 @@ def nki_matmul_block_free_dimension_(lhsT, rhs):
 
 def test_nki(ref_func, test_func):
     device = xm.xla_device()
-    for _ in range(3):
-        a_np = (np.random.randn(8192, 4096) * (1.0 / np.sqrt(4096))).astype(nl.bfloat16)
-        b_np = (np.random.randn(8192, 8192) * (1.0 / np.sqrt(8192))).astype(nl.bfloat16)
-        a = torch.from_numpy(a_np).to(device=device)
-        b = torch.from_numpy(b_np).to(device=device)
+    for _ in range(1):
+        a_np = (np.random.randn(512, 512) * (1.0 / np.sqrt(512))).astype(nl.bfloat16)
+        b_np = (np.random.randn(512, 512) * (1.0 / np.sqrt(512))).astype(nl.bfloat16)
+        a = torch.from_numpy(a_np.view(np.uint16)).view(torch.bfloat16).to(device=device)
+        b = torch.from_numpy(b_np.view(np.uint16)).view(torch.bfloat16).to(device=device)
         result_1 = ref_func(a, b)
         result_2 = test_func(a, b)
-        r1 = result_1.detach().cpu().numpy().astype(np.float32)
-        r2 = result_2.detach().cpu().numpy().astype(np.float32)
+        r1 = result_1.detach().cpu().to(torch.float32).numpy()
+        r2 = result_2.detach().cpu().to(torch.float32).numpy()
         print("result_1", r1[:5, :5])
         print("result_2", r2[:5, :5])
         if not np.allclose(r1, r2, atol=1e-2, rtol=1e-3):

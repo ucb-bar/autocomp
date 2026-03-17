@@ -1,3 +1,15 @@
+def div_ceil(n, d):
+    return (n + d - 1) // d
+
+def normalize_dim(idx, rank):
+    return idx if idx >= 0 else (rank + idx)
+
+def n_elts(shape):
+    result = 1
+    for x in shape:
+        result *= x
+    return result
+
 @nki.jit
 def test(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
     assert isinstance(axis, int) or axis is None
