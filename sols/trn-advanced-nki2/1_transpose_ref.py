@@ -40,21 +40,19 @@ def test(ref, dim):
 
                 _local = nl.ndarray(shape=(B_tile_size, N_tile_size),
                                     dtype=ref.dtype, buffer=nl.sbuf)
-                nisa.dma_copy(dst=_local[0:tile_b, 0:tile_n],
+                nisa.dma_copy(dst=_local,
                               src=ref[d0, b_start:b_end, n_start:n_end])
 
                 transposed_psum = nl.ndarray(shape=(N_tile_size, B_tile_size),
                                              dtype=nl.float32, buffer=nl.psum)
-                nisa.nc_transpose(dst=transposed_psum[0:tile_n, 0:tile_b],
-                                  data=_local[0:tile_b, 0:tile_n])
+                nisa.nc_transpose(dst=transposed_psum,
+                                  data=_local)
 
                 transposed_local = nl.ndarray(shape=(N_tile_size, B_tile_size),
                                               dtype=ref.dtype, buffer=nl.sbuf)
-                nisa.memset(dst=transposed_local, value=0.0)
-                nisa.tensor_copy(dst=transposed_local[0:tile_n, 0:tile_b],
-                                 src=transposed_psum[0:tile_n, 0:tile_b])
+                nisa.tensor_copy(dst=transposed_local, src=transposed_psum)
 
                 nisa.dma_copy(dst=dst[d0, n_start:n_end, b_start:b_end],
-                              src=transposed_local[0:tile_n, 0:tile_b])
+                              src=transposed_local)
 
     return dst
