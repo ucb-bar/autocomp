@@ -1,7 +1,7 @@
-NEG_INF = -9984.0
-
 @nki.jit
 def transpose_p_local(p_local_transposed, p_local, Q_TILE_SIZE, LARGE_KV_TILE_SIZE):
+    NEG_INF = -9984.0
+
     B_P_SIZE = nl.tile_size.pmax
     REDUCTION_SIZE = min(B_P_SIZE, LARGE_KV_TILE_SIZE)
     B_F_SIZE = nl.tile_size.gemm_moving_fmax

@@ -1,10 +1,3 @@
-import math
-import numpy as np
-import nki
-import nki.isa as nisa
-import nki.language as nl
-
-
 @nki.jit
 def test(in_tensor, pool_size):
     k = pool_size

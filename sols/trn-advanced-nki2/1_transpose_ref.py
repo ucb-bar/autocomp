@@ -1,9 +1,3 @@
-import numpy as np
-import nki
-import nki.isa as nisa
-import nki.language as nl
-
-
 def div_ceil(n, d):
     return (n + d - 1) // d
 

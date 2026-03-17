@@ -1,9 +1,3 @@
-import numpy as np
-import nki
-import nki.isa as nisa
-import nki.language as nl
-
-
 @nki.jit
 def test(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
     d_head, S = x_in.shape

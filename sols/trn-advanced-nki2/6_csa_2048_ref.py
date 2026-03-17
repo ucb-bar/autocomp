@@ -1,10 +1,10 @@
-NEG_INF = -9984.0
-
 @nki.jit
 def test(q, k, v, causal_mask,
          kernel_dtype, acc_type,
          seq_len=2048,
          d_head=128):
+    NEG_INF = -9984.0
+
     B_P_SIZE = 128   # queries per tile = d_head
     B_F_SIZE = 512   # keys per tile for QK
     REDUCTION_TILE = min(2048, seq_len // 2)
