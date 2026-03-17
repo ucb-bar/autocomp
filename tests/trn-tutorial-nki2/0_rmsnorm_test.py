@@ -1,10 +1,3 @@
-"""
-Copyright (C) 2024, Amazon.com. All Rights Reserved
-
-RMSNorm NKI kernel implementation.
-
-"""
-
 import numpy as np
 # NKI_EXAMPLE_42_BEGIN
 import math

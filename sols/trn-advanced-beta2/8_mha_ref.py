@@ -1,11 +1,11 @@
-NEG_INF = -9984.0
-
 @nki.jit
 def test(q, k, v, causal_mask,
          kernel_dtype, acc_type,
          num_heads=8,
          seq_len=2048,
          d_head=128):
+    NEG_INF = -9984.0
+
     B_P_SIZE = 128
     B_F_SIZE = 512
     REDUCTION_TILE = min(2048, seq_len // 2)
@@ -53,22 +53,34 @@ def test(q, k, v, causal_mask,
                     left_of_diag = q_start >= k_end
 
                     if left_of_diag:
-                        nisa.tensor_copy(dst=qk_res_buf[0:B_P_SIZE, k_start:k_end], src=qk_sbuf)
+                        qk_bf16 = nl.ndarray((B_P_SIZE, B_F_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
+                        nisa.tensor_copy(dst=qk_bf16, src=qk_sbuf)
+                        nisa.tensor_copy(dst=qk_res_buf[0:B_P_SIZE, k_start:k_end], src=qk_bf16)
+                        # Compute max from local buffer (not qk_res_buf with dynamic offset)
+                        nisa.tensor_reduce(
+                            dst=max_local[0:B_P_SIZE, k_i:k_i+1],
+                            op=nl.maximum, data=qk_sbuf,
+                            axis=1, keepdims=True
+                        )
                     else:
+                        # On the diagonal: apply causal mask
                         nisa.dma_copy(dst=causal_tile, src=causal_mask[q_start:q_end, k_start:k_end])
+                        # masked = (qk - NEG_INF) * mask + NEG_INF
                         qk_shifted = nl.ndarray((B_P_SIZE, B_F_SIZE), dtype=acc_type, buffer=nl.sbuf)
                         nisa.tensor_scalar(dst=qk_shifted, data=qk_sbuf, op0=nl.add, operand0=-NEG_INF)
                         masked_shifted = nl.ndarray((B_P_SIZE, B_F_SIZE), dtype=acc_type, buffer=nl.sbuf)
                         nisa.tensor_tensor(dst=masked_shifted, data1=qk_shifted, data2=causal_tile, op=nl.multiply)
                         masked = nl.ndarray((B_P_SIZE, B_F_SIZE), dtype=acc_type, buffer=nl.sbuf)
                         nisa.tensor_scalar(dst=masked, data=masked_shifted, op0=nl.add, operand0=NEG_INF)
-                        nisa.tensor_copy(dst=qk_res_buf[0:B_P_SIZE, k_start:k_end], src=masked)
-
-                    nisa.tensor_reduce(
-                        dst=max_local[0:B_P_SIZE, k_i:k_i+1],
-                        op=nl.maximum, data=qk_res_buf[0:B_P_SIZE, k_start:k_end],
-                        axis=1, keepdims=True
-                    )
+                        masked_bf16 = nl.ndarray((B_P_SIZE, B_F_SIZE), dtype=kernel_dtype, buffer=nl.sbuf)
+                        nisa.tensor_copy(dst=masked_bf16, src=masked)
+                        nisa.tensor_copy(dst=qk_res_buf[0:B_P_SIZE, k_start:k_end], src=masked_bf16)
+                        # Compute max from local masked buffer (not qk_res_buf with dynamic offset)
+                        nisa.tensor_reduce(
+                            dst=max_local[0:B_P_SIZE, k_i:k_i+1],
+                            op=nl.maximum, data=masked,
+                            axis=1, keepdims=True
+                        )
 
             max_ = nl.ndarray((B_P_SIZE, 1), dtype=acc_type, buffer=nl.sbuf)
             nisa.tensor_reduce(dst=max_, op=nl.maximum, data=max_local, axis=1, keepdims=True)
@@ -80,27 +92,19 @@ def test(q, k, v, causal_mask,
             neg_max = nl.ndarray((B_P_SIZE, 1), dtype=acc_type, buffer=nl.sbuf)
             nisa.tensor_scalar(dst=neg_max, data=max_, op0=nl.multiply, operand0=-1.0)
 
+            # Compute p_local = exp(qk - max) in a single pass over full qk_res_buf (offset=0).
+            # Using single-pass avoids the NKI issue where nisa.activation reads from
+            # dynamic-offset SBUF slices always use offset=0.
             p_local = nl.ndarray((B_P_SIZE, seq_len), dtype=kernel_dtype, buffer=nl.sbuf)
-            num_red_tiles = seq_len // REDUCTION_TILE
-            p_partial_sum = nl.ndarray((B_P_SIZE, num_red_tiles), dtype=acc_type, buffer=nl.sbuf)
-
-            for k_r_i in nl.affine_range(num_red_tiles):
-                kr_start = k_r_i * REDUCTION_TILE
-                nisa.activation(
-                    dst=p_local[0:B_P_SIZE, kr_start:kr_start+REDUCTION_TILE],
-                    op=nl.exp,
-                    data=qk_res_buf[0:B_P_SIZE, kr_start:kr_start+REDUCTION_TILE],
-                    bias=neg_max, scale=1.0,
-                )
-                nisa.tensor_reduce(
-                    dst=p_partial_sum[0:B_P_SIZE, k_r_i:k_r_i+1],
-                    op=nl.add,
-                    data=p_local[0:B_P_SIZE, kr_start:kr_start+REDUCTION_TILE],
-                    axis=1, keepdims=True
-                )
+            nisa.activation(
+                dst=p_local,
+                op=nl.exp,
+                data=qk_res_buf,
+                bias=neg_max, scale=1.0,
+            )
 
             ps = nl.ndarray((B_P_SIZE, 1), dtype=acc_type, buffer=nl.sbuf)
-            nisa.tensor_reduce(dst=ps, op=nl.add, data=p_partial_sum, axis=1, keepdims=True)
+            nisa.tensor_reduce(dst=ps, op=nl.add, data=p_local, axis=1, keepdims=True)
 
             pv_accum = nl.ndarray((B_P_SIZE, d_head), dtype=nl.float32, buffer=nl.sbuf)
             nisa.memset(dst=pv_accum, value=0.0)
