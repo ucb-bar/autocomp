@@ -527,7 +527,7 @@ class BuiltLLMAgent(LLMAgent):
     def update_new_menu_cache(self, new_menu: dict[str, list[str]]):
         self._new_menu_cache = new_menu
 
-    def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None) -> str:
+    def _get_prompt_rules(self, planning: bool, coding: bool, prob: Prob = None, translate: bool = False) -> str:
         rules: list[str] = []
         rules.extend(self.hw_config.get_hw_config_specific_rules())
         rules.extend(self.eval_backend.get_backend_specific_rules())
@@ -537,6 +537,8 @@ class BuiltLLMAgent(LLMAgent):
             rules.extend(self._rules.get("planning", []))
         if coding:
             rules.extend(self._rules.get("coding", []))
+        if translate:
+            rules.append("Do not add fallback paths.")
 
         # Include problem-specific context if available
         if prob and hasattr(prob, "context") and prob.context:
@@ -692,7 +694,7 @@ class BuiltLLMAgent(LLMAgent):
 
         prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob)
+        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=True)
 
         if prompt_end:
             prompt_text += "\n" + prompt_end
