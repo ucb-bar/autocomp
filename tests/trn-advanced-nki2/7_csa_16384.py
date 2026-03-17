@@ -36,31 +36,6 @@ def transpose_p_local(p_local_transposed, p_local, Q_TILE_SIZE, LARGE_KV_TILE_SI
 
 
 @nki.jit
-def transpose_p_local_reference_version(p_local_transposed, p_local, Q_TILE_SIZE, LARGE_KV_TILE_SIZE):
-    B_P_SIZE = nl.tile_size.pmax
-    REDUCTION_SIZE = min(B_P_SIZE, LARGE_KV_TILE_SIZE)
-    B_F_SIZE = nl.tile_size.gemm_moving_fmax
-    for i in nl.affine_range(LARGE_KV_TILE_SIZE // B_F_SIZE):
-        p_local_t_tmp = nl.ndarray(
-            (REDUCTION_SIZE, B_F_SIZE // REDUCTION_SIZE * Q_TILE_SIZE),
-            buffer=nl.psum, dtype=nl.float32,
-        )
-        for j in nl.affine_range(B_F_SIZE // REDUCTION_SIZE):
-            j_128_start = j * Q_TILE_SIZE
-            ij_start = i * B_F_SIZE + j * REDUCTION_SIZE
-            nisa.nc_transpose(
-                dst=p_local_t_tmp[0:REDUCTION_SIZE, j_128_start:j_128_start+Q_TILE_SIZE],
-                data=p_local[0:Q_TILE_SIZE, ij_start:ij_start+REDUCTION_SIZE]
-            )
-        out_start = i * (B_F_SIZE // REDUCTION_SIZE * Q_TILE_SIZE)
-        out_size = B_F_SIZE // REDUCTION_SIZE * Q_TILE_SIZE
-        nisa.tensor_copy(
-            dst=p_local_transposed[0:B_P_SIZE, out_start:out_start+out_size],
-            src=p_local_t_tmp,
-        )
-
-
-@nki.jit
 def _flash_attention_core(
     q, k, v, olm_prev,
     kernel_dtype, acc_type,
