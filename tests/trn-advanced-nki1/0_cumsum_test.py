@@ -1,5 +1,23 @@
+import numpy as np
+import neuronxcc.nki.language as nl
+from operator import mul
+from functools import reduce
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki as nki
+
+# SUBSTITUTE HERE
+
+def div_ceil(n, d):
+    return (n + d - 1) // d
+
+def normalize_dim(idx, rank):
+    return idx if idx >= 0 else (rank + idx)
+
+def n_elts(shape):
+    return reduce(mul, shape, 1)
+
 @nki.jit
-def test(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
+def ref(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
     assert isinstance(axis, int) or axis is None
     if axis is None:
         axis = -1
@@ -44,3 +62,31 @@ def test(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
             init[:, :] = nl.copy(result[:, f_tile_size - 1], mask=j + 1 < n_f_tiles)
 
     return y.reshape(x_shape)
+
+def test_nki(ref_func, test_func):
+    for _ in range(2):
+        x = np.random.rand(2048, 2048).astype(np.float32)
+        y = np.zeros((10, 10), dtype=np.float32)
+        ref_y = ref_func(x)
+        test_y = test_func(x)
+        if not np.allclose(test_y, ref_y,atol=1e-4,rtol=1e-2):
+            return False
+    return True
+
+def benchmark_nki(nki_func):
+    x = np.random.rand(2048,2048).astype(np.float32)
+    bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
+    _ = bench_func(x)
+    latency_res = bench_func.benchmark_result.nc_latency
+    p99 = latency_res.get_latency_percentile(99)
+    print("Latency: {:.3f} ms (P99)".format(p99 / 1000.0))
+  
+if __name__ == "__main__":
+    # benchmark_nki(ref)
+    test_result = test_nki(ref, test)
+    if not test_result:
+        print("Test failed")
+        exit(1)
+    else:
+        print("Test passed")
+        benchmark_nki(test)

@@ -1,5 +1,15 @@
+import math
+
+from neuronxcc import nki
+import neuronxcc.nki.language as nl
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+# SUBSTITUTE HERE
+
 @nki.jit
-def test(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
+def ref(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
     """
     Performs 2D max pooling with stride 1 on a 2D tensor.
     
@@ -28,3 +38,38 @@ def test(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
         nl.store(out_tensor[i_h_out, i_w_out], value=out_tile, mask=(i_h_out < h_out))
 
     return out_tensor
+
+
+def test_nki(ref_func, test_func):
+    for _ in range(2):
+        H, W = 4096, 4096
+        pool_size = 3
+        
+        input_tensor = np.random.rand(H, W).astype(np.float32)
+        result_1 = ref_func(input_tensor, pool_size)
+        result_2 = test_func(input_tensor, pool_size)
+        if not np.allclose(result_1, result_2, atol=1e-4, rtol=1e-2):
+            return False
+    return True
+    
+
+def benchmark_nki(nki_func):
+    H, W = 4096, 4096
+    pool_size = 3
+    
+    input_tensor = np.random.rand(H, W).astype(np.float32)
+    bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
+    bench_func(input_tensor, pool_size)
+    latency_res = bench_func.benchmark_result.nc_latency
+    p99 = latency_res.get_latency_percentile(99)
+    print("Latency: {:.3f} ms (P99)".format(p99 / 1000.0))
+    
+
+if __name__ == "__main__":
+    test_result = test_nki(ref, test)
+    if not test_result:
+        print("Test failed")
+        exit(1)
+    else:
+        print("Test passed")
+        benchmark_nki(test)

@@ -1,8 +1,16 @@
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.typing as nt
+import numpy as np
+
+# SUBSTITUTE HERE
+
 # Magic number to replace -inf similar to what Tensorizer uses
 NEG_INF = -9984.0
 
 @nki.jit
-def transpose_p_local(
+def transpose_p_local_reference_version(
     p_local_transposed,
     p_local,
     Q_TILE_SIZE,
@@ -40,7 +48,7 @@ def transpose_p_local(
         ] = nl.copy(p_local_t_tmp, dtype=p_local_transposed.dtype)
 
 @nki.jit
-def test(
+def _flash_attention_core(
     q,
     k,
     v,
@@ -50,7 +58,7 @@ def test(
     tile_mask,
     q_tile_idx=None,
     Q_TILE_SIZE=128,
-    LARGE_KV_TILE_SIZE=16384,
+    LARGE_KV_TILE_SIZE=2048,
     B_P_SIZE=128,
     B_F_SIZE=512,
     B_D_SIZE=128,
@@ -176,7 +184,7 @@ def test(
         (nl.par_dim(B_P_SIZE), LARGE_KV_TILE_SIZE // B_P_SIZE * Q_TILE_SIZE),
         dtype=kernel_dtype,
     )
-    transpose_p_local(
+    transpose_p_local_reference_version(
         p_local_transposed=p_local_transposed,
         p_local=p_local,
         Q_TILE_SIZE=Q_TILE_SIZE,
@@ -220,3 +228,141 @@ def test(
     olm = nl.ndarray((Q_TILE_SIZE, B_D_SIZE + 2), dtype=kernel_dtype, buffer=nl.shared_hbm)
     nl.store(olm, olm_buffer)
     return olm
+
+def test_nki(ref_func, test_func):
+  """Test the kernel with different q_tile_idx values to cover all masking scenarios"""
+  B_P_SIZE = 128
+  B_D_SIZE = 128
+  B_F_SIZE = 512
+  Q_TILE_SIZE = 128
+  seq_tile_size = 16384
+  num_q_tiles = seq_tile_size // B_P_SIZE  # 16 tiles
+  
+  # Test multiple q_tile_idx values to cover different masking scenarios:
+  # - q_tile_idx=0: Only diagonal_and_right_selection path
+  # - q_tile_idx=1,2: Mix of left_diagonal and diagonal paths
+  # - Later tiles: Test multiplication_required_selection optimization
+  test_indices = [num_q_tiles // 2, num_q_tiles - 1]
+  
+  for q_tile_idx in test_indices:
+    print(f"Testing q_tile_idx={q_tile_idx}...")
+    
+    # Create fresh random inputs for each test
+    q = np.random.rand(B_D_SIZE, seq_tile_size).astype(np.float32)
+    k = np.random.rand(B_D_SIZE, seq_tile_size).astype(np.float32)
+    v = np.random.rand(B_P_SIZE, seq_tile_size // B_P_SIZE, B_D_SIZE).astype(np.float32)
+    olm_prev = np.random.rand(Q_TILE_SIZE, B_D_SIZE + 2).astype(np.float32)
+
+    # Generate causal tile mask for this query tile
+    # tile_mask[i, j] = True if query at position (q_tile_idx * B_P_SIZE + i) can attend to key at position j
+    tile_mask = np.zeros((B_P_SIZE, seq_tile_size), dtype=bool)
+    for i in range(B_P_SIZE):
+      q_pos = q_tile_idx * B_P_SIZE + i
+      tile_mask[i, :q_pos + 1] = True
+    
+    # Run the kernel
+    olm_ref = ref_func(
+      q, k, v, olm_prev,
+      kernel_dtype=nl.bfloat16,
+      acc_type=nl.float32,
+      tile_mask=tile_mask,
+      q_tile_idx=q_tile_idx,
+      Q_TILE_SIZE=B_P_SIZE,
+      LARGE_KV_TILE_SIZE=seq_tile_size,
+      B_P_SIZE=B_P_SIZE,
+      B_F_SIZE=B_F_SIZE,
+      B_D_SIZE=B_D_SIZE
+    )
+    olm_test = test_func(
+      q, k, v, olm_prev,
+      kernel_dtype=nl.bfloat16,
+      acc_type=nl.float32,
+      tile_mask=tile_mask,
+      q_tile_idx=q_tile_idx,
+      Q_TILE_SIZE=B_P_SIZE,
+      LARGE_KV_TILE_SIZE=seq_tile_size,
+      B_P_SIZE=B_P_SIZE,
+      B_F_SIZE=B_F_SIZE,
+      B_D_SIZE=B_D_SIZE
+    )
+    
+    # Extract o, l, m from olm
+    o_ref = olm_ref[:, :B_D_SIZE]
+    l_ref = olm_ref[:, B_D_SIZE]
+    m_ref = olm_ref[:, B_D_SIZE + 1]
+    o_test = olm_test[:, :B_D_SIZE]
+    l_test = olm_test[:, B_D_SIZE]
+    m_test = olm_test[:, B_D_SIZE + 1]
+
+    fail = False
+    if not np.allclose(o_ref.astype(nl.float32), o_test.astype(nl.float32), atol=0.01, rtol=0.001):
+      print(f"FAIL at q_tile_idx={q_tile_idx}: o_ref != o_test")
+      print("o_ref", o_ref.astype(nl.float32)[:5,:5])
+      print("o_test", o_test.astype(nl.float32)[:5,:5])
+      fail = True
+    if not np.allclose(l_ref.astype(nl.float32), l_test.astype(nl.float32), atol=0.01, rtol=0.001):
+      print(f"FAIL at q_tile_idx={q_tile_idx}: l_ref != l_test")
+      print("l_ref", l_ref.astype(nl.float32)[:5])
+      print("l_test", l_test.astype(nl.float32)[:5])
+      fail = True
+    if not np.allclose(m_ref.astype(nl.float32), m_test.astype(nl.float32), atol=0.01, rtol=0.001):
+      print(f"FAIL at q_tile_idx={q_tile_idx}: m_ref != m_test")
+      print("m_ref", m_ref.astype(nl.float32)[:5])
+      print("m_test", m_test.astype(nl.float32)[:5])
+      fail = True
+    if fail:
+      return False
+    
+    print(f"  ✓ q_tile_idx={q_tile_idx} passed")
+  
+  return True
+
+def benchmark_nki(nki_func):
+  """Benchmark the flash attention kernel"""
+  B_P_SIZE = 128
+  B_D_SIZE = 128
+  B_F_SIZE = 512
+  Q_TILE_SIZE = 128
+  seq_tile_size = 16384
+  num_q_tiles = seq_tile_size // B_P_SIZE
+
+  # Generate random data for benchmarking
+  q = np.random.rand(B_D_SIZE, seq_tile_size).astype(np.float32)
+  k = np.random.rand(B_D_SIZE, seq_tile_size).astype(np.float32)
+  v = np.random.rand(B_P_SIZE, seq_tile_size // B_P_SIZE, B_D_SIZE).astype(np.float32)
+  olm_prev = np.random.rand(Q_TILE_SIZE, B_D_SIZE + 2).astype(np.float32)
+  test_indices = [0, num_q_tiles // 2, num_q_tiles - 1]
+  p99_list = []
+  for q_tile_idx in test_indices:
+    # Generate causal tile mask for this query tile
+    tile_mask = np.zeros((B_P_SIZE, seq_tile_size), dtype=bool)
+    for i in range(B_P_SIZE):
+      q_pos = q_tile_idx * B_P_SIZE + i
+      tile_mask[i, :q_pos + 1] = True
+    
+    bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
+    bench_func(q, k, v, olm_prev,
+               kernel_dtype=nl.bfloat16,
+               acc_type=nl.float32,
+               tile_mask=tile_mask,
+               q_tile_idx=q_tile_idx,
+               Q_TILE_SIZE=B_P_SIZE,
+               LARGE_KV_TILE_SIZE=seq_tile_size,
+               B_P_SIZE=B_P_SIZE,
+               B_F_SIZE=B_F_SIZE,
+               B_D_SIZE=B_D_SIZE)
+    latency_res = bench_func.benchmark_result.nc_latency
+    p99 = latency_res.get_latency_percentile(99)
+    p99_list.append(p99)
+    print(f"{p99 / 1000.0} ms (P99) for q_tile_idx={q_tile_idx}")
+
+  print("Latency: {:.3f} ms (P99)".format(np.mean(p99_list) / 1000.0))
+
+if __name__ == "__main__":
+  test_result = test_nki(_flash_attention_core, test)
+  if not test_result:
+    print("Test failed")
+    exit(1)
+  else:
+    print("Running benchmark...")
+    benchmark_nki(test)

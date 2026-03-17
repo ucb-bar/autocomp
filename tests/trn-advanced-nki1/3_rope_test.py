@@ -1,5 +1,12 @@
+import numpy as np
+import neuronxcc.nki as nki
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+
+# SUBSTITUTE HERE
+
 @nki.jit
-def test(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
+def ref(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
     def RoPE_sbuf(x_in_sb, cos_sb, sin_sb, x_out_sb):
         d_head, S = x_in_sb.shape
         assert d_head <= 128
@@ -93,3 +100,45 @@ def test(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
         nl.store(x_out[i_odd, i_S + tile_offset_S], x_out_sb[i_lower, i_S])
 
     return x_out
+
+
+
+def test_nki(ref_func, test_func):
+    """
+    Test function to compare reference and test implementations of RoPE.
+    
+    Args:
+        ref_func: Reference implementation function (pure NumPy)
+        test_func: Test implementation function to validate (NKI kernel)
+        
+    Returns:
+        bool: True if test passes, False otherwise
+    """
+    for _ in range(2):
+        x_in = np.random.rand(128, 4096).astype(np.float32)
+        cos  = np.random.rand(64, 4096).astype(np.float32)
+        sin  = np.random.rand(64, 4096).astype(np.float32)
+        ref_out  = ref_func(x_in, cos, sin)
+        test_out = test_func(x_in, cos, sin)
+        if not np.allclose(test_out, ref_out, atol=1e-4, rtol=1e-2):
+            return False
+    return True
+
+def benchmark_nki(nki_func):
+    x_in = np.random.rand(128, 4096).astype(np.float32)
+    cos  = np.random.rand(64, 4096).astype(np.float32)
+    sin  = np.random.rand(64, 4096).astype(np.float32)
+    bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
+    bench_func(x_in, cos, sin)
+    latency_res = bench_func.benchmark_result.nc_latency
+    p99 = latency_res.get_latency_percentile(99)
+    print("Latency: {:.3f} ms (P99)".format(p99 / 1000.0))
+
+if __name__ == "__main__":
+    test_result = test_nki(ref, test)
+    if not test_result:
+        print("Test failed")
+        exit(1)
+    else:
+        print("Test passed")
+        benchmark_nki(test)

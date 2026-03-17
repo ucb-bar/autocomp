@@ -1,7 +1,19 @@
-def div_ceil(n, d):
+
+import math
+import neuronxcc.nki as nki
+import numpy as np
+import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+from neuronxcc.nki.language import par_dim
+from neuronxcc.nki.language.constants import sizeinbytes
+from typing import Optional
+
+# SUBSTITUTE HERE
+
+def div_ceil_ref(n, d):
   return (n + d - 1) // d
 
-def create_indices(*tripcounts):
+def create_indices_ref(*tripcounts):
   rank = len(tripcounts)
   # rank needs to be reduced by 1 if last dim is 1
   # Note: may need to find all 1s toward the end
@@ -23,27 +35,27 @@ def create_indices(*tripcounts):
     cur_rank += 1
   return indices
 
-def transpose_to_last_dim(src, dim, dst=None):
+def transpose_to_last_dim_ref(src, dim, dst=None):
   if dst is None:
-    new_shape = get_3d_shape(src, dim)
+    new_shape = get_3d_shape_ref(src, dim)
     transposed_shape = (new_shape[0], new_shape[2], new_shape[1])
     dst = nl.ndarray(shape=transposed_shape, buffer=nl.hbm, dtype=src.dtype)
-  transpose_to_last_dim_kernel(src, dim, dst)
+  transpose_to_last_dim_kernel_ref(src, dim, dst)
   return dst
 
-def transpose_to_last_dim_kernel(ref, dim, dst):
+def transpose_to_last_dim_kernel_ref(ref, dim, dst):
   assert len(ref.shape) >= 2
   assert dim != len(ref.shape) - 1
 
-  ref = ref.reshape(get_3d_shape(ref, dim))
+  ref = ref.reshape(get_3d_shape_ref(ref, dim))
   transposed_shape = (ref.shape[0], ref.shape[2], ref.shape[1])
   transpose_nonlocal = dst.reshape(transposed_shape)
 
   D0, B, N = ref.shape
   B_tile_size = min(128, B)
   N_tile_size = min(128, N)
-  B_num_tiles = div_ceil(B, B_tile_size)
-  N_num_tiles = div_ceil(N, N_tile_size)
+  B_num_tiles = div_ceil_ref(B, B_tile_size)
+  N_num_tiles = div_ceil_ref(N, N_tile_size)
   for d0 in nl.affine_range(D0):
     for b_out_tile in nl.affine_range(B_num_tiles):
       for n_out_tile in nl.affine_range(N_num_tiles):
@@ -65,20 +77,20 @@ def transpose_to_last_dim_kernel(ref, dim, dst):
         nl.store(transpose_nonlocal[d0, n_out_tile * N_tile_size + p, b_out_tile * B_tile_size + q], transposed_local[p, q], mask=mask)
 
 
-def get_3d_shape(ref, dim):
+def get_3d_shape_ref(ref, dim):
   new_shape = [int(np.prod(ref.shape[:dim])),
                 ref.shape[dim],
                 int(np.prod(ref.shape[dim+1:]))]
   return new_shape
 
 # get the shape after applying dilation on the filter, 
-def canonicalize_filter_shape(H_f, W_f, rhs_dilation=None):
+def canonicalize_filter_shape_ref(H_f, W_f, rhs_dilation=None):
   if rhs_dilation:
     H_f = (H_f - 1) * rhs_dilation[0] + 1
     W_f = (W_f - 1) * rhs_dilation[1] + 1
   return H_f, W_f
 
-def replication_factor(rep_from, rep_to, dilation=1):
+def replication_factor_ref(rep_from, rep_to, dilation=1):
   max_rep = 0
   for i in range(rep_from, 0, -1):
     if i * rep_to <= 128 and i % dilation == 0:
@@ -86,12 +98,12 @@ def replication_factor(rep_from, rep_to, dilation=1):
       break
   return max(max_rep, 1)
 
-def tile(tripcount, tile_size):
+def tile_ref(tripcount, tile_size):
   if not tile_size:
     return tripcount, 1, 0
-  return div_ceil(tripcount, tile_size), min(tripcount, tile_size), tile_size // tripcount
+  return div_ceil_ref(tripcount, tile_size), min(tripcount, tile_size), tile_size // tripcount
 
-def tile_with_stride(tripcount, size, stride):
+def tile_with_stride_ref(tripcount, size, stride):
   if size < stride:
     # not enlarge size if:
     # (1) only the first elem is accessed in each tile
@@ -99,18 +111,16 @@ def tile_with_stride(tripcount, size, stride):
     return tripcount, 1, 0
   if size % stride != 0:
   # adjust tilesize so that stride will not across two tiles
-    size = div_ceil(size, stride) * stride
-  n_tiles, tile_size, remaining = tile(tripcount, size)
+    size = div_ceil_ref(size, stride) * stride
+  n_tiles, tile_size, remaining = tile_ref(tripcount, size)
   assert tile_size % stride == 0, "wrong tilesize for striding"
   return n_tiles, tile_size, remaining
-
 
 def is_negative_padding(padding):
   return any([p < 0 for p in padding])
 
-
 @nki.jit
-def test(img_ref, filter_ref, **kwargs):
+def ref(img_ref, filter_ref, **kwargs):
     
     padding = kwargs['padding']
     H_padding_l, H_padding_r = padding[0]
@@ -140,7 +150,7 @@ def test(img_ref, filter_ref, **kwargs):
     
     C_out, C_in, H_f, W_f = filter_ref.shape
     _weight = nl.ndarray(shape=(C_in, H_f, W_f, C_out), dtype=kernel_dtype, buffer=nl.hbm, name='weight_transposed')
-    transpose_to_last_dim(filter_ref.reshape((C_out, C_in*H_f*W_f)), dim=0, dst=_weight)
+    transpose_to_last_dim_ref(filter_ref.reshape((C_out, C_in*H_f*W_f)), dim=0, dst=_weight)
 
     # transpose to 3, 0, 1, 2 - C_in, H, W, N
   
@@ -149,7 +159,7 @@ def test(img_ref, filter_ref, **kwargs):
     _ifmap = img_ref
 
     
-    canonical_H_f, canonical_W_f = canonicalize_filter_shape(H_f, W_f, rhs_dilation)
+    canonical_H_f, canonical_W_f = canonicalize_filter_shape_ref(H_f, W_f, rhs_dilation)
     
     # Create output tensor internally
     # Determine output shape based on input shapes and parameters
@@ -174,15 +184,15 @@ def test(img_ref, filter_ref, **kwargs):
     # need to add tiling to remove the belowed restriction
     # avoid predicates in the inner tile of replication if we have dilation in rhs
     #  instead, allow tiling on the outer tile of replication
-    H_REP = replication_factor(canonical_H_f, C_in, rhs_dilation[0])
+    H_REP = replication_factor_ref(canonical_H_f, C_in, rhs_dilation[0])
     # either no replication or divisible
     assert H_REP == 1 or H_REP % rhs_dilation[0] == 0
 
    
-    H_OUTER_NUM_TILES, H_OUTER_TILE_SIZES, _ = tile(canonical_H_f, H_REP)
+    H_OUTER_NUM_TILES, H_OUTER_TILE_SIZES, _ = tile_ref(canonical_H_f, H_REP)
 
     # computation tiles
-    COUT_NUM_TILES, COUT_TILE_SIZES, _ = tile(C_out, 128)
+    COUT_NUM_TILES, COUT_TILE_SIZES, _ = tile_ref(C_out, 128)
 
     # tiling for lhs
     tile_size = 512
@@ -194,21 +204,21 @@ def test(img_ref, filter_ref, **kwargs):
     N_OUTER_NUM_TILES, N_OUTER_TILE_SIZES = N, 1
 
 
-    K1_NUM_TILES, K1_TILE_SIZES, tile_size = tile(K1, tile_size)
-    K0_NUM_TILES, K0_TILE_SIZES, _ = tile_with_stride(K0*h_stride, tile_size, h_stride)
+    K1_NUM_TILES, K1_TILE_SIZES, tile_size = tile_ref(K1, tile_size)
+    K0_NUM_TILES, K0_TILE_SIZES, _ = tile_with_stride_ref(K0*h_stride, tile_size, h_stride)
     if K0_TILE_SIZES == 1: # stride happens inter tile
         K0_COMP_NUM_TILES, K0_COMP_TILE_SIZES = K0, 1
         h_stride_intra_tile = h_stride
 
     else:                  # stride happens intra tile
-        K0_COMP_NUM_TILES, K0_COMP_TILE_SIZES = K0_NUM_TILES, div_ceil(K0_TILE_SIZES, h_stride)
+        K0_COMP_NUM_TILES, K0_COMP_TILE_SIZES = K0_NUM_TILES, div_ceil_ref(K0_TILE_SIZES, h_stride)
         h_stride_intra_tile = 1
 
     # prefetching tiles
     # only tile on prefetching W_f for simplicity
     PREFETCH_TILE_SIZE = 512*16 # TODO: pick a better tile size here
     WF_NUM_TILES, WF_TILE_SIZES = (W_f, 1) if C_out > PREFETCH_TILE_SIZE / 2 else \
-        (div_ceil(W_f, PREFETCH_TILE_SIZE // C_out), min(W_f, PREFETCH_TILE_SIZE // C_out))
+        (div_ceil_ref(W_f, PREFETCH_TILE_SIZE // C_out), min(W_f, PREFETCH_TILE_SIZE // C_out))
     print(f'W_f: {W_f}: {WF_NUM_TILES} * {WF_TILE_SIZES}')
 
     # for debugging only: we can determine the lhs from above:
@@ -233,7 +243,7 @@ def test(img_ref, filter_ref, **kwargs):
                     for h_rep in nl.affine_range(H_REP):
                         # we cannot handle NEGATIVE padding on i_w because it will result in predicate i_w >= -w_padding_l or i_w < W+W_padding_r and bubble in free dim
                         # so we need to have a tensor copy to make this legal
-                        i_cin, i_k0, i_w, i_n = create_indices(C_in, K0_TILE_SIZES, W, N_DMA_TILE_SIZES)
+                        i_cin, i_k0, i_w, i_n = create_indices_ref(C_in, K0_TILE_SIZES, W, N_DMA_TILE_SIZES)
 
                         h = h_outer * H_OUTER_TILE_SIZES + h_rep
                         k0 = k0_tile * K0_TILE_SIZES * h_stride_intra_tile + i_k0
@@ -288,7 +298,7 @@ def test(img_ref, filter_ref, **kwargs):
                             for c_out_tile in nl.affine_range(COUT_NUM_TILES):
                                 ps = nl.zeros(shape=(par_dim(COUT_TILE_SIZES), K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES), dtype=np.float32, buffer=nl.psum, name=f'a0_psum_{name}')
                                 for w in nl.affine_range(WF_TILE_SIZES):
-                                    i_cin, i_k0, i_k1, i_n = create_indices(C_in*H_REP, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
+                                    i_cin, i_k0, i_k1, i_n = create_indices_ref(C_in*H_REP, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
 
                                     k1 = k1_tile * K1_TILE_SIZES + i_k1
                                     n = n_tile * N_COMP_TILE_SIZES + i_n
@@ -308,7 +318,7 @@ def test(img_ref, filter_ref, **kwargs):
                                         img_local[k1 < K1][n < N][wf < W_f],
                                     )
 
-                                i_cout_out, i_k0, i_k1, i_n = create_indices(COUT_TILE_SIZES, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
+                                i_cout_out, i_k0, i_k1, i_n = create_indices_ref(COUT_TILE_SIZES, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
                                 out_sb[c_out_tile, k0_tile, k1_tile, n_tile, i_cout_out, i_k0, i_k1, i_n] += ps[i_cout_out, i_k0, i_k1, i_n]
 
         # storing the compute results
@@ -316,7 +326,7 @@ def test(img_ref, filter_ref, **kwargs):
             for k1_tile in nl.affine_range(K1_NUM_TILES):
                 for n_tile in nl.affine_range(N_COMP_NUM_TILES):
                     for c_out_tile in nl.affine_range(COUT_NUM_TILES):
-                        i_cout, i_k0, i_k1, i_n = create_indices(COUT_TILE_SIZES, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
+                        i_cout, i_k0, i_k1, i_n = create_indices_ref(COUT_TILE_SIZES, K0_COMP_TILE_SIZES, K1_TILE_SIZES, N_COMP_TILE_SIZES)
 
                         c_out = c_out_tile * COUT_TILE_SIZES + i_cout
                         k0 = k0_tile * K0_COMP_TILE_SIZES + i_k0
@@ -333,8 +343,73 @@ def test(img_ref, filter_ref, **kwargs):
     if nchw_out:
         return out_ref
     if out_perm == [2, 3, 0, 1]:
-        transpose_to_last_dim(conv_out, dim=0, dst=out_ref)
+        transpose_to_last_dim_ref(conv_out, dim=0, dst=out_ref)
         return out_ref
     else:
         assert out_perm == [1, 2, 3, 0]
         return out_ref
+
+
+def test_nki(ref_func, test_func):
+    test_configs = [
+        (16, 128, 128, 128, 512, 3, 3, ((1, 1), (1, 1)), (1, 1)),
+    ]
+    for i in range(len(test_configs)):
+        batch_size, in_channels, height, width, out_channels, filter_h, filter_w, padding, stride = test_configs[i]
+        img = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
+        filter_weights = np.random.rand(out_channels, in_channels, filter_h, filter_w).astype(np.float32)
+        result = test_func(img, filter_weights, padding=padding, stride=stride, rhs_dilation=(1, 1), in_perm=[0, 1, 2, 3], kern_perm=[0, 1, 2, 3], out_perm=[0, 1, 2, 3])
+        ref_result = ref_func(img, filter_weights, padding=padding, stride=stride, rhs_dilation=(1, 1), in_perm=[0, 1, 2, 3], kern_perm=[0, 1, 2, 3], out_perm=[0, 1, 2, 3])
+        if not np.allclose(result, ref_result, atol=1e-4, rtol=1e-2):
+            return False
+    return True
+
+def benchmark_nki(nki_func):
+    """
+    Benchmark the conv2d function with various input sizes and configurations.
+    """
+    # Test configurations: (batch_size, in_channels, height, width, out_channels, filter_h, filter_w, padding, stride)
+    test_configs = [
+        (16, 128, 128, 128, 512, 3, 3, ((1, 1), (1, 1)), (1, 1)),
+    ]
+    
+    for i, (batch_size, in_channels, height, width, out_channels, filter_h, filter_w, padding, stride) in enumerate(test_configs):
+        print(f"\nTest {i+1}: Batch={batch_size}, InCh={in_channels}, H={height}, W={width}, OutCh={out_channels}, Filter={filter_h}x{filter_w}, Padding={padding}, Stride={stride}")
+        
+        # Generate random input data
+        img = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
+        filter_weights = np.random.rand(out_channels, in_channels, filter_h, filter_w).astype(np.float32)
+        
+        try:
+            # Benchmark the function
+            bench_func = nki.benchmark(warmup=2, iters=10)(nki_func)
+            result = bench_func(img, filter_weights, 
+                              padding=padding, 
+                              stride=stride,
+                              rhs_dilation=(1, 1),
+                              in_perm=[0, 1, 2, 3],  # NCHW
+                              kern_perm=[0, 1, 2, 3],  # NCHW
+                              out_perm=[0, 1, 2, 3])  # NCHW
+            
+            # Get latency results
+            latency_res = bench_func.benchmark_result.nc_latency
+            p50 = latency_res.get_latency_percentile(50)
+            p99 = latency_res.get_latency_percentile(99)
+            
+            print(f"  P50 Latency: {p50 / 1000.0:.3f} ms")
+            print(f"  P99 Latency: {p99 / 1000.0:.3f} ms")
+            print(f"  Output shape: {result.shape}")
+            
+        except Exception as e:
+            print(f"  Error: {str(e)}")
+    
+
+
+if __name__ == "__main__":
+    test_result = test_nki(ref, test)
+    if not test_result:
+        print("Test failed")
+        exit(1)
+    else:
+        print("Test passed")
+        benchmark_nki(test)
