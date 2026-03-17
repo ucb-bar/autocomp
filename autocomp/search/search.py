@@ -159,6 +159,7 @@ class SearchStrategy:
                  prevent_duplicate_level: int,
                  translate_iters: int,
                  translate_perf_threshold: float,
+                 translate_drop_original: bool,
                  code_agent: LLMEnsemble = None,
                  early_stop_iters: int = 0,
                  early_stop_threshold: float = 1.0,
@@ -182,6 +183,7 @@ class SearchStrategy:
         self.prevent_duplicate_level = prevent_duplicate_level
         self.translate_iters = translate_iters
         self.translate_perf_threshold = translate_perf_threshold
+        self.translate_drop_original = translate_drop_original
         self.early_stop_iters = early_stop_iters
         self.early_stop_threshold = early_stop_threshold
         save_dir = self.output_dir / f"candidates-iter-0"
@@ -497,11 +499,12 @@ class BeamSearchStrategy(SearchStrategy):
                  reimplement_failed: bool,
                  translate_iters: int,
                  translate_perf_threshold: float,
+                 translate_drop_original: bool,
                  code_agent: LLMEnsemble = None,
                  early_stop_iters: int = 0,
                  early_stop_threshold: float = 1.0,
                 ):
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -702,6 +705,8 @@ class BeamSearchStrategy(SearchStrategy):
             # else:
             #     cands_to_filter = improving_candidates + current_candidates
             cands_to_filter = improving_candidates + current_candidates
+            if self.translate_drop_original and i == self.translate_iters:
+                cands_to_filter = [c for c in cands_to_filter if c.parent is not None]
             candidates_for_next_iter = self.filter_code_candidates(cands_to_filter, num_to_keep=self.beam_size, cur_iter=i, num_iters=iterations)
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
@@ -767,6 +772,7 @@ def main():
     # Translation parameters
     translate_iters = 0
     translate_perf_threshold = 1.2
+    translate_drop_original = False
 
     ### BuiltLLMAgent-specific parameters ###
     # Menu strategy
@@ -832,6 +838,8 @@ def main():
         output_str += f"_p{num_plan_candidates}_c{num_code_candidates}_b{beam_size}"
     if translate_iters > 0:
         output_str += f"_tr{translate_iters}_{translate_perf_threshold}"
+        if translate_drop_original:
+            output_str += "_trdrop"
     if give_score_feedback:
         output_str += f"_score{give_score_feedback}"
     if give_util_feedback:
@@ -872,13 +880,13 @@ def main():
     eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate)
 
     if search_strategy == "exhaustive":
-        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
+        optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
     elif search_strategy == "beam":
         optimizer = BeamSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples,
                                        num_analyses=num_analyses, num_plan_candidates=num_plan_candidates, num_code_candidates=num_code_candidates, beam_size=beam_size,
                                        num_pairs_to_combine=num_pairs_to_combine, num_gen_per_combine=num_gen_per_combine, 
                                        dropout_menu_options=dropout_menu_options, trigger_exhaustive_threshold=trigger_exhaustive_threshold, trigger_exhaustive_iters=trigger_exhaustive_iters, start_exhaustive_iters=start_exhaustive_iters,
-                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
+                                       prevent_duplicate_level=prevent_duplicate_level, reimplement_failed=reimplement_failed, translate_iters=translate_iters, translate_perf_threshold=translate_perf_threshold, translate_drop_original=translate_drop_original, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)
 
     # Start the optimization process
     optimizer.optimize(iterations)
