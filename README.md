@@ -36,8 +36,8 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 ## Hardware Target Setup
 
 Autocomp can currently optimize code for the following hardware targets:
-- Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md))
-- TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))
+- AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md))
+- Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
 - CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
