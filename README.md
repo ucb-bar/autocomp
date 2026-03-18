@@ -46,7 +46,7 @@ For instructions on adding a new hardware target, see [ADDING_HARDWARE_SUPPORT.m
 
 ### 🏗️ Agent Builder
 
-You can also automatically create a new hardware-specific agent from documentation sources (local directories, PDFs, and webpages) using the **Agent Builder**:
+You can automatically create a new hardware-specific agent from documentation sources (local directories, PDFs, and webpages) using the **Agent Builder**:
 
 ```bash
 pip install "autocomp[agent-builder]"
