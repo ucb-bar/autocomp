@@ -178,7 +178,7 @@ function openPanel(context: vscode.ExtensionContext, dataDir: string) {
         (async () => {
           const model = await vscode.window.showInputBox({
             prompt: "LLM model for plan summarization. Format: provider::model",
-            placeHolder: "openai::gpt-4o-mini, anthropic::claude-sonnet-4-20250514, aws::us.anthropic.claude-sonnet-4-20250514-v1:0",
+            placeHolder: "openai::gpt-5.4-mini, aws::us.anthropic.claude-haiku-4-5-20251001-v1:0, gcp::gemini-3-flash-preview",
             value: lastModel,
           });
           if (!model) {
