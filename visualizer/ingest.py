@@ -321,7 +321,7 @@ def summarize_plans(run_data: dict, model_str: str, report_progress: bool = Fals
     for batch_start in range(0, total, BATCH_SIZE):
         batch_prompts = prompts[batch_start:batch_start + BATCH_SIZE]
         batch_indices = plan_indices[batch_start:batch_start + BATCH_SIZE]
-        responses = client.chat_async(batch_prompts, num_candidates=1, temperature=0.3)
+        responses = client.chat_async(batch_prompts, num_samples=1, temperature=0.3)
 
         for (iteration, ci), response_list in zip(batch_indices, responses):
             if response_list:
