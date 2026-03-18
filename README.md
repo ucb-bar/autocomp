@@ -37,10 +37,12 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 
 Autocomp can currently optimize code for the following hardware targets:
 - AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md))
-- Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))
+- Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) — uses a [built agent](autocomp/agent_builder/README.md) (`built:tpu-v6e`)
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
 - CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
+
+> **Note:** Not all hardware targets have a handcrafted agent in `autocomp/agents/`. Some targets (like TPU) use agents created by the Agent Builder, stored in `autocomp/agent_builder/.built/`. These work the same way — just set `agent_name = "built:<name>"` in `search.py`.
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
