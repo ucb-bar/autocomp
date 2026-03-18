@@ -27,7 +27,7 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0, cache_dir=None):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -37,6 +37,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         prob: The problem to optimize.
         models: List of model strings for planning.
         code_models: Optional list of model strings for code implementation.
+        cache_dir: Optional directory for agent caches (e.g. ISA/example selection).
     """
     # Create eval backend
     if backend_name == "kernelbench":
@@ -77,8 +78,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
                 f"Available: {available}"
             )
         logger.info("Using built agent from %s", config_dir)
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
@@ -235,10 +236,6 @@ class SearchStrategy:
         logger.info("Initial code scores:")
         for candidate in initial_code_candidates:
             logger.info(candidate.score)
-
-        self.agent.cache_dir = self.output_dir
-        if self.code_agent is not self.agent:
-            self.code_agent.cache_dir = self.output_dir
 
         self._save_run_metadata()
 
@@ -943,7 +940,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=output_dir)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from)

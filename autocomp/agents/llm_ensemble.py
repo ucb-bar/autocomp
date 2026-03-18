@@ -175,14 +175,3 @@ class LLMEnsemble:
     def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
         """Score translation completeness using the first agent in the ensemble."""
         return self.llms[0].score_translation_completeness(original_code, candidates, prob=prob)
-
-    @property
-    def cache_dir(self):
-        return self._cache_dir if hasattr(self, "_cache_dir") else None
-
-    @cache_dir.setter
-    def cache_dir(self, path):
-        self._cache_dir = path
-        for agent in self.llms:
-            if hasattr(agent, "cache_dir"):
-                agent.cache_dir = path
