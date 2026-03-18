@@ -16,7 +16,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from autocomp.search.code_repo import CodeCandidate
+try:
+    from autocomp.search.code_repo import CodeCandidate
+except ImportError:
+    print("Error: The 'autocomp' Python package is required. "
+          "Install it or run from the autocomp repository root.", file=sys.stderr)
+    sys.exit(1)
 
 
 def parse_run_config(dirname: str, run_dir: Path = None) -> dict:
@@ -279,7 +284,11 @@ def summarize_plans(run_data: dict, model_str: str, report_progress: bool = Fals
     else:
         provider, model_name = None, parts[0]
 
-    from autocomp.common.llm_utils import LLMClient
+    try:
+        from autocomp.common.llm_utils import LLMClient
+    except ImportError:
+        print("Error: Plan summarization requires the 'autocomp' package with LLM utilities.", file=sys.stderr)
+        sys.exit(1)
     client = LLMClient(model=model_name, provider=provider)
 
     prompts = []

@@ -1,13 +1,34 @@
 {
   "name": "autocomp-visualizer",
   "displayName": "Autocomp Trace Visualizer",
-  "description": "Visualize Autocomp beam search optimization traces",
-  "version": "0.1.0",
-  "publisher": "autocomp",
+  "description": "Visualize beam search optimization traces from Autocomp — interactive score charts, beam trees, code diffs, and plan summaries.",
+  "version": "0.1.1",
+  "publisher": "charleshong3",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ucb-bar/autocomp",
+    "directory": "visualizer"
+  },
+  "homepage": "https://github.com/ucb-bar/autocomp/tree/main/visualizer#readme",
+  "bugs": {
+    "url": "https://github.com/ucb-bar/autocomp/issues"
+  },
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Visualization"],
+  "categories": [
+    "Visualization",
+    "Data Science"
+  ],
+  "keywords": [
+    "autocomp",
+    "beam search",
+    "optimization",
+    "trace",
+    "visualizer"
+  ],
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
@@ -29,13 +50,14 @@
     "watch:webview": "vite build --watch",
     "watch:ext": "esbuild src/extension/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js --sourcemap --watch",
     "watch": "concurrently \"npm run watch:webview\" \"npm run watch:ext\"",
-    "package": "vsce package"
+    "package": "npm run build && vsce package"
   },
   "devDependencies": {
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/vscode": "^1.85.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vscode/vsce": "^3.0.0",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.0",
     "esbuild": "^0.24.0",

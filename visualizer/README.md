@@ -1,35 +1,54 @@
 # Autocomp Trace Visualizer
 
-VS Code extension for visualizing Autocomp beam search optimization traces.
+A VS Code extension for visualizing [Autocomp](https://github.com/ucb-bar/autocomp) beam search optimization traces. Explore how LLM-driven code optimization progresses across iterations — from plan proposals to score improvements.
 
 ## Features
 
-- **Score Progression Chart**: Interactive SVG chart showing individual candidate lineage traces across iterations
-- **Beam Tree**: Visual tree of the beam search with ancestor/descendant highlighting
-- **Native Code Diff**: Click any candidate to open a VS Code diff tab comparing it to its parent
-- **Plan Summaries**: View optimization plan details and model attributions
+- **Score Progression Chart** — Interactive SVG chart plotting individual candidate lineage traces across iterations. Click any point to inspect the candidate.
+- **Beam Tree** — Visual tree showing beam search ancestry with score-based coloring. Selecting a node highlights its ancestors and descendants.
+- **Code Diff** — Compare any candidate against its ancestors using VS Code's native diff viewer. Choose which ancestor to diff against from a dropdown.
+- **Candidate Summary** — View optimization plans, model attributions (plan and code models), and score improvements for each candidate.
+- **AI Plan Summaries** — Generate concise one-line summaries of optimization plans using an LLM (requires the `autocomp` Python package).
+- **Run Config** — Expandable panel showing all run metadata (beam size, models, metric, etc.) — automatically populated from `run_metadata.json`.
 
-## Usage
+## Getting Started
 
-1. Run your Autocomp optimization to produce an output directory
-2. Ingest the data: use **"Autocomp: Ingest & Open Traces"** from the command palette (requires Python 3 and the autocomp repo)
-3. Or if you already have ingested JSON data, use **"Autocomp: Open Traces"** and select the directory containing `runs.json`
+### Prerequisites
+
+- Python 3.10+ with the [`autocomp`](https://github.com/ucb-bar/autocomp) package installed (for data ingestion and plan summarization)
+- An Autocomp output directory from a completed optimization run
+
+### Usage
+
+1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+2. Run **"Autocomp: Ingest & Open Traces"** and select your Autocomp `output/` directory
+3. The extension ingests the run data and opens the visualizer
+
+If you've already ingested data, use **"Autocomp: Open Traces"** and select the directory containing `runs.json`.
+
+### Plan Summarization
+
+Click the **"Summarize Plans with AI"** button in the run detail view to generate short summaries for each optimization plan. You'll be prompted for an LLM model in `provider::model` format:
+
+- `openai::gpt-4o-mini`
+- `anthropic::claude-sonnet-4-20250514`
+- `aws::us.anthropic.claude-sonnet-4-20250514-v1:0`
+
+This requires the `autocomp` Python package and appropriate API credentials.
 
 ## Development
 
 ```bash
+cd visualizer
 npm install
 npm run build        # Build webview + extension
 npm run watch        # Watch mode for both
 ```
 
-Press **F5** in VS Code to launch the Extension Development Host for testing.
+Press **F5** in VS Code to launch the Extension Development Host.
 
 ## Packaging
 
 ```bash
-npm run build
-npx vsce package
+npm run package      # Builds and creates .vsix
 ```
-
-This produces a `.vsix` file you can share or publish to the VS Code Marketplace.
