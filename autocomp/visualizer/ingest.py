@@ -3,8 +3,8 @@
 Ingest Autocomp output directories into clean JSON for the visualizer.
 
 Usage:
-    python ingest.py /path/to/output --model openai::gpt-4o-mini
-    python ingest.py /path/to/output --no-summarize
+    python -m autocomp.visualizer.ingest /path/to/output --model openai::gpt-4o-mini
+    python -m autocomp.visualizer.ingest /path/to/output --no-summarize
 """
 
 import argparse
@@ -14,14 +14,9 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from autocomp.search.code_repo import CodeCandidate
 
-try:
-    from autocomp.search.code_repo import CodeCandidate
-except ImportError:
-    print("Error: The 'autocomp' Python package is required. "
-          "Install it or run from the autocomp repository root.", file=sys.stderr)
-    sys.exit(1)
+SCHEMA_VERSION = 1
 
 
 def parse_run_config(dirname: str, run_dir: Path = None) -> dict:
@@ -267,6 +262,7 @@ def ingest_run(run_dir: Path) -> dict | None:
         speedup = round(original_score / best_score, 2)
 
     return {
+        "schema_version": SCHEMA_VERSION,
         "run_id": dirname,
         "config": config,
         "original_score": original_score,
@@ -284,11 +280,7 @@ def summarize_plans(run_data: dict, model_str: str, report_progress: bool = Fals
     else:
         provider, model_name = None, parts[0]
 
-    try:
-        from autocomp.common.llm_utils import LLMClient
-    except ImportError:
-        print("Error: Plan summarization requires the 'autocomp' package with LLM utilities.", file=sys.stderr)
-        sys.exit(1)
+    from autocomp.common.llm_utils import LLMClient
     client = LLMClient(model=model_name, provider=provider)
 
     prompts = []
@@ -321,7 +313,7 @@ def summarize_plans(run_data: dict, model_str: str, report_progress: bool = Fals
     for batch_start in range(0, total, BATCH_SIZE):
         batch_prompts = prompts[batch_start:batch_start + BATCH_SIZE]
         batch_indices = plan_indices[batch_start:batch_start + BATCH_SIZE]
-        responses = client.chat_async(batch_prompts, num_candidates=1, temperature=0.3)
+        responses = client.chat_async(batch_prompts, num_samples=1, temperature=0.3)
 
         for (iteration, ci), response_list in zip(batch_indices, responses):
             if response_list:
@@ -362,7 +354,7 @@ def main():
     parser.add_argument("--no-summarize", action="store_true",
                         help="Skip plan summarization even if --model is set")
     parser.add_argument("--out", default=None,
-                        help="Output directory (default: visualizer/public/data/)")
+                        help="Output directory for JSON data")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -370,7 +362,10 @@ def main():
         print(f"Error: {output_dir} does not exist")
         sys.exit(1)
 
-    out_dir = Path(args.out) if args.out else Path(__file__).parent / "public" / "data"
+    if args.out:
+        out_dir = Path(args.out)
+    else:
+        out_dir = output_dir / ".visualizer-data"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_dirs = sorted([
@@ -413,7 +408,7 @@ def main():
 
     index_file = out_dir / "runs.json"
     with open(index_file, "w") as f:
-        json.dump(runs_index, f, indent=2)
+        json.dump({"schema_version": SCHEMA_VERSION, "runs": runs_index}, f, indent=2)
     print(f"\nWrote index: {index_file} ({len(runs_index)} runs)")
 
 
