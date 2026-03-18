@@ -428,9 +428,9 @@ class ExhaustiveSearchStrategy(SearchStrategy):
     implementations in parallel batches.
     """
     def __init__(self, *args, plans_per_option: int = 1, num_code_candidates: int = 1, **kwargs):
-        super().__init__(*args, **kwargs)
         self.plans_per_option = plans_per_option
         self.num_code_candidates = num_code_candidates
+        super().__init__(*args, **kwargs)
 
     def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path,
                                    cur_iter: int = None, num_iters: int = None) -> list[CodeCandidate]:
