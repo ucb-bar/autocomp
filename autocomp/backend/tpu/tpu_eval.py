@@ -1,3 +1,4 @@
+"""TPU evaluation backend -- see tpu_setup.md for setup and usage."""
 import os
 import pathlib
 import subprocess
@@ -58,6 +59,7 @@ def _ensure_tpu_vm_running(
 
 
 class TpuHardwareBackend(EvalBackend):
+	"""SSH/SCP transport layer for TPU VMs (gcloud or direct SSH)."""
 	def __init__(
 		self,
 		tpu_name: str | None = None,
@@ -189,12 +191,14 @@ class TpuHardwareBackend(EvalBackend):
 
 
 class TpuEvalBackend(TpuHardwareBackend):
+	"""Batch code evaluation on TPU VMs with harness-based correctness and benchmarking."""
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self._jax_setup_done = False
 
 	def ensure_tpu_vm(self) -> None:
+		"""Create the TPU VM if it doesn't exist (gcloud only; no-op for direct SSH)."""
 
 		#if direct ssh
 		if self._transport_mode() != "gcloud":
@@ -211,6 +215,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		self._tpu_vm_checked = True
 
 	def _extract_latency(self, output_text: str) -> float | None:
+		"""Parse 'Latency: X.XXX ms' or 'Pallas Latency: X.XXX ms' from stdout."""
 		lines = output_text.split("\n")
 		for line in lines:
 			if "Latency:" in line and "ms" in line:
@@ -228,6 +233,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return None
 
 	def _extract_util_percent(self, output_text: str) -> float | None:
+		"""Parse 'Utilization: X.XX%' (or similar) from stdout/stderr."""
 		for line in output_text.split("\n"):
 			l = line.strip()
 			if not l:
@@ -253,14 +259,13 @@ class TpuEvalBackend(TpuHardwareBackend):
 			return stdout_text, None
 
 		block_lines: list[str] = ["", "AUTOCOMP TPU FEEDBACK:"]
-		if util is not None:
-			block_lines.append(f"util: {util}%")
+		block_lines.append(f"util: {util}%")
 		block_lines.append("END AUTOCOMP TPU FEEDBACK")
 		block = "\n".join(block_lines) + "\n"
 		return stdout_text + block, util
 
 	def _run_scp(self, local_path: pathlib.Path, remote_path: str) -> subprocess.CompletedProcess:
-		#upload file to tpu
+		"""Upload a local file to the TPU VM via SCP."""
 		if not local_path.exists():
 			raise FileNotFoundError(f"Local file to scp not found: {local_path}")
 		local_arg = local_path.resolve().as_posix()
@@ -283,6 +288,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return proc
 
 	def _run_ssh(self, remote_command: str) -> subprocess.CompletedProcess:
+		"""Execute a command on the TPU VM via SSH."""
 		cmd = self._build_ssh_cmd(remote_command=remote_command, allocate_tty=False, batch_mode=True)
 		logger.debug("Running command %s", " ".join(cmd))
 		return subprocess.run(cmd, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
@@ -294,6 +300,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return f"/tmp/autocomp_eval/{run_id}"
 
 	def _remote_run_python_to_files_command(self, remote_filename: str, remote_dir: str, skip_setup: bool = False) -> str:
+		"""Build a shell command that runs a Python script on the TPU, capturing stdout/stderr to files."""
 		prog_stdout = f"{remote_dir}/program_stdout.txt"
 		prog_stderr = f"{remote_dir}/program_stderr.txt"
 		exit_code = f"{remote_dir}/program_exit_code.txt"
@@ -343,6 +350,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return "\n".join(harness_lines)
 
 	def run_file_on_tpu(self, file_path: str | pathlib.Path, remote_filename: str = "remote_upload.py") -> dict:
+		"""Upload and run a single Python file on the TPU VM, returning a result dict."""
 		
 		self.ensure_tpu_vm()
 		local_file = pathlib.Path(file_path)
@@ -426,11 +434,11 @@ class TpuEvalBackend(TpuHardwareBackend):
 		proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
 		return proc.stdout or ""
 
-	_BATCH_DELIM_START = "===AUTOCOMP_CANDIDATE_START==="
-	_BATCH_DELIM_END = "===AUTOCOMP_CANDIDATE_END==="
+	_BATCH_DELIM_START = "===AUTOCOMP_IMPL_START==="
+	_BATCH_DELIM_END = "===AUTOCOMP_IMPL_END==="
 
 	def _build_batch_script(self, code_strs: list[str], harness_text: str) -> str:
-		"""Build a single Python script that evaluates all candidates in one process."""
+		"""Build a single Python script that evaluates all implementations in one process."""
 		import base64
 		encoded = [base64.b64encode(code.encode()).decode() for code in code_strs]
 
@@ -445,7 +453,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 			f"DELIM_START = {self._BATCH_DELIM_START!r}",
 			f"DELIM_END = {self._BATCH_DELIM_END!r}",
 			"",
-			"CANDIDATE_SOURCES = [",
+			"IMPL_SOURCES = [",
 		]
 		for b64 in encoded:
 			script_lines.append(f'    "{b64}",')
@@ -468,12 +476,12 @@ class TpuEvalBackend(TpuHardwareBackend):
 		script_lines.append("""
 _shared_globals = {
     k: v for k, v in globals().items()
-    if not k.startswith("_") and k != "CANDIDATE_SOURCES"
+    if not k.startswith("_") and k != "IMPL_SOURCES"
 }
 
-for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
+for _idx, _b64 in enumerate(IMPL_SOURCES):
     print(DELIM_START, flush=True)
-    print(f"CANDIDATE_IDX={_idx}", flush=True)
+    print(f"IMPL_IDX={_idx}", flush=True)
     try:
         _src = base64.b64decode(_b64).decode()
         _ns = dict(_shared_globals)
@@ -493,20 +501,20 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 """)
 		return "\n".join(script_lines)
 
-	def _parse_batch_output(self, stdout: str, stderr: str, num_candidates: int) -> list[dict]:
-		"""Parse the delimited output from a batch run into per-candidate results."""
+	def _parse_batch_output(self, stdout: str, stderr: str, num_impls: int) -> list[dict]:
+		"""Parse the delimited output from a batch run into per-implementation results."""
 		results = []
 		sections = stdout.split(self._BATCH_DELIM_START)
 		# First section is before any delimiter (preamble), skip it.
-		candidate_outputs = []
+		impl_outputs = []
 		for section in sections[1:]:
 			end_idx = section.find(self._BATCH_DELIM_END)
 			if end_idx != -1:
-				candidate_outputs.append(section[:end_idx])
+				impl_outputs.append(section[:end_idx])
 			else:
-				candidate_outputs.append(section)
+				impl_outputs.append(section)
 
-		for idx in range(num_candidates):
+		for idx in range(num_impls):
 			result_dict = {
 				"correct": False,
 				"latency": None,
@@ -514,22 +522,22 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 				"stderr": stderr,
 				"util": None,
 			}
-			if idx < len(candidate_outputs):
-				cand_stdout = candidate_outputs[idx].strip()
+			if idx < len(impl_outputs):
+				impl_stdout = impl_outputs[idx].strip()
 				enriched, util = self._append_autocomp_hw_feedback_block(
-					stdout_text=cand_stdout, stderr_text=stderr
+					stdout_text=impl_stdout, stderr_text=stderr
 				)
 				result_dict["stdout"] = enriched
 				result_dict["util"] = util
-				latency = self._extract_latency(cand_stdout)
-				if latency is not None and "FAIL" not in cand_stdout and "ERROR" not in cand_stdout:
+				latency = self._extract_latency(impl_stdout)
+				if latency is not None and "FAIL" not in impl_stdout and "ERROR" not in impl_stdout:
 					result_dict["correct"] = True
 					result_dict["latency"] = latency
 			results.append(result_dict)
 		return results
 
 	def _evaluate_code_batch(self, prob: Prob, code_strs: list[str], eval_dir: pathlib.Path) -> list[dict] | None:
-		"""Run all candidates in a single remote Python process.
+		"""Run all implementations in a single remote Python process.
 
 		Returns parsed results on success, or None if the batch
 		infrastructure itself failed (so the caller can fall back).
@@ -574,15 +582,16 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 			f.write(prog_stderr)
 
 		if self._BATCH_DELIM_START not in prog_stdout:
-			logger.warning("Batch produced no candidate output; will retry individually")
+			logger.warning("Batch produced no implementation output; will retry individually")
 			return None
 
 		self._jax_setup_done = True
 		return self._parse_batch_output(prog_stdout, prog_stderr, len(code_strs))
 
 	def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> List[dict]:
+		"""Evaluate implementations on TPU. Tries batch first; falls back to individual runs."""
 		self.ensure_tpu_vm()
-		logger.info("Evaluating %d candidate(s) on TPU for %s (prob %s/%s)",
+		logger.info("Evaluating %d implementation(s) on TPU for %s (prob %s/%s)",
 					len(code_strs), self.tpu_name, prob.prob_type, prob.prob_id)
 
 		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -592,7 +601,7 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 		results = self._evaluate_code_batch(prob, code_strs, eval_dir)
 
 		if results is None and len(code_strs) > 1:
-			logger.info("Falling back to individual evaluation for %d candidates", len(code_strs))
+			logger.info("Falling back to individual evaluation for %d implementations", len(code_strs))
 			results = []
 			for idx, code in enumerate(code_strs):
 				single = self._evaluate_code_batch(prob, [code], eval_dir)
@@ -608,10 +617,10 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 
 		for idx, r in enumerate(results):
 			if r["correct"]:
-				logger.info("Candidate %d/%d: %.3f ms (util %.1f%%)",
+				logger.info("Implementation %d/%d: %.3f ms (util %.1f%%)",
 							idx + 1, len(code_strs), r["latency"], r["util"] or 0.0)
 			else:
-				logger.info("Candidate %d/%d: FAIL", idx + 1, len(code_strs))
+				logger.info("Implementation %d/%d: FAIL", idx + 1, len(code_strs))
 
 		num_correct = sum(1 for r in results if r["correct"])
 		latencies = [r["latency"] for r in results if r["latency"] is not None]
@@ -662,10 +671,10 @@ if __name__ == "__main__":
 		t1 = _time.perf_counter()
 
 		print(f"\n{'='*60}")
-		print(f"Evaluated {len(code_strs)} candidates in {t1 - t0:.1f}s")
+		print(f"Evaluated {len(code_strs)} implementations in {t1 - t0:.1f}s")
 		for i, r in enumerate(results):
 			status = f"{r['latency']:.3f} ms (util {r['util'] or 0:.1f}%)" if r['correct'] else "FAIL"
-			print(f"  candidate {i}: {status}")
+			print(f"  impl {i}: {status}")
 		print(f"{'='*60}")
 		sys.exit(0)
 

@@ -75,16 +75,16 @@ class TrnEvalBackend(EvalBackend):
                 out_lines.append(line)
         return '\n'.join(out_lines)
 
-    def _parse_combined_results(self, stdout: str, num_candidates: int) -> list[dict] | None:
+    def _parse_combined_results(self, stdout: str, num_impls: int) -> list[dict] | None:
         """Parse structured JSON results from a combined evaluation script."""
         for line in stdout.split('\n'):
             if line.startswith(COMBINED_RESULTS_MARKER):
                 try:
                     results = json.loads(line[len(COMBINED_RESULTS_MARKER):])
-                    if len(results) == num_candidates:
+                    if len(results) == num_impls:
                         return results
                     logger.error(f"Combined results count mismatch: "
-                                 f"got {len(results)}, expected {num_candidates}")
+                                 f"got {len(results)}, expected {num_impls}")
                     return None
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse combined results JSON: {e}")
@@ -92,19 +92,19 @@ class TrnEvalBackend(EvalBackend):
         return None
 
     # ------------------------------------------------------------------ #
-    #  Candidate file management                                         #
+    #  Implementation file management                                     #
     # ------------------------------------------------------------------ #
 
-    def _write_candidate_files(self, test_code: str, code_strs: list[str],
+    def _write_impl_files(self, test_code: str, code_strs: list[str],
                                temp_dir: pathlib.Path) -> None:
-        """Write each candidate to its own .py file for importlib."""
+        """Write each implementation to its own .py file for importlib."""
         imports_header = self._extract_imports(test_code)
-        candidates_dir = temp_dir / "candidates"
-        candidates_dir.mkdir(parents=True, exist_ok=True)
+        impls_dir = temp_dir / "impls"
+        impls_dir.mkdir(parents=True, exist_ok=True)
         for i, code_str in enumerate(code_strs):
-            with open(candidates_dir / f"candidate_{i}.py", "w") as f:
+            with open(impls_dir / f"impl_{i}.py", "w") as f:
                 f.write(imports_header + "\n" + code_str)
-        with open(candidates_dir / "__init__.py", "w") as f:
+        with open(impls_dir / "__init__.py", "w") as f:
             f.write("")
 
     # ------------------------------------------------------------------ #
@@ -117,8 +117,8 @@ class TrnEvalBackend(EvalBackend):
                                  is_ref: bool = False) -> str:
         """Generate a Python script that compiles a kernel to a NEFF.
 
-        If *is_ref* is True, compiles the reference kernel instead of a
-        candidate.  Strategy: wrap the @nki.jit function with
+        If *is_ref* is True, compiles the reference kernel instead of an
+        implementation.  Strategy: wrap the @nki.jit function with
         nki.baremetal(save_neff_name=...) and call test_nki(wrapped, wrapped)
         to trigger compilation with the correct input shapes.  The NEFF is
         saved to disk during compilation (before execution), so NeuronCore
@@ -137,10 +137,10 @@ _target_func = {ref_func_name}
 '''
         else:
             neff_path = str(
-                (neff_dir / f"candidate_{idx}.neff").resolve())
+                (neff_dir / f"impl_{idx}.neff").resolve())
             func_setup = f'''\
 import importlib
-_mod = importlib.import_module("candidates.candidate_{idx}")
+_mod = importlib.import_module("impls.impl_{idx}")
 _target_func = getattr(_mod, "test", None)
 if _target_func is None:
     print(json.dumps({{"compiled": False, "error": "No test function defined"}}))
@@ -165,7 +165,7 @@ _raw = _target_func.func if hasattr(_target_func, "func") else _target_func
 _bm = nki.baremetal(_raw, save_neff_name=_neff_path)
 
 # Trigger compilation by calling test_nki with the baremetal wrapper as
-# both ref and candidate.  The first call compiles and saves the NEFF;
+# both ref and impl.  The first call compiles and saves the NEFF;
 # execution may fail (NeuronCore contention) but the NEFF is already on disk.
 _error_msg = ""
 try:
@@ -179,19 +179,19 @@ except Exception:
 print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}))
 '''
 
-    def _compile_candidates_parallel(self, test_code: str,
+    def _compile_impls_parallel(self, test_code: str,
                                      code_strs: list[str],
                                      temp_dir: pathlib.Path):
-        """Phase 1: compile ref + all candidates in parallel, save NEFFs.
+        """Phase 1: compile ref + all implementations in parallel, save NEFFs.
 
         Returns (compiled_dict, neff_dir) where compiled_dict maps
-        candidate index → bool indicating whether the NEFF was saved.
+        implementation index -> bool indicating whether the NEFF was saved.
         The ref NEFF is always compiled (needed for Phase 2 correctness).
         """
         neff_dir = temp_dir / "neffs"
         neff_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate compile scripts: ref + all candidates
+        # Generate compile scripts: ref + all implementations
         scripts = {}  # label -> path
 
         ref_script = self._generate_compile_script(
@@ -221,7 +221,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
                 if label == "ref":
                     ok = (neff_dir / "ref.neff").exists()
                 else:
-                    ok = (neff_dir / f"candidate_{label}.neff").exists()
+                    ok = (neff_dir / f"impl_{label}.neff").exists()
 
                 # Extract error from the compile script's JSON output
                 error_msg = ""
@@ -271,7 +271,7 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
     #  Phase 2: Sequential correctness + benchmark via libnrt            #
     # ------------------------------------------------------------------ #
 
-    def _generate_phase2_script(self, test_code: str, num_candidates: int,
+    def _generate_phase2_script(self, test_code: str, num_impls: int,
                                 temp_dir: pathlib.Path,
                                 neff_dir: pathlib.Path,
                                 compiled: dict,
@@ -282,22 +282,22 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         1. Loads the ref NEFF via libnrt (instant, no compilation).
         2. Generates random inputs matching the NEFF's tensor metadata.
         3. Executes the ref NEFF to get reference outputs.
-        4. For each candidate, loads its NEFF, executes with the same
+        4. For each implementation, loads its NEFF, executes with the same
            inputs, and compares outputs for correctness.
-        5. For passing candidates, benchmarks via nrt_execute loop.
+        5. For passing implementations, benchmarks via nrt_execute loop.
 
-        Only one model is loaded at a time (sequential load → execute →
+        Only one model is loaded at a time (sequential load -> execute ->
         cleanup) to avoid NeuronCore contention.
         """
         ref_neff = str((neff_dir / "ref.neff").resolve())
         neff_paths = {}
-        candidate_compile_errors = {}
-        for i in range(num_candidates):
+        impl_compile_errors = {}
+        for i in range(num_impls):
             if compiled.get(i, False):
                 neff_paths[i] = str(
-                    (neff_dir / f"candidate_{i}.neff").resolve())
+                    (neff_dir / f"impl_{i}.neff").resolve())
             else:
-                candidate_compile_errors[i] = compile_errors.get(
+                impl_compile_errors[i] = compile_errors.get(
                     i, "NEFF compilation failed in Phase 1")
 
         return f'''\
@@ -309,9 +309,9 @@ from nrt_helper import NrtModel, nrt_init, nrt_close
 
 _ref_neff = {repr(ref_neff)}
 _neff_paths = {repr(neff_paths)}
-_compile_errors = {repr(candidate_compile_errors)}
-_num_candidates = {num_candidates}
-_all_results = [None] * _num_candidates
+_compile_errors = {repr(impl_compile_errors)}
+_num_impls = {num_impls}
+_all_results = [None] * _num_impls
 _NUM_CORRECTNESS_ROUNDS = 3
 
 nrt_init()
@@ -332,8 +332,8 @@ for _round in range(_NUM_CORRECTNESS_ROUNDS):
 
 _ref_model.cleanup()
 
-# --- Step 2: evaluate each candidate ---
-for _idx in range(_num_candidates):
+# --- Step 2: evaluate each implementation ---
+for _idx in range(_num_impls):
     _result = {{"correct": False, "latency": None, "stdout": "", "stderr": ""}}
 
     if _idx not in _neff_paths:
@@ -341,19 +341,19 @@ for _idx in range(_num_candidates):
         _all_results[_idx] = _result
         continue
 
-    _cand_model = None
+    _impl_model = None
     try:
-        _cand_model = NrtModel(_neff_paths[_idx])
+        _impl_model = NrtModel(_neff_paths[_idx])
 
         # Correctness: run with same inputs, compare outputs
         _passed = True
         for _round in range(_NUM_CORRECTNESS_ROUNDS):
-            _cand_out = _cand_model(*_inputs_per_round[_round])
+            _impl_out = _impl_model(*_inputs_per_round[_round])
             _ref_out = _ref_outputs_per_round[_round]
 
             # Normalise to list of arrays
             _ro = [_ref_out] if isinstance(_ref_out, np.ndarray) else list(_ref_out)
-            _co = [_cand_out] if isinstance(_cand_out, np.ndarray) else list(_cand_out)
+            _co = [_impl_out] if isinstance(_impl_out, np.ndarray) else list(_impl_out)
 
             for _r, _c in zip(_ro, _co):
                 if not np.allclose(
@@ -371,7 +371,7 @@ for _idx in range(_num_candidates):
             continue
 
         # Benchmark via nrt_execute loop
-        _latency = _cand_model.benchmark(warmup=10, iters=100)
+        _latency = _impl_model.benchmark(warmup=10, iters=100)
 
         _result["correct"] = True
         _result["latency"] = round(_latency, 3)
@@ -380,9 +380,9 @@ for _idx in range(_num_candidates):
     except Exception:
         _result["stderr"] = traceback.format_exc()
     finally:
-        if _cand_model is not None:
+        if _impl_model is not None:
             try:
-                _cand_model.cleanup()
+                _impl_model.cleanup()
             except Exception:
                 pass
 
@@ -393,12 +393,12 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
 '''
 
     # ------------------------------------------------------------------ #
-    #  Fallback: single-candidate evaluation                             #
+    #  Fallback: single-implementation evaluation                         #
     # ------------------------------------------------------------------ #
 
     def _evaluate_single(self, test_code: str, code_str: str,
                          temp_dir: pathlib.Path, idx: int) -> dict:
-        """Evaluate a single candidate in its own subprocess (fallback)."""
+        """Evaluate a single implementation in its own subprocess (fallback)."""
         test_code_i = test_code.replace("# SUBSTITUTE HERE", code_str)
         with open(temp_dir / f"code_{idx}.py", "w") as f:
             f.write(test_code_i)
@@ -448,31 +448,31 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                                  temp_dir: pathlib.Path) -> list[dict] | None:
         """Two-phase evaluation: parallel compile then sequential eval.
 
-        Phase 1 – Compile all candidates in parallel via nki.baremetal,
+        Phase 1 – Compile all implementations in parallel via nki.baremetal,
                   saving NEFFs to disk.
         Phase 2 – Load each NEFF via libnrt (instant, no recompilation),
                   run test_nki for correctness, and nrt_execute loop for
                   latency benchmarking.
 
         Returns None on infrastructure failure (caller falls back to
-        per-candidate subprocess evaluation).
+        per-implementation subprocess evaluation).
         """
-        # Write candidate .py files
-        self._write_candidate_files(test_code, code_strs, temp_dir)
+        # Write implementation .py files
+        self._write_impl_files(test_code, code_strs, temp_dir)
 
         # Copy nrt_helper.py into temp_dir so Phase 2 script can import it
         shutil.copy2(_NRT_HELPER_PATH, temp_dir / "nrt_helper.py")
 
-        # Phase 1: parallel compilation (ref + all candidates)
-        logger.info(f"Phase 1: compiling ref + {len(code_strs)} candidates "
+        # Phase 1: parallel compilation (ref + all implementations)
+        logger.info(f"Phase 1: compiling ref + {len(code_strs)} implementations "
                      "in parallel")
         compiled, compile_errors, neff_dir = \
-            self._compile_candidates_parallel(
+            self._compile_impls_parallel(
                 test_code, code_strs, temp_dir)
         compiled_count = sum(1 for k, v in compiled.items()
                              if v and k != "ref")
         logger.info(f"Phase 1 complete: ref={'OK' if compiled.get('ref') else 'FAILED'}, "
-                     f"{compiled_count}/{len(code_strs)} candidate NEFFs saved")
+                     f"{compiled_count}/{len(code_strs)} implementation NEFFs saved")
 
         if not compiled.get("ref"):
             logger.error("Ref NEFF compilation failed, cannot run Phase 2")
@@ -487,7 +487,7 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         with open(phase2_path, "w") as f:
             f.write(phase2_script)
 
-        # ref compilation (~60s) + per-candidate libnrt eval (~10s each)
+        # ref compilation (~60s) + per-implementation libnrt eval (~10s each)
         timeout = 120 + 60 * len(code_strs)
         cmd = ["python", str(phase2_path.resolve())]
         try:
@@ -518,9 +518,9 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
 
     def evaluate_code(self, prob: Prob, code_strs: list[str],
                       simulator: str) -> List[dict]:
-        """Evaluate candidates using parallel NEFF compilation + libnrt.
+        """Evaluate implementations using parallel NEFF compilation + libnrt.
 
-        Phase 1 compiles all candidates in parallel (CPU-bound), saving
+        Phase 1 compiles all implementations in parallel (CPU-bound), saving
         NEFFs to disk.  Phase 2 loads each NEFF via libnrt (no
         recompilation) for correctness and latency benchmarking.
 

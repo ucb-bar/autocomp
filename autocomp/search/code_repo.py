@@ -17,6 +17,7 @@ def copy_candidate(candidate: 'CodeCandidate') -> 'CodeCandidate':
         stdout=candidate.stdout,
         stderr=candidate.stderr
     )
+    new_candidate.translation_score = candidate.translation_score
     return new_candidate
 
 class CodeCandidate:
@@ -33,6 +34,7 @@ class CodeCandidate:
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
+        self.translation_score: float | None = None
         if not code:
             self.implemented = False  # Whether the code has been implemented
             self.code = None
