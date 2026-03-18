@@ -133,7 +133,7 @@ def _extract_model_style(source: str, tree: ast.Module) -> str:
 
 
 def _extract_workload_style(source: str, tree: ast.Module) -> str:
-    """Keep only imports, CONFIG, create_inputs, and workload from a file."""
+    """Keep imports, CONFIG, and all functions (except benchmark) from a file."""
     lines = source.splitlines()
     keep_ranges = []
 
@@ -144,8 +144,8 @@ def _extract_workload_style(source: str, tree: ast.Module) -> str:
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "CONFIG":
                     keep_ranges.append((node.lineno - 1, node.end_lineno))
-        elif isinstance(node, ast.FunctionDef) and node.name in (
-            "create_inputs", "workload",
+        elif isinstance(node, ast.FunctionDef) and node.name not in (
+            "benchmark",
         ):
             keep_ranges.append((node.lineno - 1, node.end_lineno))
 
