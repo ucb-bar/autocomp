@@ -12,6 +12,9 @@ workload_to_kernel_dict = {
 }
 
 prob_to_name = {
+    "trn-asplos": {
+        0: "conv1d",
+    },
     "trn-tutorial": {
         0: "rmsnorm",
         1: "layernorm",

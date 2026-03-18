@@ -806,7 +806,7 @@ def main():
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 8
+    iterations = 3
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
     prob_id = 1
 
@@ -821,7 +821,7 @@ def main():
     # Beam search parameters
     num_plan_candidates=4
     num_code_candidates=2
-    beam_size=4
+    beam_size=3
 
     # Translation parameters
     translate_iters = 0
