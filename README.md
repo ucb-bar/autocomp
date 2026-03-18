@@ -136,7 +136,7 @@ Keys can be omitted if not needed. On startup, Autocomp logs which keys are avai
 
 **Option 2: Google AI Studio (easiest).** Get an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set `GOOGLE_API_KEY`.
 
-If both `GOOGLE_API_KEY` and Vertex AI credentials are set, Vertex AI is used.
+If both Vertex AI credentials and `GOOGLE_API_KEY` are set, Vertex AI is used.
 
 #### AWS Bedrock
 
