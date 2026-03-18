@@ -106,7 +106,7 @@ class LLMEnsemble:
         # Distribute work across models, similarly to how we divide plans, making a total of BEAM_SIZE calls.
         # In each iteration, each candidate is processed by one LLMAgent in the ensemble.
         # Then, the proposed menu options for that candidate are shared with the other LLMAgents in the ensemble.
-        if self.llms[0].menu_strategy is not None:
+        if self.llms[0].menu_strategy is not None and not translate:
             num_to_handle_per_agent = self.divide_work(len(candidate_lst))
             tasks_new_menus = []
             curr_candidate_idx = 0
@@ -123,6 +123,8 @@ class LLMEnsemble:
 
             for llm in self.llms:
                 llm.update_new_menu_cache(new_menu)
+            total_new = sum(len(v) for v in new_menu.values())
+            logger.info("Dynamically generated %d new menu options across %d candidates.", total_new, len(new_menu))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -156,8 +158,7 @@ class LLMEnsemble:
 
     def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
         """
-        Reimplement failed code candidates using stdout/stderr from the last attempt.
-        This method is parallelized across multiple LLM agents.
+        Reimplement failed implementations using stdout/stderr from the last attempt.
         """
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -170,3 +171,18 @@ class LLMEnsemble:
         for result in self._run_parallel(tasks):
             cands.extend(result)
         return cands
+
+    def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
+        """Score translation completeness using the first agent in the ensemble."""
+        return self.llms[0].score_translation_completeness(original_code, candidates, prob=prob)
+
+    @property
+    def cache_dir(self):
+        return self._cache_dir if hasattr(self, "_cache_dir") else None
+
+    @cache_dir.setter
+    def cache_dir(self, path):
+        self._cache_dir = path
+        for agent in self.llms:
+            if hasattr(agent, "cache_dir"):
+                agent.cache_dir = path

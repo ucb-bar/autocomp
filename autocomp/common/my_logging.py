@@ -8,6 +8,10 @@ import sys
 import pathlib
 logging.getLogger('matplotlib.font_manager').disabled = True
 
+for _noisy in ('httpx', 'httpcore', 'openai', 'anthropic', 'boto3',
+               'botocore', 'urllib3', 'google', 'google_genai', 'paramiko'):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 LOG_DIR = pathlib.Path(__file__).parent.parent.parent.resolve() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 

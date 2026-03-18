@@ -12,6 +12,7 @@ To add a new hardware target, you need to:
 4. [**Register the hardware target**](ADDING_HARDWARE_SUPPORT.md#step-4-register-the-hardware-target) - Add instantiation logic in `search.py`
 5. [**Create setup documentation**](ADDING_HARDWARE_SUPPORT.md#step-5-create-setup-documentation) - Setup instructions for users
 6. [**Update README**](ADDING_HARDWARE_SUPPORT.md#step-6-update-readme) - Add your hardware target to the README
+7. [**Add problems**](ADDING_HARDWARE_SUPPORT.md#step-7-add-problems) - Define problems to optimize (this is backend-specific)
 
 ## Step 1: Create a Hardware Config Class
 
@@ -257,6 +258,20 @@ Add your hardware target to the README.md:
 1. **Hardware Target Setup section**: Add link to your setup file
 2. **Usage section**: Document your `backend_name`, simulator options, and problem types
 3. **Repository Structure**: Document your files
+
+## Step 7: Add Problems
+
+Problems in Autocomp are defined by the backend. Each problem is identified by a `prob_type` (string) and `prob_id` (integer), and the backend decides how to load the initial code, run correctness tests, and measure performance. There is no single required layout — different backends handle problems differently.
+
+To add a new problem for your backend:
+
+1. **Provide initial (unoptimized) code.** Add loading logic in `load_initial_code()` in `search.py`. Some backends store baseline code in `sols/{prob_type}/` (e.g., Trainium, GPU MODE), while others load from external sources (e.g., KernelBench loads from its own benchmark directory).
+
+2. **Provide correctness tests and evaluation.** This is handled entirely by your `evaluate_code()` method in the eval backend. Some backends use test files in `tests/{prob_type}/` (e.g., Gemmini), while others bundle tests into the evaluation itself (e.g., KernelBench, Trainium).
+
+3. **Optionally provide problem context.** You can add a `context{prob_id}.md` or `context{prob_id}.txt` file in `tests/{prob_type}/` to give the LLM additional context about the problem. This is automatically loaded by the `Prob` class.
+
+4. **Document available problem types and IDs** in the README and your backend's setup file.
 
 ## Testing Your Hardware Target
 

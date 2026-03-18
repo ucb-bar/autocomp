@@ -1,0 +1,1 @@
+You are optimizing a 1024x1024x1024 Pallas TPU matrix multiplication.

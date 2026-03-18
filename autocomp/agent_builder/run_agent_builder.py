@@ -133,6 +133,7 @@ def rerun_component(component: str, config_dir: Path,
     bucket_name = {
         "rules": "rules",
         "optimization_menu": "optimization",
+        "translate_menu": "optimization",
         "isa": "isa",
         "architecture": "architecture",
         "examples": "examples",
@@ -160,6 +161,16 @@ def rerun_component(component: str, config_dir: Path,
         with open(config_dir / "optimization_menu.yaml", "w") as f:
             yaml.dump(menu_data, f, default_flow_style=False, width=120)
         print(f"  Wrote optimization_menu.yaml: {len(result)} strategies")
+
+    elif component == "translate_menu":
+        result = synth._synthesize_translate_menu(
+            items, architecture=architecture, isa_docs=isa_docs,
+            code_examples_raw=buckets.get("examples", []),
+        )
+        menu_data = {"strategies": [{"strategy": s} for s in result]}
+        with open(config_dir / "translate_menu.yaml", "w") as f:
+            yaml.dump(menu_data, f, default_flow_style=False, width=120)
+        print(f"  Wrote translate_menu.yaml: {len(result)} strategies")
 
     elif component == "isa":
         result = synth._extract_isa_docs(items)
@@ -415,7 +426,7 @@ def main():
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
     parser.add_argument("--rerun", metavar="COMPONENT",
-                        choices=["rules", "optimization_menu", "isa", "architecture", "examples"],
+                        choices=["rules", "optimization_menu", "translate_menu", "isa", "architecture", "examples"],
                         help="Re-run synthesis for a single component using an existing "
                              "built config dir (requires --inspect and --source-dir)")
     args = parser.parse_args()
