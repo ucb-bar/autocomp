@@ -60,7 +60,7 @@ class CodeCandidate:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
         escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\ntranslation_score={self.translation_score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
         return repr_str
 
     def update_hw_feedback(self, hw_feedback: list[str]) -> None:
