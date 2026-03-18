@@ -29,7 +29,8 @@ class BuiltLLMAgent(LLMAgent):
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
                  menu_strategy: str = None,
                  fine_grained_isa: bool = False,
-                 example_rate: float = 0.0):
+                 example_rate: float = 0.0,
+                 cache_dir: str | Path | None = None):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
@@ -58,7 +59,7 @@ class BuiltLLMAgent(LLMAgent):
         self._new_menu_cache: dict[str, list[str]] = {}
         self._translate_menu_warned = False
 
-        self._cache_dir: Path | None = None
+        self._cache_dir: Path | None = Path(cache_dir) if cache_dir is not None else None
 
         logger.info(
             "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, "
@@ -69,18 +70,15 @@ class BuiltLLMAgent(LLMAgent):
             self.fine_grained_isa, self.example_rate,
         )
 
+        if self._cache_dir is not None:
+            self._load_cache()
+
     def __repr__(self):
         return f"BuiltLLMAgent({self.llm_client.model}, {self.config_dir.name})"
 
     @property
     def cache_dir(self) -> Path | None:
         return self._cache_dir
-
-    @cache_dir.setter
-    def cache_dir(self, path: Path | None) -> None:
-        self._cache_dir = Path(path) if path is not None else None
-        if self._cache_dir is not None:
-            self._load_cache()
 
     def _save_cache(self) -> None:
         """Persist ISA and code example selection caches to disk."""

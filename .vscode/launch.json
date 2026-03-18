@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Visualizer Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/visualizer"],
+      "outFiles": ["${workspaceFolder}/visualizer/dist/**/*.js"]
+    }
+  ]
+}

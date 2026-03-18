@@ -27,7 +27,7 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0):
+def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0, cache_dir=None):
     """Create eval backend and agent ensembles.
     
     Args:
@@ -37,6 +37,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         prob: The problem to optimize.
         models: List of model strings for planning.
         code_models: Optional list of model strings for code implementation.
+        cache_dir: Optional directory for agent caches (e.g. ISA/example selection).
     """
     # Create eval backend
     if backend_name == "kernelbench":
@@ -77,8 +78,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
                 f"Available: {available}"
             )
         logger.info("Using built agent from %s", config_dir)
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate) for m in code_models]) if code_models else None
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
     
@@ -182,6 +183,9 @@ class SearchStrategy:
         self.agent = agent  # The agent used to propose optimizations (planning)
         self.code_agent = code_agent if code_agent is not None else agent  # The agent used for code implementation
         self.prob = prob
+        self.problem = prob.name if hasattr(prob, "name") else str(prob)
+        self.plan_models = sorted({a.llm_client.provider + "::" + a.llm_client.model for a in self.agent.llms})
+        self.code_models = sorted({a.llm_client.provider + "::" + a.llm_client.model for a in self.code_agent.llms})
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.eval_backend = eval_backend
@@ -201,6 +205,7 @@ class SearchStrategy:
         self.translate_score = translate_score
         self.early_stop_iters = early_stop_iters
         self.early_stop_threshold = early_stop_threshold
+
         save_dir = self.output_dir / f"candidates-iter-0"
         save_dir.mkdir(parents=True, exist_ok=True)
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
@@ -232,9 +237,18 @@ class SearchStrategy:
         for candidate in initial_code_candidates:
             logger.info(candidate.score)
 
-        self.agent.cache_dir = self.output_dir
-        if self.code_agent is not self.agent:
-            self.code_agent.cache_dir = self.output_dir
+        self._save_run_metadata()
+
+    def _save_run_metadata(self):
+        """Save run configuration metadata to a JSON file in the output directory."""
+        serializable = (str, int, float, bool, list, tuple, type(None))
+        metadata = {k: v for k, v in vars(self).items()
+                    if not k.startswith("_") and isinstance(v, serializable)}
+        try:
+            with open(self.output_dir / "run_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2, default=str)
+        except Exception as e:
+            logger.warning("Failed to save run metadata: %s", e)
 
     def propose_optimizations_iter(self, candidates: list[CodeCandidate], num_plans: int) -> list[CodeCandidate]:
         """
@@ -384,9 +398,9 @@ class SearchStrategy:
     def init_wandb(self):
         # start a new wandb run to track this script
         wandb.init(
-            entity="charleshong3-team",
+            entity=None,
             # set the wandb project where this run will be logged
-            project="autocomp-tpu",
+            project=None,
             # track hyperparameters and run metadata
             config=vars(self),
         )
@@ -414,9 +428,9 @@ class ExhaustiveSearchStrategy(SearchStrategy):
     implementations in parallel batches.
     """
     def __init__(self, *args, plans_per_option: int = 1, num_code_candidates: int = 1, **kwargs):
-        super().__init__(*args, **kwargs)
         self.plans_per_option = plans_per_option
         self.num_code_candidates = num_code_candidates
+        super().__init__(*args, **kwargs)
 
     def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path,
                                    cur_iter: int = None, num_iters: int = None) -> list[CodeCandidate]:
@@ -548,7 +562,6 @@ class BeamSearchStrategy(SearchStrategy):
                  early_stop_threshold: float = 1.0,
                  resume_from: str | pathlib.Path | None = None,
                 ):
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from)
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -559,6 +572,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
         self.reimplement_failed = reimplement_failed
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from)
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -926,7 +940,7 @@ def main():
     initial_code = load_initial_code(backend_name, prob)
 
     # Initialize eval backend and agent ensembles
-    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate)
+    eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=output_dir)
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from)
