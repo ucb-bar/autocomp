@@ -398,9 +398,9 @@ class SearchStrategy:
     def init_wandb(self):
         # start a new wandb run to track this script
         wandb.init(
-            entity="charleshong3-team",
+            entity=None,
             # set the wandb project where this run will be logged
-            project="autocomp-tpu",
+            project=None,
             # track hyperparameters and run metadata
             config=vars(self),
         )
