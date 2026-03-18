@@ -38,6 +38,7 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 Autocomp can currently optimize code for the following hardware targets:
 - AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md))
 - Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))
+- Google TPU via JAXBench ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md))
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
 - CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
@@ -152,7 +153,7 @@ By default the `us-west-2` region is used. Set the `AWS_REGION` environment vari
 `autocomp/search/search.py` is the entry point for running Autocomp optimization. Various parameters such as hardware target, models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
 
 Notable parameters:
-- `backend_name`: The hardware target to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
+- `backend_name`: The hardware target to use. Currently supported values are `trn`, `tpu`, `jaxbench`, `gemmini`, `kernelbench`, and `gpumode`.
 - `agent_name`: The LLM agent type to use. For new hardware targets, use a built agent: `"built:<name>"` (e.g., `"built:tpu-v6e"` for TPU). See the [Agent Builder docs](autocomp/agent_builder/README.md). Handcrafted agents are also available for existing targets (`trn`, `gemmini`, `cuda`).
 - `hw_config`: A hardware configuration object describing the target hardware. Examples:
   - `TrnHardwareConfig("trn1.2xlarge")`
@@ -175,7 +176,7 @@ Notable parameters:
 - `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
 - `prob_type`: The problem type to use.
   - For Trainium, `trn-tutorial` or `trn-advanced`.
-  - For TPU, `tpu`.
+  - For TPU, `tpu`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.

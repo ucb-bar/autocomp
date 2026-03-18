@@ -22,6 +22,7 @@ from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
 from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
+from autocomp.backend.jaxbench.jaxbench_eval import JaxBenchEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
@@ -49,6 +50,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         eval_backend = TrnEvalBackend()
     elif backend_name == "tpu":
         eval_backend = TpuEvalBackend()
+    elif backend_name == "jaxbench":
+        eval_backend = JaxBenchEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
     
@@ -129,6 +132,9 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
         with open(matches[0]) as f:
             return f.read()
+    elif backend_name == "jaxbench":
+        from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
+        return extract_workload_code(prob)
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
 
