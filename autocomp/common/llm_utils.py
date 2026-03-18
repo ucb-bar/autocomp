@@ -669,14 +669,11 @@ class LLMClient():
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
-            if google_cloud_project:
-                self.client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
-                self.async_client = self.client
-            elif google_api_key:
+            if google_api_key and not google_cloud_project:
                 self.client = genai.Client(api_key=google_api_key)
-                self.async_client = self.client
             else:
-                raise ValueError("Gemini requires either GOOGLE_CLOUD_PROJECT (Vertex AI) or GOOGLE_API_KEY (AI Studio)")
+                self.client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+            self.async_client = self.client
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
