@@ -14,7 +14,6 @@ from autocomp.backend.eval_backend import EvalBackend
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
-from autocomp.agents.tpu.tpu_agent import TpuLLMAgent
 from autocomp.agent_builder.built_agent import BuiltLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
@@ -63,9 +62,6 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "trn":
         agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
         code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
-    elif agent_name == "tpu":
-        agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in models])
-        code_agent = LLMEnsemble([TpuLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
     elif agent_name.startswith("built:") or Path(agent_name).is_dir():
         # "built:<name>" resolves to .built/<name>/; direct paths also accepted
         _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
@@ -779,7 +775,7 @@ class BeamSearchStrategy(SearchStrategy):
 def main():
     # Select evaluation backend, LLM agent, and hardware config
     backend_name = "trn"  # Options: "gemmini", "trn", "tpu", "kernelbench", "gpumode"
-    agent_name = "trn"  # Options: "gemmini", "trn", "tpu", "cuda", "built:<name>", or a path to a built agent
+    agent_name = "trn"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent (for TPU v6e, use built:tpu-v6e)
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = TrnHardwareConfig("trn1.2xlarge")

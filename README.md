@@ -47,9 +47,9 @@ Partially supported hardware targets:
 
 For instructions on adding a new hardware target, see [ADDING_HARDWARE_SUPPORT.md](ADDING_HARDWARE_SUPPORT.md).
 
-### 🏗️ Agent Builder
+### 🏗️ Agent Builder (Recommended for New Hardware Targets)
 
-You can automatically create a new hardware-specific agent from documentation sources (local directories, PDFs, and webpages) using the **Agent Builder**:
+The recommended way to add a new agent is with the **Agent Builder**, which automatically creates a hardware-specific agent from documentation sources (local directories, PDFs, and webpages):
 
 ```bash
 pip install "autocomp[agent-builder]"
@@ -153,7 +153,7 @@ By default the `us-west-2` region is used. Set the `AWS_REGION` environment vari
 
 Notable parameters:
 - `backend_name`: The hardware target to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
-- `agent_name`: The LLM agent type to use. Defaults based on `backend_name`. Currently supported agents are `trn`, `tpu`, `gemmini`, and `cuda` (used for both `kernelbench` and `gpumode`). Use `"built:<name>"` for agents created with the Agent Builder (e.g., `"built:my_accelerator"`).
+- `agent_name`: The LLM agent type to use. For new hardware targets, use a built agent: `"built:<name>"` (e.g., `"built:tpu-v6e"` for TPU). See the [Agent Builder docs](autocomp/agent_builder/README.md). Handcrafted agents are also available for existing targets (`trn`, `gemmini`, `cuda`).
 - `hw_config`: A hardware configuration object describing the target hardware. Examples:
   - `TrnHardwareConfig("trn1.2xlarge")`
   - `TpuHardwareConfig("v6e-1")`
@@ -195,7 +195,7 @@ Notable parameters:
 
 **`autocomp/`** - Core Autocomp code.
 - `search/` - Search algorithm (`search.py`) and optimization infrastructure.
-- `agents/` - LLM agents for planning and code generation. Each hardware target has its own subdirectory (e.g., `gemmini/`, `trn/`, `tpu/`, `cuda/`) with agent code and prompts.
+- `agents/` - LLM agents for planning and code generation. Each hardware target has its own subdirectory (e.g., `gemmini/`, `trn/`, `cuda/`) with agent code and prompts.
 - `agent_builder/` - Agent Builder pipeline for creating new hardware-specific agents from documentation sources. See [Agent Builder documentation](autocomp/agent_builder/README.md) for details.
 - `backend/` - Eval backends for code evaluation. Each eval backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `tpu/`, `kernelbench/`, `gpumode/`) with evaluation code and setup instructions. One hardware target can have multiple eval backends.
 - `hw_config/` - Hardware configuration classes. Each hardware target has a config file (e.g., `cuda_config.py`, `gemmini_config.py`, `trn_config.py`, `tpu_config.py`).
