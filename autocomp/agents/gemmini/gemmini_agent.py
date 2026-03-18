@@ -134,7 +134,7 @@ class GemminiLLMAgent(LLMAgent):
             f.write(prompt_text)
 
         messages = [{"role": "user", "content": prompt_text}]
-        responses = self.llm_client.chat(messages=messages, num_candidates=num_to_gen, temperature=1)
+        responses = self.llm_client.chat(messages=messages, num_samples=num_to_gen, temperature=1)
 
         for c_i, c in enumerate(responses):
             path = save_dir / f"analyze{'_' + save_str if save_str else ''}_{c_i}.txt"

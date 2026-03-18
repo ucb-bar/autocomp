@@ -78,7 +78,7 @@ def completions_with_backoff(client: OpenAI | Together, **kwargs):
         return client.responses.create(**kwargs)
 
 async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | AsyncTogether | genai.Client | AsyncAnthropic, prompt, **kwargs):
-    """Fetches a completion with retries and rate limit handling."""
+    """Fetches a completion with retries and error handling."""
     max_retries = 8
     for attempt in range(max_retries):
         try:
@@ -115,20 +115,21 @@ async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | A
         # except (RateLimitError, APITimeoutError, InternalServerError):
         except Exception as e:
             err_str = str(e)
+            model_name = kwargs.get("model", "unknown")
             if "temperature" in err_str and "not supported" in err_str:
-                logger.info(f"Model does not support temperature, retrying without it: {e}")
+                logger.info(f"Model {model_name} does not support temperature, retrying without it: {e}")
                 kwargs.pop("temperature", None)
                 continue
-            logger.info(f"Error: {e}")
+            logger.info(f"Error (model={model_name}): {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
-            logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
+            logger.info(f"Retrying in {wait_time:.2f} seconds (attempt {attempt + 1}/{max_retries})...")
             await asyncio.sleep(wait_time)
     
-    print("Max retries reached, request failed.")
+    logger.warning("Max retries reached for model=%s, request failed.", kwargs.get("model", "unknown"))
     return None
 
 async def fetch_web_search_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | AsyncTogether, query: str, **kwargs):
-    """Fetches a web search completion with retries and rate limit handling."""
+    """Fetches a web search completion with retries and error handling."""
     max_retries = 8
     for attempt in range(max_retries):
         try:
@@ -142,12 +143,12 @@ async def fetch_web_search_completion(semaphore: asyncio.Semaphore, client: Asyn
             return response
         
         except Exception as e:
-            logger.info(f"Web search error: {e}")
+            logger.info(f"Web search error (model={kwargs.get('model', 'unknown')}): {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
-            logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
+            logger.info(f"Retrying in {wait_time:.2f} seconds (attempt {attempt + 1}/{max_retries})...")
             await asyncio.sleep(wait_time)
     
-    print("Max retries reached, web search request failed.")
+    logger.warning("Max retries reached for web search model=%s, request failed.", kwargs.get("model", "unknown"))
     return None
 
 async def fetch_web_search_completions(client: AsyncOpenAI | AsyncTogether, queries: list[str], **kwargs) -> list[str]:
@@ -542,7 +543,7 @@ async def fetch_tool_completion(
                     return normalized
 
                 else:
-                    raise ValueError(f"Unsupported provider for tool completion: {provider}")
+                    raise ValueError(f"Unsupported provider for tool completion: {provider} for model: {model}")
 
         except Exception as e:
             logger.info(f"fetch_tool_completion error (attempt {attempt+1}): {e}")
@@ -709,7 +710,7 @@ class LLMClient():
                 base_url=openai_api_base,
             )
         else:
-            raise ValueError(f"Invalid provider: {self.provider}")
+            raise ValueError(f"Invalid provider: {self.provider} for model: {self.model}")
 
     def _run_async(self, coro):
         """Run an async coroutine on the persistent event loop.
@@ -781,7 +782,7 @@ class LLMClient():
                     results.append("Web search failed")
             return results
     
-    def chat_async(self, prompts_lst: list[str], num_candidates=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
+    def chat_async(self, prompts_lst: list[str], num_samples=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
         if self.provider == "aws-bedrock":
             # Generic Bedrock models use boto3 Converse API (synchronous),
             # wrapped with asyncio.to_thread for concurrency.
@@ -792,19 +793,19 @@ class LLMClient():
                         return await asyncio.to_thread(self._bedrock_converse, p, temperature)
                 tasks = []
                 for prompt in prompts_lst:
-                    for _ in range(num_candidates):
+                    for _ in range(num_samples):
                         tasks.append(_call(prompt))
                 results = await asyncio.gather(*tasks)
                 responses = []
                 for i in range(len(prompts_lst)):
-                    responses.append(list(results[i * num_candidates:(i + 1) * num_candidates]))
+                    responses.append(list(results[i * num_samples:(i + 1) * num_samples]))
                 return responses
             return self._run_async(_run())
         elif self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
                 "model":self.model.replace("_", "/"),
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -818,18 +819,18 @@ class LLMClient():
         else:
             responses = []
             for prompt in prompts_lst:
-                this_msg_resps = self.chat(prompt, num_candidates, temperature)
+                this_msg_resps = self.chat(prompt, num_samples, temperature)
                 responses.append(this_msg_resps)
             return responses
 
-    def chat(self, prompt: str, num_candidates=10, temperature=None):
+    def chat(self, prompt: str, num_samples=10, temperature=None):
         responses = []
         if isinstance(self.client, Together):
             # Together uses chat completions API with messages format
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "messages":[{"role": "user", "content": prompt}],
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -843,7 +844,7 @@ class LLMClient():
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "input":prompt,
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -855,7 +856,7 @@ class LLMClient():
                 kwargs.pop("temperature", None)
                 # Query 8 plans at a time - make multiple calls for responses API
                 single_kwargs = {k: v for k, v in kwargs.items() if k != "n"}
-                while len(responses) < num_candidates:
+                while len(responses) < num_samples:
                     openai_response = completions_with_backoff(self.client, **single_kwargs)
                     if hasattr(openai_response, 'output_text'):
                         responses.append(openai_response.output_text)
@@ -866,8 +867,8 @@ class LLMClient():
                         responses.append(str(openai_response))
             else:
                 # For responses API, make multiple calls if n > 1
-                if num_candidates > 1:
-                    for _ in range(num_candidates):
+                if num_samples > 1:
+                    for _ in range(num_samples):
                         single_kwargs = {k: v for k, v in kwargs.items() if k != "n"}
                         openai_response = completions_with_backoff(self.client, **single_kwargs)
                         if hasattr(openai_response, 'output_text'):
@@ -893,13 +894,13 @@ class LLMClient():
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
-                    candidate_count=num_candidates,
+                    candidate_count=num_samples,
                 ),
             )
             for c in gemini_response.candidates:
                 responses.append(c.content.parts[0].text)
         elif isinstance(self.client, (anthropic.Anthropic, anthropic.AnthropicBedrock)):
-            for _ in range(num_candidates):
+            for _ in range(num_samples):
                 claude_response = self.client.messages.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -912,7 +913,7 @@ class LLMClient():
                 )
                 responses.append(claude_response.content[-1].text)
         elif self.provider == "aws-bedrock":
-            for _ in range(num_candidates):
+            for _ in range(num_samples):
                 responses.append(self._bedrock_converse(prompt, temperature=temperature))
 
         return responses

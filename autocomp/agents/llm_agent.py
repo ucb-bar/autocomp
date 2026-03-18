@@ -111,6 +111,13 @@ class LLMAgent:
                                         prob: Prob = None) -> str:
         raise NotImplementedError
 
+    def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
+        """Score how completely each candidate has been translated to target hardware kernels.
+        
+        Returns a list of scores (0-10) for each candidate.
+        """
+        raise NotImplementedError
+
     def _get_propose_new_menu_prompt(self, candidate: CodeCandidate, prob: Prob) -> str:
         raise NotImplementedError
 
@@ -119,8 +126,7 @@ class LLMAgent:
         Evaluate the quality of code candidates using LLM before running benchmarks.
         Returns a list of quality scores (0.0 to 1.0) where higher is better.
         """
-        # Default implementation returns neutral scores for all candidates
-        return [0.5] * len(candidates)
+        raise NotImplementedError
 
     def propose_new_menu_parallel(self, prob: Prob, candidates: list[CodeCandidate]) -> dict[str, list[str]]:
         """Generate workload-specific menu additions for each candidate.
@@ -131,7 +137,7 @@ class LLMAgent:
 
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
-            num_candidates=1,
+            num_samples=1,
             temperature=1,
         )
 
@@ -256,11 +262,11 @@ class LLMAgent:
                 prompts_lst.append(prompt_text)
 
         temperature = 1
-        candidates_to_gen = num_plans // num_unique_prompts_per_cand
+        samples_per_prompt = num_plans // num_unique_prompts_per_cand
 
         extended_responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
-            num_candidates=candidates_to_gen,  # number of candidates,
+            num_samples=samples_per_prompt,
             temperature=temperature
         )
         # Need to sort the responses back into a flattened list for each parent candidate
@@ -294,7 +300,7 @@ class LLMAgent:
                     f.write(extracted_plan)
                 logger.debug("Saved optimization plan to %s", plan_path)
 
-        # Create the new candidates
+        # Create the new plans
         new_cands = []
         for c_i, cand_resps in enumerate(responses):
             for plan in cand_resps:
@@ -346,12 +352,12 @@ class LLMAgent:
         temperature = 1
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
-            num_candidates=num_samples,  # number of candidates,
+            num_samples=num_samples,
             temperature=temperature,
             reasoning_effort="medium"
         )
 
-        candidates: list[CodeCandidate] = [] # Flat list of new implemented candidates
+        candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):
             this_plan_cands = []
             for s_i, sample_response in enumerate(cand_responses):
@@ -368,7 +374,6 @@ class LLMAgent:
                 with open(path, "w") as f:
                     f.writelines(extracted_code)
                 logger.debug("Saved plan %d code impl %d to %s", c_i, s_i, path)
-                # Make a copy of the candidate with the new code impl
                 new_cand = copy_candidate(candidate_lst[c_i])
                 new_cand.code = extracted_code
                 new_cand.code_gen_model = self.llm_client.model
@@ -404,10 +409,10 @@ class LLMAgent:
         temperature = 1
         responses = self.llm_client.chat(
             prompt=prompt_text,
-            num_candidates=num_samples,  # number of candidates,
+            num_samples=num_samples,
             temperature=temperature
         )
-        candidates = []
+        combined_candidates = []
         for c_i, c in enumerate(responses):
             # Save full response
             full_path = save_dir / f"combined{'' if not save_str else '_' + save_str}_{c_i}_full.txt"
@@ -422,13 +427,12 @@ class LLMAgent:
                 f.writelines(extracted_code)
             logger.debug("Saved combined code %d to %s", c_i, path)
 
-            candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
-        return candidates
+            combined_candidates.append(CodeCandidate(candidates, "Combine parents", extracted_code, code_gen_model=self.llm_client.model))
+        return combined_candidates
 
     def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str] = None, prob: Prob = None) -> list[CodeCandidate]:
         """
-        Reimplement failed code candidates using stdout/stderr from the last attempt.
-        This method is parallelized across multiple candidates.
+        Reimplement failed implementations using stdout/stderr from the last attempt.
         """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
@@ -474,13 +478,13 @@ class LLMAgent:
 
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
-            num_candidates=num_samples,
+            num_samples=num_samples,
             temperature=1,
         )
 
         candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):
-            this_plan_cands = []
+            this_cands = []
             for s_i, sample_response in enumerate(cand_responses):
                 # Save full response
                 full_path = save_dir / f"reimplement{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
@@ -495,12 +499,11 @@ class LLMAgent:
                 with open(path, "w") as f:
                     f.writelines(extracted_code)
                 logger.debug("Saved reimplemented %d code impl %d to %s", c_i, s_i, path)
-                # Make a copy of the candidate with the new code impl
                 new_cand = copy_candidate(candidate_lst[c_i])
                 new_cand.code = extracted_code
                 new_cand.code_gen_model = self.llm_client.model
-                this_plan_cands.append(new_cand)
-            candidates.extend(this_plan_cands)
+                this_cands.append(new_cand)
+            candidates.extend(this_cands)
         return candidates
 
     def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
