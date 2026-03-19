@@ -31,3 +31,16 @@ make install
 Finally, set up Autocomp and its Python dependencies: ``pip install -e .``
 
 In `autocomp/backend/gemmini/gemmini_eval.py`, you will need to update at least one of the paths at the top of the file. By default, you will have set up Gemmini's "default" int8, 16x16 systolic array configuration, in which case you can set `INT8_16PE_CHIPYARD_PATH` to point to your Chipyard directory. For TinyMPC kernels, you would set the `FP32_4PE_CHIPYARD_PATH` to point to your Chipyard directory.
+
+## Available Problems
+
+Gemmini has the following problem types (`prob_type` in `search.py`):
+
+| `prob_type` | Description |
+|---|---|
+| `exo` | Matrix multiply benchmarks from the Exo paper (int8, 16x16 config) |
+| `exo-conv` | Convolution benchmarks from the Exo paper (int8, 16x16 config) |
+| `admm-multifunction` | TinyMPC kernels (FP32, 4x4 config) |
+| `gemm` | Additional matrix multiply benchmarks (int8, 16x16 config) |
+
+Baseline solutions are stored in `sols/{prob_type}/` and test files are in `tests/{prob_type}/`. To add a new problem, add both a baseline solution (`sol{prob_id}_exo_baseline.c`) and a test file (`test{prob_id}.c`) with `// SUBSTITUTE HERE` and `// SUBSTITUTE END` markers where generated code should be inserted.

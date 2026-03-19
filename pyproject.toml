@@ -12,13 +12,10 @@ dependencies = [
     "openai",
     "google-genai",
     "anthropic",
-    "botocore",
     "boto3",
     "numpy",
-    "pandas",
     "wandb",
     "backoff",
-    "mistralai[gcp]>=1.0.0",
     "together",
     "pyyaml",
 ]
