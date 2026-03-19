@@ -6,6 +6,8 @@ import nki.isa as nisa
 import numpy as np
 import torch
 from torch_xla.core import xla_model as xm
+import os
+
 
 # SUBSTITUTE HERE
 
