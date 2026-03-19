@@ -1,429 +1,11 @@
-## Kernel Launch and Compilation
-
-### nki.jit
-
-nki.jit(func=None, mode='auto', **kwargs)
-    
-
-This decorator compiles a function to run on NeuronDevices.
-
-This decorator tries to automatically detect the current framework and compile the function as a custom operator of the current framework. To bypass the framework detection logic, you may specify the `mode` parameter explicitly.
-
-Parameters:
-    
-
-  * func – The function that define the custom op
-
-  * mode – The compilation mode, possible values: “jax”, “torchxla”, “baremetal”, “benchmark”, “simulation” and “auto”
-
-Listing 13 An Example#
-    
-    
-    from neuronxcc import nki
-    import neuronxcc.nki.language as nl
-    
-    @nki.jit
-    def nki_tensor_tensor_add(a_tensor, b_tensor):
-      c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
-    
-      a = nl.load(a_tensor)
-      b = nl.load(b_tensor)
-    
-      c = a + b
-    
-      nl.store(c_tensor, c)
-    
-      return c_tensor
-    
-
-### nki.jit
-
-  * Fixed `nki.jit` in auto-detection mode returning an uncalled kernel object instead of executing the kernel. When `nki.jit` was used without specifying a framework mode (e.g., `@nki.jit` with no `mode` argument), the auto-detection path constructed the appropriate framework-specific kernel object but returned it without calling it. The user received a kernel object instead of the computed result, requiring an extra manual invocation. See nki.jit.
-
-### nki.jit
-
-NKI Compiler \- The new `nki.*` namespace replaces the legacy `neuronxcc.nki.*` namespace. Top-level kernel functions now require the `@nki.jit` annotation. Neuron 2.27 supports both namespaces side by side; the legacy namespace will be removed in Neuron 2.28. A kernel migration guide is available in the documentation.
-
-### nki.jit
-
-     1@nki.jit
-
----
-
-### jit
-
-`jit` | This decorator compiles a function to run on NeuronDevices.  
-
----
-
-### nki.benchmark
-
-     7    bench_func = nki.benchmark(warmup=5, iters=10)(nki_func)
-
----
-
-### benchmark
-
-`benchmark` | Benchmark a NKI kernel on a NeuronDevice by using `nki.benchmark` as a decorator.  
-
----
-
-### nki.profile
-
-    * `nki.profile`
-
----
-
-### profile
-
-`profile` | Profile a NKI kernel on a NeuronDevice by using `nki.profile` as a decorator.  
-
----
-
-### nki.baremetal
-
-nki.baremetal(kernel=None, **kwargs)
-    
-
-Compile and run a NKI kernel on NeuronDevice without involving ML frameworks such as PyTorch and JAX. If you decorate your NKI kernel function with decorator `@nki.baremetal(...)`, you may call the NKI kernel function directly just like any other Python function. You must run this API on a Trn/Inf instance with NeuronDevices (v2 or beyond) attached.
-
-Note
-
-The decorated function using `nki.baremetal` expects numpy.ndarray as input/output tensors instead of ML framework tensor objects.
-
-This decorator compiles the NKI kernel into an executable on NeuronDevices (`NEFF`) and also collects an execution trace (`NTFF`) by running the `NEFF` on the local NeuronDevice. See Profiling NKI kernels with Neuron Profile for more information on how to visualize the execution trace for profiling purposes.
-
-Since `nki.baremetal` runs the compiled NEFF without invoking any ML framework, it is the fastest way to compile and run any NKI kernel standalone on NeuronDevice. Therefore, this decorator is useful for quickly iterating an early implementation of a NKI kernel to reach functional correctness before porting it to the ML framework and injecting the kernel into the full ML model. To iterate over NKI kernel performance quickly, NKI also provides nki.benchmark decorator which uses the same underlying mechanism as `nki.baremetal` but additionally collects latency statistics in different percentiles.
-
-Parameters:
-    
-
-  * save_neff_name – A file path to save your NEFF file. By default, this is unspecified, and the NEFF file will be deleted automatically after execution.
-
-  * save_trace_name – A file path to save your NTFF file. By default, this is unspecified, and the NTFF file will be deleted automatically after execution. Known issue: if `save_trace_name` is specified, `save_neff_name` must be set to “file.neff”.
-
-  * additional_compile_opt – Additional Neuron compiler flags to pass in when compiling the kernel.
-
-  * artifacts_dir – A directory path to save Neuron compiler artifacts. The directory must be empty before running the kernel. A non-empty directory would lead to a compilation error.
-
-Returns:
-    
-
-None
-
-Listing 16 An Example#
-    
-    
-    from neuronxcc.nki import baremetal
-    import neuronxcc.nki.language as nl
-    import numpy as np
-    
-    @baremetal(save_neff_name='file.neff', save_trace_name='profile.ntff')
-    def nki_tensor_tensor_add(a_tensor, b_tensor):
-      c_tensor = nl.ndarray(a_tensor.shape, dtype=a_tensor.dtype, buffer=nl.shared_hbm)
-    
-      a = nl.load(a_tensor)
-      b = nl.load(b_tensor)
-    
-      c = a + b
-    
-      nl.store(c_tensor, c)
-    
-      return c_tensor
-    
-    a = np.zeros([128, 1024], dtype=np.float32)
-    b = np.random.random_sample([128, 1024]).astype(np.float32)
-    c = nki_tensor_tensor_add(a, b)
-    
-    assert np.allclose(c, a + b)
-    
-
----
-
-### baremetal
-
-`baremetal` | Compile and run a NKI kernel on NeuronDevice without involving ML frameworks such as PyTorch and JAX.  
-
----
-
-### simulate_kernel
-
-`simulate_kernel` | Simulate a nki kernel on CPU using a built-in simulator in Neuron Compiler.  
-
-## SPMD and Program Grid
-
-### nl.program_id
-
-
-
----
-
-### nki.language.program_id
-
-nki.language.program_id(axis)
-    
-
-Index of the current SPMD program along the given axis in the launch grid.
-
-Parameters:
-    
-
-axis – The axis of the ND launch grid.
-
-Returns:
-    
-
-The program id along `axis` in the launch grid
-
----
-
-### program_id
-
-`program_id` | Index of the current SPMD program along the given axis in the launch grid.  
-
----
-
-### nki.language.num_programs
-
-nki.language.num_programs(axes=None)
-    
-
-Number of SPMD programs along the given axes in the launch grid. If `axes` is not provided, returns the total number of programs.
-
-Parameters:
-    
-
-axes – The axes of the ND launch grid. If not provided, returns the total number of programs along the entire launch grid.
-
-Returns:
-    
-
-The number of SPMD(single process multiple data) programs along `axes` in the launch grid
-
----
-
-### num_programs
-
-`num_programs` | Number of SPMD programs along the given axes in the launch grid.  
-
----
-
-### program_ndim
-
-`program_ndim` | Number of dimensions in the SPMD launch grid.  
-
----
-
-### nki.language.spmd_dim
-
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
-
----
-
-### spmd_dim
-
-`spmd_dim` | Create a dimension in the SPMD launch grid of a NKI kernel with sub-dimension tiling.  
-
----
-
-### nki.language.nc
-
-# nki.language.nc
-
-##  Contents 
-
-# nki.language.nc
-nki.language.nc = Ellipsis#
-    
-
-Create a logical neuron core dimension in launch grid.
-
-The instances of spmd kernel will be distributed to different physical neuron cores on the annotated dimension.
-    
-    
-    # Let compiler decide how to distribute the instances of spmd kernel
-    c = kernel[2, 2](a, b)
-    
-    import neuronxcc.nki.language as nl
-    
-    # Distribute the kernel to physical neuron cores around the first dimension
-    # of the spmd grid.
-    c = kernel[nl.nc(2), 2](a, b)
-    # This means:
-    # Physical NC [0]: kernel[0, 0], kernel[0, 1]
-    # Physical NC [1]: kernel[1, 0], kernel[1, 1]
-    
-
-Sometimes the size of a spmd dimension is bigger than the number of available physical neuron cores. We can control the distribution with the following syntax:
-    
-    
-    import neuronxcc.nki.language as nl
-    
-    
-    @nki.jit
-    def nki_spmd_kernel(a):
-      b = nl.ndarray(a.shape, dtype=a.dtype, buffer=nl.shared_hbm)
-      i = nl.program_id(0)
-      j = nl.program_id(1)
-      
-      a_tile = nl.load(a[i, j])
-      nl.store(b[i, j], a_tile)
-    
-      return b
-    
-    ############################################################################
-    # Example 1: Let compiler decide how to distribute the instances of spmd kernel
-    ############################################################################
-    dst = nki_spmd_kernel[4, 2](src)
-    
-    ############################################################################
-    # Example 2: Distribute SPMD kernel instances to physical NeuronCores with
-    # explicit annotations. Expected physical NeuronCore assignments:
-    #   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[1, 0], kernel[1, 1]
-    #   Physical NC [1]: kernel[2, 0], kernel[2, 1], kernel[3, 0], kernel[3, 1]
-    ############################################################################
-    dst = nki_spmd_kernel[nl.spmd_dim(nl.nc(2), 2), 2](src)
-    dst = nki_spmd_kernel[nl.nc(2) * 2, 2](src)  # syntactic sugar
-    
-    ############################################################################
-    # Example 3: Distribute SPMD kernel instances to physical NeuronCores with
-    # explicit annotations. Expected physical NeuronCore assignments:
-    #   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[2, 0], kernel[2, 1]
-    #   Physical NC [1]: kernel[1, 0], kernel[1, 1], kernel[3, 0], kernel[3, 1]
-    ############################################################################
-    dst = nki_spmd_kernel[nl.spmd_dim(2, nl.nc(2)), 2](src)
-    dst = nki_spmd_kernel[2 * nl.nc(2), 2](src)  # syntactic sugar
-    
-
-### nki.language.nc
-
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
-
----
-
-### nc
-
-`nc` | Create a logical neuron core dimension in launch grid.  
-
 ## Data Types and Constants
-
-### nki.language.bfloat16
-
-nki.language.bfloat16 = dtype(bfloat16)#
-    
-
-16-bit floating-point number (1S,8E,7M)
-
----
-
-### bfloat16
-
-`bfloat16` | 16-bit floating-point number (1S,8E,7M)  
-
----
-
-### nki.language.tfloat32
-
-nki.language.tfloat32 = dtype('V4')#
-    
-
-32-bit floating-point number (1S,8E,10M)
-
----
-
-### tfloat32
-
-`tfloat32` | 32-bit floating-point number (1S,8E,10M)  
-
----
-
-### nki.language.float8_e4m3
-
-  * Fixed `float8_e4m3fn` to `float8_e4m3` conversion for kernel inputs and outputs. When a tensor with dtype `float8_e4m3fn` was passed to the compiler, the automatic conversion to `float8_e4m3` could fail with a size-check error. The conversion now validates sizes correctly before casting. See nki.language.float8_e4m3.
-
-### nki.language.float8_e4m3
-
-nki.language.float8_e4m3 = dtype(float8_e4m3)#
-    
-
-8-bit floating-point number (1S,4E,3M)
-
----
-
-### float8_e4m3
-
-`float8_e4m3` | 8-bit floating-point number (1S,4E,3M)  
-
----
-
-### nki.language.float8_e4m3fn
-
-    * nki.language.float8_e4m3fn — for FP8 inference and training workloads
-
----
-
-### nki.language.float8_e5m2
-
-nki.language.float8_e5m2 = dtype(float8_e5m2)#
-    
-
-8-bit floating-point number (1S,5E,2M)
-
-### nki.language.float8_e5m2
-
-    * New `datatype <nl_datatypes>`: `float8_e5m2`
-
----
-
-### float8_e5m2
-
-`float8_e5m2` | 8-bit floating-point number (1S,5E,2M)  
-
----
-
-### nki.language.float8_e5m2_x4
-
-    * `nki.language.float8_e5m2_x4`
-
----
-
-### nki.language.float4_e2m1fn_x4
-
-    * `nki.language.float4_e2m1fn_x4`
-
----
-
-### nki.language.float8_e4m3fn_x4
-
-    * `nki.language.float8_e4m3fn_x4`
-
----
-
-### nki.language.fp32
-
-class nki.language.fp32
-    
-
-FP32 Constants
-
-Attributes
-
-`min` | FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value  
-
----
-
-### fp32
-
-`fp32` | FP32 Constants  
-
----
 
 ### Supported Data Types by NKI
 
 ## Supported Data Types
 Supported Data Types by NKI below lists all supported data types by NKI. Almost all the NKI APIs accept a data type field, `dtype`, which can either be a `NumPy` equivalent type or a `nki.language` data type.
 
-Table 6 Supported Data Types by NKI# | Data Type | Accepted `dtype` Field by NKI APIs  
+Table 4 Supported Data Types by NKI# | Data Type | Accepted `dtype` Field by NKI APIs  
 ---|---|---  
 Integer | 8-bit unsigned integer | `nki.language.uint8` or `numpy.uint8`  
 8-bit signed integer | `nki.language.int8` or `numpy.int8`  
@@ -438,48 +20,45 @@ bfloat16 (1S,8E,7M) | `nki.language.bfloat16`
 tfloat32 (1S,8E,10M) | `nki.language.tfloat32`  
 float32 (1S,8E,23M) | `nki.language.float32` or `numpy.float32`  
 Boolean | boolean stored as uint8 | `nki.language.bool_` or `numpy.bool`  
-  
 
 ---
 
-### Weakly Typed Scalar Type Inference
+### nki.language.float8_e4m3
 
-### Weakly Typed Scalar Type Inference
-Weakly typed scalars (scalar values where the type wasn’t explicitly specified) will be inferred as the widest dtype supported by hardware:
+nki.language.float8_e4m3 = dtype(float8_e4m3)#
+    
 
-  * `bool --> uint8`
+8-bit floating-point number (1S,4E,3M)
 
-  * `integer --> int32`
+---
 
-  * `floating --> float32`
+### nki.language.float8_e5m2
 
-Doing an arithmetic operation with a scalar may result in a larger output type than expected, for example:
+# nki.language.float8_e5m2
+nki.language.float8_e5m2 = dtype(float8_e5m2)#
+    
 
-  * `(np.int8, 2) -> np.int32`
+8-bit floating-point number (1S,5E,2M)
 
-  * `(np.float16, 1.2) -> np.float32`
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
 
-To prevent larger dtypes from being inferred from weak scalar types, do either of:
+---
 
-  1. Explicitly set the datatype of the scalar, like `np.int8(2)`, so that the output type is what you desire:
+### nki.language.bfloat16
 
-> 
->     x = np.ndarray((N, M), dtype=np.float16)
->     y = np.float16(2)
->     z = nl.add(x, y)
->     assert z.dtype == np.float16
->     
+nki.language.bfloat16 = dtype(bfloat16)#
+    
 
-  2. Explicitly set the output dtype of the arithmetic operation:
+16-bit floating-point number (1S,8E,7M)
 
-> 
->     x = np.ndarray((N, M), dtype=np.int16)
->     y = 2
->     z = nl.add(x, y, dtype=nl.bfloat16)
->     assert z.dtype == nl.bfloat16
->     
+---
 
-Note: The Vector Engine internally performs most of the computation in FP32 (see Vector Engine) and casts the output back to the specific type.
+### nki.language.tfloat32
+
+nki.language.tfloat32 = dtype('V4')#
+    
+
+32-bit floating-point number (1S,8E,10M)
 
 ---
 
@@ -542,23 +121,46 @@ To prevent the compiler from automatically widening output dtype based on mismat
     assert z.dtype == nl.bfloat16
     
 
-## Tile Size Constants
-
-### nl.tile_size.gemm_stationary_fmax
-
-    21  TILE_M = nl.tile_size.gemm_stationary_fmax  # 128
-
 ---
 
-### nl.tile_size.pmax
+### Weakly Typed Scalar Type Inference
 
-    22  TILE_K = nl.tile_size.pmax  # 128
+### Weakly Typed Scalar Type Inference
+Weakly typed scalars (scalar values where the type wasn’t explicitly specified) will be inferred as the widest dtype supported by hardware:
 
----
+  * `bool --> uint8`
 
-### nl.tile_size.gemm_moving_fmax
+  * `integer --> int32`
 
-    23  TILE_N = nl.tile_size.gemm_moving_fmax  # 512
+  * `floating --> float32`
+
+Doing an arithmetic operation with a scalar may result in a larger output type than expected, for example:
+
+  * `(np.int8, 2) -> np.int32`
+
+  * `(np.float16, 1.2) -> np.float32`
+
+To prevent larger dtypes from being inferred from weak scalar types, do either of:
+
+  1. Explicitly set the datatype of the scalar, like `np.int8(2)`, so that the output type is what you desire:
+
+> 
+>     x = np.ndarray((N, M), dtype=np.float16)
+>     y = np.float16(2)
+>     z = nl.add(x, y)
+>     assert z.dtype == np.float16
+>     
+
+  2. Explicitly set the output dtype of the arithmetic operation:
+
+> 
+>     x = np.ndarray((N, M), dtype=np.int16)
+>     y = 2
+>     z = nl.add(x, y, dtype=nl.bfloat16)
+>     assert z.dtype == nl.bfloat16
+>     
+
+Note: The Vector Engine internally performs most of the computation in FP32 (see Vector Engine) and casts the output back to the specific type.
 
 ---
 
@@ -583,731 +185,6 @@ Attributes
 
 ---
 
-### tile_size
-
-`tile_size` | Tile size constants.  
-
----
-
-### nki.language.tile_size.total_available_sbuf_size
-
-    * `nki.language.tile_size.total_available_sbuf_size` to get total available SBUF size
-
-## Memory Buffers and Allocation
-
-### nl.shared_hbm
-
-    13  result = nl.ndarray((64, 512), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
----
-
-### nki.language.shared_hbm
-
-  * Fixed reshape of `shared_hbm` and `private_hbm` tensors failing partition size check. Reshape only recognized plain `hbm` memory as exempt from partition-dimension size validation. Tensors allocated in `shared_hbm` or `private_hbm` (used for cross-kernel and kernel-private storage) incorrectly triggered a “partition size mismatch” error when reshaped. See nki.language.shared_hbm and nki.language.private_hbm.
-
----
-
-### nki.language.private_hbm
-
-  * Fixed reshape of `shared_hbm` and `private_hbm` tensors failing partition size check. Reshape only recognized plain `hbm` memory as exempt from partition-dimension size validation. Tensors allocated in `shared_hbm` or `private_hbm` (used for cross-kernel and kernel-private storage) incorrectly triggered a “partition size mismatch” error when reshaped. See nki.language.shared_hbm and nki.language.private_hbm.
-
----
-
-### hbm
-
-`hbm` | HBM - Alias of private_hbm  
-
----
-
-### nl.psum
-
-    29      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
-
----
-
-### nki.language.psum
-
-# nki.language.psum
-nki.language.psum = Ellipsis#
-    
-
-PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.psum.auto_alloc()`
-
----
-
-### psum
-
-`psum` | PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.psum.auto_alloc()`  
-
----
-
-### nl.sbuf
-
-    34        rhs_tile = nl.ndarray((TILE_K, TILE_N), dtype=rhs.dtype, buffer=nl.sbuf)
-    35
-
----
-
-### nki.language.sbuf
-
-# nki.language.sbuf
-nki.language.sbuf = Ellipsis#
-    
-
-State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.sbuf.auto_alloc()`
-
----
-
-### sbuf
-
-`sbuf` | State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.sbuf.auto_alloc()`  
-
----
-
-### sbuf.alloc
-
-`sbuf.alloc` | Allocate SBUF memory space for each logical block in a tensor using a customized allocation method.  
-
----
-
-### nki.compiler.sbuf.alloc
-
-nki.compiler.sbuf.alloc(func)
-    
-
-Allocate SBUF memory space for each logical block in a tensor using a customized allocation method.
-
-This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
-
-In NKI, a SBUF tensor (declared using NKI tensor creation APIs) can have three kinds of dimensions, in order: logical block(B), partition(P), and free(F). The partition and free dimensions directly map to the SBUF dimensions. Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints. The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number of physical tiles being allocated.
-
-`ncc.sbuf.alloc` should be assigned to the `buffer` field of a NKI tensor declaration API. For example,
-    
-    
-    nki_tensor = nl.ndarray((4, 8, nl.par_dim(128), 4, 32), dtype=nl.bfloat16, buffer=ncc.sbuf.alloc(...))
-    
-
-`ncc.sbuf.alloc` allows programmers to specify the physical location of each logical tile in the tensor. The API accepts a single input `func` parameter, which is a callable object that takes in:
-
-  1. a tuple of integers `idx` representing a logical block index,
-
-  2. an integer `pdim_size` for the number of partitions the logical tile has, and
-
-  3. an integer `fdim_size` for the number of bytes the logical tile has per partition.
-
-The number of integers in `idx` must match the number of B dimensions the SBUF tensor has. For example, for the above `nki_tensor`, we expect the `idx` tuple to have two integers for a 2D block index.
-
-`pdim_size` should match the partition dimension size of the NKI tensor exactly. `fdim_size` should be the total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes. For the above `sbuf_tensor`, `pdim_size` should be 128, and `fdim_size` should be `4*32*sizeof(nl.bfloat16) = 256` bytes.
-
-The `func` callable must return a tuple of two integers `(start_partition, byte_addr)` indicating the physical tile location for the input logical block index. `start_partition` indicates the lowest partition the physical tile allocation starts from and must follow the these ISA rules:
-
-  * If `64 < pdim_size <= 128`, `start_partition` must be 0
-
-  * If `32 < pdim_size <= 64`, `start_partition` must be 0 or 64
-
-  * If `0 < pdim_size <= 32`, `start_partition` must be one of 0/32/64/96
-
-The `byte_addr` indicates the byte offset into each partition the physical tile starts from. On NeuronCore-v2, a valid `byte_addr` can be any integer values from 0 (inclusive) to 192KiB-16KiB=(192-16)*1024 (exclusive). 192KiB is the physical size of a SBUF partition (defined in architecture guide) and 16KiB is allocated for compiler internal usage. In addition, the `base_addr` must be aligned to `nki.language.constants.sbuf_min_align`.
-
-Note
-
-In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.sbuf.auto_alloc()` or the PSUM variant) and direction allocation APIs (`ncc.sbuf.alloc()`, `ncc.sbuf.mod_alloc()` or the PSUM variants) in the same kernel.
-
-Parameters:
-    
-
-func – a callable object to specify how to place the logical block in SBUF memory.
-
-
----
-
-### sbuf.mod_alloc
-
-`sbuf.mod_alloc` | Allocate SBUF memory space for each logical tile in a tensor through modulo allocation.  
-
----
-
-### nki.compiler.sbuf.mod_alloc
-
-nki.compiler.sbuf.mod_alloc(*, base_addr, base_partition=0, num_par_tiles=(), num_free_tiles=())
-    
-
-Allocate SBUF memory space for each logical tile in a tensor through modulo allocation.
-
-This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
-
-This API is equivalent to calling nisa.compiler.alloc() with a callable `psum_modulo_alloc_func` as defined below.
-    
-    
-     1from typing import Optional, Tuple
-     2from functools import reduce
-     3from operator import mul
-     4import unittest
-     5
-     6def num_elms(shape):
-     7  return reduce(mul, shape, 1)
-     8
-     9def linearize(shape, indices):
-    10  return sum(i * num_elms(shape[dim+1:]) for dim, i in enumerate(indices))
-    11
-    12def modulo_allocate_func(base, allocate_shape, scale):
-    13  def func(indices):
-    14    if not allocate_shape:
-    15      # default shape is always (1, 1, ...)
-    16      allocate_shape_ = (1, ) * len(indices)
-    17    else:
-    18      allocate_shape_ = allocate_shape
-    19    mod_idx = tuple(i % s for i, s in zip(indices, allocate_shape_))
-    20    return linearize(shape=allocate_shape_, indices=mod_idx) * scale + base
-    21  return func
-    22
-    23def mod_alloc(base_addr: int, *, 
-    24               base_partition: Optional[int] = 0,
-    25               num_par_tiles: Optional[Tuple[int, ...]] = (),
-    26               num_free_tiles: Optional[Tuple[int, ...]] = ()):
-    27  def sbuf_modulo_alloc_func(idx, pdim_size, fdim_size):
-    28    return (modulo_allocate_func(base_partition, num_par_tiles, pdim_size)(idx),
-    29          modulo_allocate_func(base_addr, num_free_tiles, fdim_size)(idx))
-    30  return sbuf_modulo_alloc_func
-    31
-    
-
-Here’s an example usage of this API:
-    
-    
-    nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
-                            buffer=nki.compiler.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
-    
-    for i_block in nl.affine_range(4):
-      nki_tensor[i_block, :, :] = nl.load(...)
-      ...                       = nl.exp(nki_tensor[i_block, :, :])
-    
-
-This produces the following allocation:
-
-Table 4 Modulo Allocation Example# Logical Tile Index | Physical Tile `start_partition` | Physical Tile `byte_addr`  
----|---|---  
-(0, ) | 0 | 0 + (0 % 2) * 512 * sizeof(nl.bfloat16) = 0  
-(1, ) | 0 | 0 + (1 % 2) * 512 * sizeof(nl.bfloat16) = 1024  
-(2, ) | 0 | 0 + (2 % 2) * 512 * sizeof(nl.bfloat16) = 0  
-(3, ) | 0 | 0 + (3 % 2) * 512 * sizeof(nl.bfloat16) = 1024  
-  
-With above scheme, we are able to implement double buffering in `nki_tensor`, such that `nl.load` in one iteration can write to one physical tile while `nl.exp` of the previous iteration can read from the other physical tile simultaneously.
-
-Note
-
-In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.sbuf.auto_alloc()` or the PSUM variant) and direction allocation APIs (`ncc.sbuf.alloc()`, `ncc.sbuf.mod_alloc()` or the PSUM variants).
-
-Parameters:
-    
-
-  * base_addr – the base address in the free(F) dimension of the SBUF in bytes.
-
-  * base_partition – the partition where the physical tile starts from. Must be 0 in the current version.
-
-  * num_par_tiles – the number of physical tiles on the partition dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-
-  * num_free_tiles – the number of physical tiles on the free dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
-
----
-
-### sbuf.auto_alloc
-
-`sbuf.auto_alloc` | Returns a maker to indicate the tensor should be automatically allocated by compiler.  
-
----
-
-### nki.compiler.sbuf.auto_alloc
-
-nki.compiler.sbuf.auto_alloc()
-    
-
-Returns a maker to indicate the tensor should be automatically allocated by compiler. All SBUF tensors in a kernel must either all be marked as `auto_alloc()`, or all be allocated with `alloc` or `mod_alloc`.
-
-Initialize a tensor with `buffer=nl.sbuf` is equivalent to `buffer=ncc.sbuf.auto_alloc()`.
-
----
-
-### psum.alloc
-
-`psum.alloc` | Allocate PSUM memory space for each logical block in a tensor using a customized allocation method.  
-
----
-
-### nki.compiler.psum.alloc
-
-nki.compiler.psum.alloc(func)
-    
-
-Allocate PSUM memory space for each logical block in a tensor using a customized allocation method.
-
-This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
-
-In NKI, a PSUM tensor (declared using NKI tensor creation APIs) can have three kinds of dimensions, in order: logical block(B), partition(P), and free(F). The partition and free dimensions directly map to the PSUM dimensions. Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints. The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number of physical tiles being allocated.
-
-`ncc.psum.alloc` should be assigned to the `buffer` field of a NKI tensor declaration API. For example,
-    
-    
-    nki_tensor = nl.ndarray((2, 4, nl.par_dim(128), 512), dtype=nl.float32, buffer=ncc.psum.alloc(...))
-    
-
-`ncc.psum.alloc` allows programmers to specify the physical location of each logical tile in the tensor. The API accepts a single input `func` parameter, which is a callable object that takes in:
-
-  1. a tuple of integers `idx` representing a logical block index,
-
-  2. an integer `pdim_size` for the number of partitions the logical tile has, and
-
-  3. an integer `fdim_size` for the number of bytes the logical tile has per partition.
-
-The number of integers in `idx` must match the number of B dimensions the PSUM tensor has. For example, for the above `nki_tensor`, we expect the `idx` tuple to have two integers for a 2D block index.
-
-`pdim_size` should match the partition dimension size of the NKI tensor exactly. `fdim_size` should be the total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes. For the above `nki_tensor`, `pdim_size` should be 128, and `fdim_size` should be `512*sizeof(nl.float32) = 2048` bytes.
-
-Note
-
-In current release, `fdim_size` cannot exceed 2KiB, which is the size of a single PSUM bank per partition. Therefore, a physical PSUM tile cannot span multiple PSUM banks. Check out Trainium/Inferentia2 Architecture Guide for NKI for more information on PSUM banks.
-
-The `func` returns a tuple of three integers `(bank_id, start_partition, byte_addr)` indicating the physical tile location for the input logical block index.
-
-`bank_id` indicates the PSUM bank ID of the physical tile. `start_partition` indicates the lowest partition the physical tile allocation starts from. The `byte_addr` indicates the byte offset into each PSUM bank per partition the physical tile starts from.
-
-Note
-
-In current release, `start_partition` and `byte_addr` must both be 0.
-
-Note
-
-In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.psum.auto_alloc()` or the SBUF variant) and direction allocation APIs (`ncc.psum.alloc()`, `ncc.psum.mod_alloc()` or the SBUF variants) in the same kernel.
-
-Parameters:
-    
-
-func – a callable object to specify how to place the logical block in PSUM memory.
-
----
-
-### psum.mod_alloc
-
-`psum.mod_alloc` | Allocate PSUM memory space for each logical block in a tensor through modulo allocation.  
-
----
-
-### nki.compiler.psum.mod_alloc
-
-nki.compiler.psum.mod_alloc(*, base_bank, base_addr=0, base_partition=0, num_bank_tiles=(), num_par_tiles=(), num_free_tiles=())
-    
-
-Allocate PSUM memory space for each logical block in a tensor through modulo allocation.
-
-This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
-
-This API is equivalent to calling nki.compiler.psum.alloc() with a callable `psum_modulo_alloc_func` as defined below.
-    
-    
-     1from typing import Optional, Tuple
-     2from functools import reduce
-     3from operator import mul
-     4import unittest
-     5
-     6def num_elems(shape):
-     7  return reduce(mul, shape, 1)
-     8
-     9def linearize(shape, indices):
-    10  return sum(i * num_elems(shape[dim+1:]) for dim, i in enumerate(indices))
-    11
-    12def modulo_allocate_func(base, allocate_shape, scale):
-    13  def func(indices):
-    14    if not allocate_shape:
-    15      # default shape is always (1, 1, ...)
-    16      allocate_shape_ = (1, ) * len(indices)
-    17    else:
-    18      allocate_shape_ = allocate_shape
-    19    mod_idx = tuple(i % s for i, s in zip(indices, allocate_shape_))
-    20    return linearize(shape=allocate_shape_, indices=mod_idx) * scale + base
-    21  return func
-    22
-    23def mod_alloc(base_addr: int, *, 
-    24               base_bank: Optional[int] = 0,
-    25               num_bank_tiles: Optional[Tuple[int]] = (),
-    26               base_partition: Optional[int] = 0,
-    27               num_par_tiles: Optional[Tuple[int]] = (),
-    28               num_free_tiles: Optional[Tuple[int]] = ()):
-    29  def psum_modulo_alloc_func(idx, pdim_size, fdim_size):
-    30    # partial bank allocation is not allowed
-    31    return (modulo_allocate_func(base_bank, num_bank_tiles, 1)(idx),
-    32          modulo_allocate_func(base_partition, num_par_tiles, pdim_size)(idx),
-    33          modulo_allocate_func(base_addr, num_free_tiles, fdim_size)(idx))
-    34  return psum_modulo_alloc_func
-    35
-    
-
-Here’s an example usage of this API:
-    
-    
-    psum_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.float32,
-                             buffer=ncc.psum.mod_alloc(base_bank=0,
-                                                        base_addr=0,
-                                                        num_bank_tiles=(2,)))
-    
-    for i_block in nl.affine_range(4):
-      psum[i_block, :, :] = nisa.nc_matmul(...)
-      ...                 = nl.exp(psum[i_block, :, :])
-    
-
-This produces the following allocation:
-
-Table 5 Modulo Allocation Example# Logical Tile Index | Physical Tile `bank_id` | Physical Tile `start_partition` | Physical Tile `byte_addr`  
----|---|---|---  
-(0, ) | 0 | 0 | 0  
-(1, ) | 1 | 0 | 0  
-(2, ) | 0 | 0 | 0  
-(3, ) | 1 | 0 | 0  
-  
-With above scheme, we are able to implement double buffering in `nki_tensor`, such that `nisa.nc_matmul` in one iteration can write to one physical tile while `nl.exp` of the previous iteration can read from the other physical tile simultaneously.
-
-Note
-
-In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.psum.auto_alloc()` or the SBUF variant) and direction allocation APIs (`ncc.psum.alloc()`, `ncc.psum.mod_alloc()` or the SBUF variants).
-
-Parameters:
-    
-
-  * base_addr – the base address in bytes along the free(F) dimension of the PSUM bank. Must be 0 in the current version.
-
-  * base_bank – the base bank ID that the physical tiles start from.
-
-  * num_bank_tiles – the number of PSUM banks allocated for the tensor.
-
-  * base_partition – the partition ID the physical tiles start from. Must be 0 in the current version.
-
-  * num_par_tiles – the number of physical tiles along the partition dimension allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
-
-  * num_free_tiles – the number of physical tiles on the free dimension per PSUM bank allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
-
-
----
-
-### psum.auto_alloc
-
-`psum.auto_alloc` | Returns a maker to indicate the tensor should be automatically allocated by compiler.  
-
----
-
-### nki.compiler.psum.auto_alloc
-
-nki.compiler.psum.auto_alloc()
-    
-
-Returns a maker to indicate the tensor should be automatically allocated by compiler. All PSUM tensors in a kernel must either all be marked as `auto_alloc()`, or all be allocated with `alloc` or `mod_alloc`.
-
-Initialize a tensor with `buffer=nl.psum` is equivalent to `buffer=ncc.psum.auto_alloc()`.
-
----
-
-### nki.compiler.enable_stack_allocator
-
-nki.compiler.enable_stack_allocator(func=None, log_level=50)
-    
-
-Use stack allocator to allocate the psum and sbuf tensors in the kernel.
-
-Must use together with skip_middle_end_transformations.
-    
-    
-    from neuronxcc import nki
-    
-    @nki.compiler.enable_stack_allocator
-    @nki.compiler.skip_middle_end_transformations
-    @nki.jit
-    def kernel(...):
-      ...
-    
-
----
-
-### enable_stack_allocator
-
-`enable_stack_allocator` | Use stack allocator to allocate the psum and sbuf tensors in the kernel.  
-
----
-
-### nki.compiler.force_auto_alloc
-
-nki.compiler.force_auto_alloc(func=None)
-    
-
-Force automatic allocation to be turned on in the kernel.
-
-This will ignore any direct allocation inside the kernel
-
-
----
-
-### force_auto_alloc
-
-`force_auto_alloc` | Force automatic allocation to be turned on in the kernel.  
-
----
-
-### nki.compiler.skip_middle_end_transformations
-
-nki.compiler.skip_middle_end_transformations(func=None)
-    
-
-Skip all middle end transformations on the kernel
-
-
----
-
-### skip_middle_end_transformations
-
-`skip_middle_end_transformations` | Skip all middle end transformations on the kernel  
-
-## Tensor Creation and Initialization
-
-### nl.ndarray
-
-    13  result = nl.ndarray((64, 512), dtype=lhsT.dtype, buffer=nl.shared_hbm)
-
----
-
-### nki.language.ndarray
-
-nki.language.ndarray(shape, dtype, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor of given shape and dtype on the specified buffer.
-
-((Similar to numpy.ndarray))
-
-Parameters:
-    
-
-  * shape – the shape of the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a new tensor allocated on the buffer.
-
----
-
-### ndarray
-
-`ndarray` | Create a new tensor of given shape and dtype on the specified buffer.  
-
----
-
-### nl.zeros
-
-    29      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
-
----
-
-### nki.language.zeros
-
-nki.language.zeros(shape, dtype, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor of given shape and dtype on the specified buffer, filled with zeros.
-
-((Similar to numpy.zeros))
-
-Parameters:
-    
-
-  * shape – the shape of the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a new tensor allocated on the buffer.
-
----
-
-### zeros
-
-`zeros` | Create a new tensor of given shape and dtype on the specified buffer, filled with zeros.  
-
----
-
-### nki.language.zeros_like
-
-nki.language.zeros_like(a, dtype=None, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor of zeros with the same shape and type as a given tensor.
-
-((Similar to numpy.zeros_like))
-
-Parameters:
-    
-
-  * a – the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a tensor of zeros with the same shape and type as a given tensor.
-
----
-
-### zeros_like
-
-`zeros_like` | Create a new tensor of zeros with the same shape and type as a given tensor.  
-
----
-
-### nki.language.ones
-
-nki.language.ones(shape, dtype, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor of given shape and dtype on the specified buffer, filled with ones.
-
-((Similar to numpy.ones))
-
-Parameters:
-    
-
-  * shape – the shape of the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a new tensor allocated on the buffer.
-
----
-
-### ones
-
-`ones` | Create a new tensor of given shape and dtype on the specified buffer, filled with ones.  
-
----
-
-### nki.language.full
-
-nki.language.full(shape, fill_value, dtype, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor of given shape and dtype on the specified buffer, filled with initial value.
-
-((Similar to numpy.full))
-
-Parameters:
-    
-
-  * shape – the shape of the tensor.
-
-  * fill_value – the initial value of the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a new tensor allocated on the buffer.
-
----
-
-### full
-
-`full` | Create a new tensor of given shape and dtype on the specified buffer, filled with initial value.  
-
----
-
-### nki.language.empty_like
-
-nki.language.empty_like(a, dtype=None, *, buffer=None, name='', **kwargs)
-    
-
-Create a new tensor with the same shape and type as a given tensor.
-
-((Similar to numpy.empty_like))
-
-Parameters:
-    
-
-  * a – the tensor.
-
-  * dtype – the data type of the tensor (see Supported Data Types for more information).
-
-  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
-
-  * name – the name of the tensor.
-
-Returns:
-    
-
-a tensor with the same shape and type as a given tensor.
-
-### nki.language.empty_like
-
-    * `nki.language` new APIs: `mod`, `fmod`, `reciprocal`, `broadcast_to`, `empty_like`
-
----
-
-### empty_like
-
-`empty_like` | Create a new tensor with the same shape and type as a given tensor.  
-
----
-
-### nki.language.rand
-
-nki.language.rand(shape, dtype=<class 'numpy.float32'>, **kwargs)
-    
-
-Generate a tile of given shape and dtype, filled with random values that are sampled from a uniform distribution between 0 and 1.
-
-Parameters:
-    
-
-  * shape – the shape of the tile.
-
-  * dtype – the data type of the tile (see Supported Data Types for more information).
-
-Returns:
-    
-
-a tile with random values.
-
----
-
-### rand
-
-`rand` | Generate a tile of given shape and dtype, filled with random values that are sampled from a uniform distribution between 0 and 1.  
-
----
-
 ### nki.language.shared_constant
 
 nki.language.shared_constant(constant, dtype=None, **kwargs)
@@ -1327,29 +204,28 @@ a tensor which contains the constant data
 
 ---
 
-### shared_constant
-
-`shared_constant` | Create a new tensor filled with the data specified by data array.  
-
----
-
 ### nki.language.shared_identity_matrix
 
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
+nki.language.shared_identity_matrix(n, dtype=<class 'numpy.uint8'>, **kwargs)
+    
 
----
+Create a new identity tensor with specified data type.
 
-### shared_identity_matrix
+This function has the same behavior to nki.language.shared_constant but is preferred if the constant matrix is an identity matrix. The compiler will reuse all the identity matrices of the same dtype in the graph to save space.
 
-`shared_identity_matrix` | Create a new identity tensor with specified data type.  
+Parameters:
+    
 
----
+  * n – the number of rows(and columns) of the returned identity matrix
 
-### random_seed
+  * dtype – the data type of the tensor, default to be `np.uint8` (see Supported Data Types for more information).
 
-`random_seed` | Sets a seed, specified by user, to the random number generator on HW.  
+Returns:
+    
 
-## Tensor Properties and Manipulation
+a tensor which contains the identity tensor
+
+## Tensor Creation and Initialization
 
 ### nki.tensor
 
@@ -1484,129 +360,350 @@ A new tensor object refer to the original tensor data, NO copy will occur
 
 ---
 
-### tensor
+### nki.language.ndarray
 
-`tensor` | A tensor object represents a multidimensional, homogeneous array of fixed-size items  
-
----
-
-### assert_shape
-
-assert_shape(shape)
+nki.language.ndarray(shape, dtype, *, buffer=None, name='', **kwargs)
     
 
-Assert that the tensor has the given shape.
+Create a new tensor of given shape and dtype on the specified buffer.
+
+((Similar to numpy.ndarray))
 
 Parameters:
     
 
-shape – The expected shape.
+  * shape – the shape of the tensor.
+
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
+
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
+
+  * name – the name of the tensor.
 
 Returns:
     
 
-The tensor.
+a new tensor allocated on the buffer.
 
 ---
 
-### astype
+### nki.language.full
 
-astype(dtype)
+nki.language.full(shape, fill_value, dtype, *, buffer=None, name='', **kwargs)
     
 
-Copy of the tensor, cast to a specified type.
+Create a new tensor of given shape and dtype on the specified buffer, filled with initial value.
+
+((Similar to numpy.full))
 
 Parameters:
     
 
-dtype – The target dtype
+  * shape – the shape of the tensor.
+
+  * fill_value – the initial value of the tensor.
+
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
+
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
+
+  * name – the name of the tensor.
 
 Returns:
     
 
-the tensor with new type. Copy ALWAYS occur
+a new tensor allocated on the buffer.
 
 ---
 
-### reshape
+### nki.language.zeros
 
-reshape(shape)
+nki.language.zeros(shape, dtype, *, buffer=None, name='', **kwargs)
     
 
-Gives a new shape to an array without changing its data.
+Create a new tensor of given shape and dtype on the specified buffer, filled with zeros.
+
+((Similar to numpy.zeros))
 
 Parameters:
     
 
-shape – The new shape
+  * shape – the shape of the tensor.
+
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
+
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
+
+  * name – the name of the tensor.
 
 Returns:
     
 
-Return a new view of the tensor, no copy will occur
+a new tensor allocated on the buffer.
 
 ---
 
-### view
+### nki.language.ones
 
-view(dtype)
+nki.language.ones(shape, dtype, *, buffer=None, name='', **kwargs)
     
 
-Return a new view of the tensor, reinterpret to a specified type.
+Create a new tensor of given shape and dtype on the specified buffer, filled with ones.
+
+((Similar to numpy.ones))
+
+Parameters:
+    
+
+  * shape – the shape of the tensor.
+
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
+
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
+
+  * name – the name of the tensor.
 
 Returns:
     
 
-A new tensor object refer to the original tensor data, NO copy will occur
+a new tensor allocated on the buffer.
 
 ---
 
-### dtype
+### nki.language.zeros_like
 
-property dtype#
+nki.language.zeros_like(a, dtype=None, *, buffer=None, name='', **kwargs)
     
 
-Data type of the tensor.
+Create a new tensor of zeros with the same shape and type as a given tensor.
 
----
+((Similar to numpy.zeros_like))
 
-### itemsize
-
-property itemsize#
+Parameters:
     
 
-Length of one tensor element in bytes.
+  * a – the tensor.
 
----
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
 
-### ndim
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
 
-property ndim#
+  * name – the name of the tensor.
+
+Returns:
     
 
-Number of dimensions of the tensor.
+a tensor of zeros with the same shape and type as a given tensor.
 
 ---
 
-### shape
+### nki.language.empty_like
 
-property shape#
+nki.language.empty_like(a, dtype=None, *, buffer=None, name='', **kwargs)
     
 
-Shape of the tensor.
+Create a new tensor with the same shape and type as a given tensor.
 
-## Memory Load and Store (DMA)
+((Similar to numpy.empty_like))
 
-### nl.load
+Parameters:
+    
 
-    31  lhs_tile = nl.load(lhsT[i_lhsT_p, i_lhsT_f])
-    32  rhs_tile = nl.load(rhs[i_rhs_p, i_rhs_f])
-    33
+  * a – the tensor.
+
+  * dtype – the data type of the tensor (see Supported Data Types for more information).
+
+  * buffer – the specific buffer (ie, sbuf, psum, hbm), defaults to sbuf.
+
+  * name – the name of the tensor.
+
+Returns:
+    
+
+a tensor with the same shape and type as a given tensor.
 
 ---
+
+### nki.language.rand
+
+nki.language.rand(shape, dtype=<class 'numpy.float32'>, **kwargs)
+    
+
+Generate a tile of given shape and dtype, filled with random values that are sampled from a uniform distribution between 0 and 1.
+
+Parameters:
+    
+
+  * shape – the shape of the tile.
+
+  * dtype – the data type of the tile (see Supported Data Types for more information).
+
+Returns:
+    
+
+a tile with random values.
+
+---
+
+### nki.language.random_seed
+
+nki.language.random_seed(seed, *, mask=None, **kwargs)
+    
+
+Sets a seed, specified by user, to the random number generator on HW. Using the same seed will generate the same sequence of random numbers when using together with the random() API
+
+Parameters:
+    
+
+  * seed – a 32-bit scalar value to use as the seed.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+none
+
+---
+
+### nki.isa.memset
+
+# nki.isa.memset
+nki.isa.memset(shape, value, dtype, *, mask=None, engine=engine.unknown, **kwargs)
+    
+
+Initialize a tile filled with a compile-time constant value using Vector or GpSimd Engine. The shape of the tile is specified in the `shape` field and the initialized value in the `value` field. The memset instruction supports all valid NKI dtypes (see Supported Data Types).
+
+Parameters:
+    
+
+  * shape – the shape of the output tile; layout: (partition axis, free axis). Note that memset ignores nl.par_dim() and always treats the first dimension as the partition dimension.
+
+  * value – the constant value to initialize with
+
+  * dtype – data type of the output tile (see Supported Data Types for more information)
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * engine – specify which engine to use for memset: `nki.isa.vector_engine` or `nki.isa.gpsimd_engine` ; `nki.isa.unknown_engine` by default, lets compiler select the best engine for the given input tile shape
+
+Returns:
+    
+
+a tile with shape shape whose elements are initialized to value.
+
+Estimated instruction cost:
+
+Given `N` is the number of elements per partition in the output tile, and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+  * If the initialized value is zero and output data type is bfloat16/float16, `max(MIN_II, N/2)` Vector Engine cycles;
+
+  * Otherwise, `max(MIN_II, N)` Vector Engine cycles
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    ...
+    
+    ##################################################################
+    # Example 1: Initialize a float32 tile a of shape (128, 128)
+    # with a value of 0.2
+    ##################################################################
+    a = nisa.memset(shape=(128, 128), value=0.2, dtype=nl.float32)
+    
+
+---
+
+### nki.isa.iota
+
+nki.isa.iota(expr, dtype, *, mask=None, **kwargs)
+    
+
+Build a constant literal in SBUF using GpSimd Engine, rather than transferring the constant literal values from the host to device.
+
+The iota instruction takes an affine expression of `nki.language.arange()` indices as the input pattern to generate constant index values (see examples below for more explanation). The index values are computed in 32-bit integer math. The GpSimd Engine is capable of casting the integer results into any desirable data type (specified by `dtype`) before writing them back to SBUF, at no additional performance cost.
+
+Estimated instruction cost:
+
+`150 + N` GpSimd Engine cycles, where `N` is the number of elements per partition in the output tile.
+
+Parameters:
+    
+
+  * expr – an input affine expression of `nki.language.arange()`
+
+  * dtype – output data type of the generated constant literal (see Supported Data Types for more information)
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+an output tile in SBUF
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    from neuronxcc.nki.typing import tensor
+    
+    ##################################################################
+    # Example 1: Generate tile a of 512 constant values in SBUF partition 0
+    # that start at 0 and increment by 1:
+    ##################################################################
+    # a = [0, 1, ..., 511]
+    expr_a = nl.arange(0, 512)[None, :]
+    a: tensor[1, 512] = nisa.iota(expr_a, dtype=nl.int32)
+    
+    ##################################################################
+    # Example 2: Generate tile b of 128 constant values across SBUF partitions
+    # that start at 0 and increment by 1, with one value per partition:
+    # b = [[0],
+    #      [1],
+    #      ...,
+    #      [127]]
+    ##################################################################
+    expr_b = nl.arange(0, 128)[:, None]
+    b: tensor[128, 1] = nisa.iota(expr_b, dtype=nl.int32)
+    
+    ##################################################################
+    # Example 3: Generate tile c of 512 constant values in SBUF partition 0
+    # that start at 0 and decrement by 1:
+    # c = [0, -1, ..., -511]
+    ##################################################################
+    expr_c = expr_a * -1
+    c: tensor[1, 512] = nisa.iota(expr_c, dtype=nl.int32)
+    
+    ##################################################################
+    # Example 4: Generate tile d of 128 constant values across SBUF
+    # partitions that start at 5 and increment by 2
+    ##################################################################
+    # d = [[5],
+    #      [7],
+    #      ...,
+    #      [259]]
+    expr_d = 5 + expr_b * 2
+    d: tensor[128, 1] = nisa.iota(expr_d, dtype=nl.int32)
+    
+    ##################################################################
+    # Example 5: Generate tile e of shape [128, 512] by
+    # broadcast-add expr_a and expr_b
+    # e = [[0, 1, ..., 511],
+    #      [1, 2, ..., 512],
+    #      ...
+    #      [127, 2, ..., 638]]
+    ##################################################################
+    e: tensor[128, 512] = nisa.iota(expr_a + expr_b, dtype=nl.int32)
+    
+
+## Memory Operations and DMA
 
 ### nki.language.load
 
+# nki.language.load
 nki.language.load(src, *, mask=None, dtype=None, **kwargs)
     
 
@@ -1701,20 +798,9 @@ Also supports indirect DMA access with dynamic index values:
 
 ---
 
-### load
-
-`load` | Load a tensor from device memory (HBM) into on-chip memory (SBUF).  
-
----
-
-### nl.store
-
-    44  nl.store(result[i_out_p, i_out_f], value=result_sbuf)
-
----
-
 ### nki.language.store
 
+# nki.language.store
 nki.language.store(dst, value, *, mask=None, **kwargs)
     
 
@@ -1803,20 +889,11 @@ Also supports indirect DMA access with dynamic index values:
     nl.store(data_tensor[idx_tile, i_f], value=data_tile[0:64, 0:512]) 
     
 
-### nki.language.store
-
-    * `nki.language.store` supports PSUM buffer with extra additional copy inserted.
-
----
-
-### store
-
-`store` | Store into a tensor on device memory (HBM) from on-chip memory (SBUF).  
-
 ---
 
 ### nki.language.load_transpose2d
 
+# nki.language.load_transpose2d
 nki.language.load_transpose2d(src, *, mask=None, dtype=None, **kwargs)
     
 
@@ -1848,16 +925,6 @@ a new tile on SBUF with values from `src` 2D-transposed.
     local_tile: tensor[M, N] = nl.load_transpose2d(in_tensor)
     ...
     
-
-Note
-
-Partition dimension size can’t exceed the hardware limitation of `nki.language.tile_size.pmax`, see Tile size considerations.
-
----
-
-### load_transpose2d
-
-`load_transpose2d` | Load a tensor from device memory (HBM) and 2D-transpose the data before storing into on-chip memory (SBUF).  
 
 ---
 
@@ -1902,79 +969,6 @@ Returns:
     # resulting in rmw_tensor = rmw_tensor + value
     ########################################################################
     nl.atomic_rmw(rmw_tensor[indices_tile, ix], value=value, op=np.add)
-    
-
----
-
-### atomic_rmw
-
-`atomic_rmw` | Perform an atomic read-modify-write operation on HBM data `dst = op(dst, value)`  
-
----
-
-### nki.isa.dma_transpose
-
-nki.isa.dma_transpose(src, *, axes=None, mask=None, dtype=None, **kwargs)
-    
-
-Perform a transpose on input `src` using DMA Engine.
-
-The permutation of transpose follow the rules described below:
-
-  1. For 2-d input tile, the permutation will be [1, 0]
-
-  2. For 3-d input tile, the permutation will be [2, 1, 0]
-
-  3. For 4-d input tile, the permutation will be [3, 1, 2, 0]
-
-Parameters:
-    
-
-  * src – the source of transpose, must be a tile in HBM or SBUF.
-
-  * axes – transpose axes where the i-th axis of the transposed tile will correspond to the axes[i] of the source. Supported axes are `(1, 0)`, `(2, 1, 0)`, and `(3, 1, 2, 0)`.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * dge_mode – (optional) specify which Descriptor Generation Engine (DGE) mode to use for copy: `nki.isa.dge_mode.none` (turn off DGE) or `nki.isa.dge_mode.swdge` (software DGE) or `nki.isa.dge_mode.hwdge` (hardware DGE) or `nki.isa.dge_mode.unknown` (by default, let compiler select the best DGE mode). HWDGE is only supported for NeuronCore-v3+.
-
-Returns:
-    
-
-a tile with transposed content
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    
-    ############################################################################
-    # Example 1: Simple 2D transpose (HBM->SB)
-    ############################################################################
-    def nki_dma_transpose_2d_hbm2sb(a):
-      b = nisa.dma_transpose(a)
-      return b
-    
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    
-    ############################################################################
-    # Example 2: Simple 2D transpose (SB->SB)
-    ############################################################################
-    def nki_dma_transpose_2d_sb2sb(a):
-      a_sb = nl.load(a)
-      b = nisa.dma_transpose(a_sb)
-      return b
-    
-
-### nki.isa.dma_transpose
-
-    * nki.isa.dma_transpose now supports indirect addressing
 
 ---
 
@@ -2180,50 +1174,527 @@ Example:
     nisa.dma_copy(dst=out_tensor[idx_tile, iy], src=inp_tile, oob_mode=nisa.oob_mode.skip)
     
 
-### nki.isa.dma_copy
-
-    * nki.isa.dma_copy now supports `unique_indices` parameter
-
 ---
 
-### nki.isa.dma_compute
+### nki.isa.dma_transpose
 
-    * `nki.isa.dma_compute`
-
-## Copy and Broadcast
-
-### nl.copy
-
-    40  result_sbuf = nl.copy(result_psum, dtype=result.dtype)
-
----
-
-### nki.language.copy
-
-nki.language.copy(src, *, mask=None, dtype=None, **kwargs)
+# nki.isa.dma_transpose
+nki.isa.dma_transpose(src, *, axes=None, mask=None, dtype=None, **kwargs)
     
 
-Create a copy of the src tile.
+Perform a transpose on input `src` using DMA Engine.
+
+The permutation of transpose follow the rules described below:
+
+  1. For 2-d input tile, the permutation will be [1, 0]
+
+  2. For 3-d input tile, the permutation will be [2, 1, 0]
+
+  3. For 4-d input tile, the permutation will be [3, 1, 2, 0]
 
 Parameters:
     
 
-  * src – the source of copy, must be a tile in SBUF or PSUM.
+  * src – the source of transpose, must be a tile in HBM or SBUF.
+
+  * axes – transpose axes where the i-th axis of the transposed tile will correspond to the axes[i] of the source. Supported axes are `(1, 0)`, `(2, 1, 0)`, and `(3, 1, 2, 0)`.
 
   * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
   * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
 
+  * dge_mode – (optional) specify which Descriptor Generation Engine (DGE) mode to use for copy: `nki.isa.dge_mode.none` (turn off DGE) or `nki.isa.dge_mode.swdge` (software DGE) or `nki.isa.dge_mode.hwdge` (hardware DGE) or `nki.isa.dge_mode.unknown` (by default, let compiler select the best DGE mode). HWDGE is only supported for NeuronCore-v3+.
+
 Returns:
     
 
-a new tile with the same layout as src, this new tile will be in SBUF, but can be also assigned to a PSUM tensor.
+a tile with transposed content
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    
+    ############################################################################
+    # Example 1: Simple 2D transpose (HBM->SB)
+    ############################################################################
+    def nki_dma_transpose_2d_hbm2sb(a):
+      b = nisa.dma_transpose(a)
+      return b
+    
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    
+    ############################################################################
+    # Example 2: Simple 2D transpose (SB->SB)
+    ############################################################################
+    def nki_dma_transpose_2d_sb2sb(a):
+      a_sb = nl.load(a)
+      b = nisa.dma_transpose(a_sb)
+      return b
+    
+
+## Memory Allocation and Buffers
+
+### nki.language.sbuf
+
+# nki.language.sbuf
+nki.language.sbuf = Ellipsis#
+    
+
+State Buffer - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.sbuf.auto_alloc()`
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
 
 ---
 
-### copy
+### nki.language.psum
 
-`copy` | Create a copy of the src tile.  
+# nki.language.psum
+nki.language.psum = Ellipsis#
+    
+
+PSUM - Only visible to each individual kernel instance in the SPMD grid, alias of `nki.compiler.psum.auto_alloc()`
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
+
+---
+
+### nki.language.private_hbm
+
+nki.language.private_hbm = Ellipsis#
+    
+
+HBM - Only visible to each individual kernel instance in the SPMD grid
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
+
+---
+
+### nki.compiler.sbuf.alloc
+
+# nki.compiler.sbuf.alloc
+nki.compiler.sbuf.alloc(func)
+    
+
+Allocate SBUF memory space for each logical block in a tensor using a customized allocation method.
+
+This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
+
+In NKI, a SBUF tensor (declared using NKI tensor creation APIs) can have three kinds of dimensions, in order: logical block(B), partition(P), and free(F). The partition and free dimensions directly map to the SBUF dimensions. Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints. The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number of physical tiles being allocated.
+
+`ncc.sbuf.alloc` should be assigned to the `buffer` field of a NKI tensor declaration API. For example,
+    
+    
+    nki_tensor = nl.ndarray((4, 8, nl.par_dim(128), 4, 32), dtype=nl.bfloat16, buffer=ncc.sbuf.alloc(...))
+    
+
+`ncc.sbuf.alloc` allows programmers to specify the physical location of each logical tile in the tensor. The API accepts a single input `func` parameter, which is a callable object that takes in:
+
+  1. a tuple of integers `idx` representing a logical block index,
+
+  2. an integer `pdim_size` for the number of partitions the logical tile has, and
+
+  3. an integer `fdim_size` for the number of bytes the logical tile has per partition.
+
+The number of integers in `idx` must match the number of B dimensions the SBUF tensor has. For example, for the above `nki_tensor`, we expect the `idx` tuple to have two integers for a 2D block index.
+
+`pdim_size` should match the partition dimension size of the NKI tensor exactly. `fdim_size` should be the total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes. For the above `sbuf_tensor`, `pdim_size` should be 128, and `fdim_size` should be `4*32*sizeof(nl.bfloat16) = 256` bytes.
+
+The `func` callable must return a tuple of two integers `(start_partition, byte_addr)` indicating the physical tile location for the input logical block index. `start_partition` indicates the lowest partition the physical tile allocation starts from and must follow the these ISA rules:
+
+  * If `64 < pdim_size <= 128`, `start_partition` must be 0
+
+  * If `32 < pdim_size <= 64`, `start_partition` must be 0 or 64
+
+  * If `0 < pdim_size <= 32`, `start_partition` must be one of 0/32/64/96
+
+The `byte_addr` indicates the byte offset into each partition the physical tile starts from. On NeuronCore-v2, a valid `byte_addr` can be any integer values from 0 (inclusive) to 192KiB-16KiB=(192-16)*1024 (exclusive). 192KiB is the physical size of a SBUF partition (defined in architecture guide) and 16KiB is allocated for compiler internal usage. In addition, the `base_addr` must be aligned to `nki.language.constants.sbuf_min_align`.
+
+Note
+
+In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.sbuf.auto_alloc()` or the PSUM variant) and direction allocation APIs (`ncc.sbuf.alloc()`, `ncc.sbuf.mod_alloc()` or the PSUM variants) in the same kernel.
+
+Parameters:
+    
+
+func – a callable object to specify how to place the logical block in SBUF memory.
+
+
+---
+
+### nki.compiler.sbuf.mod_alloc
+
+nki.compiler.sbuf.mod_alloc(*, base_addr, base_partition=0, num_par_tiles=(), num_free_tiles=())
+    
+
+Allocate SBUF memory space for each logical tile in a tensor through modulo allocation.
+
+This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
+
+This API is equivalent to calling nisa.compiler.alloc() with a callable `psum_modulo_alloc_func` as defined below.
+    
+    
+     1from typing import Optional, Tuple
+     2from functools import reduce
+     3from operator import mul
+     4import unittest
+     5
+     6def num_elms(shape):
+     7  return reduce(mul, shape, 1)
+     8
+     9def linearize(shape, indices):
+    10  return sum(i * num_elms(shape[dim+1:]) for dim, i in enumerate(indices))
+    11
+    12def modulo_allocate_func(base, allocate_shape, scale):
+    13  def func(indices):
+    14    if not allocate_shape:
+    15      # default shape is always (1, 1, ...)
+    16      allocate_shape_ = (1, ) * len(indices)
+    17    else:
+    18      allocate_shape_ = allocate_shape
+    19    mod_idx = tuple(i % s for i, s in zip(indices, allocate_shape_))
+    20    return linearize(shape=allocate_shape_, indices=mod_idx) * scale + base
+    21  return func
+    22
+    23def mod_alloc(base_addr: int, *, 
+    24               base_partition: Optional[int] = 0,
+    25               num_par_tiles: Optional[Tuple[int, ...]] = (),
+    26               num_free_tiles: Optional[Tuple[int, ...]] = ()):
+    27  def sbuf_modulo_alloc_func(idx, pdim_size, fdim_size):
+    28    return (modulo_allocate_func(base_partition, num_par_tiles, pdim_size)(idx),
+    29          modulo_allocate_func(base_addr, num_free_tiles, fdim_size)(idx))
+    30  return sbuf_modulo_alloc_func
+    31
+    
+
+Here’s an example usage of this API:
+    
+    
+    nki_tensor = nl.ndarray((4, par_dim(128), 512), dtype=nl.bfloat16,
+                            buffer=nki.compiler.sbuf.mod_alloc(base_addr=0, num_free_tiles=(2, )))
+    
+    for i_block in nl.affine_range(4):
+      nki_tensor[i_block, :, :] = nl.load(...)
+      ...                       = nl.exp(nki_tensor[i_block, :, :])
+    
+
+This produces the following allocation:
+
+Table 2 Modulo Allocation Example# Logical Tile Index | Physical Tile `start_partition` | Physical Tile `byte_addr`  
+---|---|---  
+(0, ) | 0 | 0 + (0 % 2) * 512 * sizeof(nl.bfloat16) = 0  
+(1, ) | 0 | 0 + (1 % 2) * 512 * sizeof(nl.bfloat16) = 1024  
+(2, ) | 0 | 0 + (2 % 2) * 512 * sizeof(nl.bfloat16) = 0  
+(3, ) | 0 | 0 + (3 % 2) * 512 * sizeof(nl.bfloat16) = 1024  
+  
+With above scheme, we are able to implement double buffering in `nki_tensor`, such that `nl.load` in one iteration can write to one physical tile while `nl.exp` of the previous iteration can read from the other physical tile simultaneously.
+
+Note
+
+In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.sbuf.auto_alloc()` or the PSUM variant) and direction allocation APIs (`ncc.sbuf.alloc()`, `ncc.sbuf.mod_alloc()` or the PSUM variants).
+
+Parameters:
+    
+
+  * base_addr – the base address in the free(F) dimension of the SBUF in bytes.
+
+  * base_partition – the partition where the physical tile starts from. Must be 0 in the current version.
+
+  * num_par_tiles – the number of physical tiles on the partition dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
+
+  * num_free_tiles – the number of physical tiles on the free dimension of SBUF allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor.
+
+---
+
+### nki.compiler.sbuf.auto_alloc
+
+nki.compiler.sbuf.auto_alloc()
+    
+
+Returns a maker to indicate the tensor should be automatically allocated by compiler. All SBUF tensors in a kernel must either all be marked as `auto_alloc()`, or all be allocated with `alloc` or `mod_alloc`.
+
+Initialize a tensor with `buffer=nl.sbuf` is equivalent to `buffer=ncc.sbuf.auto_alloc()`.
+
+---
+
+### nki.compiler.psum.alloc
+
+nki.compiler.psum.alloc(func)
+    
+
+Allocate PSUM memory space for each logical block in a tensor using a customized allocation method.
+
+This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
+
+In NKI, a PSUM tensor (declared using NKI tensor creation APIs) can have three kinds of dimensions, in order: logical block(B), partition(P), and free(F). The partition and free dimensions directly map to the PSUM dimensions. Both B and F can be multi-dimensional, while P must be one-dimensional per Neuron ISA constraints. The block dimension describes how many (P, F) logical tiles this tensor has, but does not reflect the number of physical tiles being allocated.
+
+`ncc.psum.alloc` should be assigned to the `buffer` field of a NKI tensor declaration API. For example,
+    
+    
+    nki_tensor = nl.ndarray((2, 4, nl.par_dim(128), 512), dtype=nl.float32, buffer=ncc.psum.alloc(...))
+    
+
+`ncc.psum.alloc` allows programmers to specify the physical location of each logical tile in the tensor. The API accepts a single input `func` parameter, which is a callable object that takes in:
+
+  1. a tuple of integers `idx` representing a logical block index,
+
+  2. an integer `pdim_size` for the number of partitions the logical tile has, and
+
+  3. an integer `fdim_size` for the number of bytes the logical tile has per partition.
+
+The number of integers in `idx` must match the number of B dimensions the PSUM tensor has. For example, for the above `nki_tensor`, we expect the `idx` tuple to have two integers for a 2D block index.
+
+`pdim_size` should match the partition dimension size of the NKI tensor exactly. `fdim_size` should be the total size of F dimension shapes of each logical tile in the tensor, multiplied by the data type size in bytes. For the above `nki_tensor`, `pdim_size` should be 128, and `fdim_size` should be `512*sizeof(nl.float32) = 2048` bytes.
+
+Note
+
+In current release, `fdim_size` cannot exceed 2KiB, which is the size of a single PSUM bank per partition. Therefore, a physical PSUM tile cannot span multiple PSUM banks. Check out Trainium/Inferentia2 Architecture Guide for NKI for more information on PSUM banks.
+
+The `func` returns a tuple of three integers `(bank_id, start_partition, byte_addr)` indicating the physical tile location for the input logical block index.
+
+`bank_id` indicates the PSUM bank ID of the physical tile. `start_partition` indicates the lowest partition the physical tile allocation starts from. The `byte_addr` indicates the byte offset into each PSUM bank per partition the physical tile starts from.
+
+Note
+
+In current release, `start_partition` and `byte_addr` must both be 0.
+
+Note
+
+In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.psum.auto_alloc()` or the SBUF variant) and direction allocation APIs (`ncc.psum.alloc()`, `ncc.psum.mod_alloc()` or the SBUF variants) in the same kernel.
+
+Parameters:
+    
+
+func – a callable object to specify how to place the logical block in PSUM memory.
+
+
+---
+
+### nki.compiler.psum.mod_alloc
+
+nki.compiler.psum.mod_alloc(*, base_bank, base_addr=0, base_partition=0, num_bank_tiles=(), num_par_tiles=(), num_free_tiles=())
+    
+
+Allocate PSUM memory space for each logical block in a tensor through modulo allocation.
+
+This is one of the NKI direction allocation APIs. We recommend reading NKI Direct Allocation Developer Guide before using these APIs.
+
+This API is equivalent to calling nki.compiler.psum.alloc() with a callable `psum_modulo_alloc_func` as defined below.
+    
+    
+     1from typing import Optional, Tuple
+     2from functools import reduce
+     3from operator import mul
+     4import unittest
+     5
+     6def num_elems(shape):
+     7  return reduce(mul, shape, 1)
+     8
+     9def linearize(shape, indices):
+    10  return sum(i * num_elems(shape[dim+1:]) for dim, i in enumerate(indices))
+    11
+    12def modulo_allocate_func(base, allocate_shape, scale):
+    13  def func(indices):
+    14    if not allocate_shape:
+    15      # default shape is always (1, 1, ...)
+    16      allocate_shape_ = (1, ) * len(indices)
+    17    else:
+    18      allocate_shape_ = allocate_shape
+    19    mod_idx = tuple(i % s for i, s in zip(indices, allocate_shape_))
+    20    return linearize(shape=allocate_shape_, indices=mod_idx) * scale + base
+    21  return func
+    22
+    23def mod_alloc(base_addr: int, *, 
+    24               base_bank: Optional[int] = 0,
+    25               num_bank_tiles: Optional[Tuple[int]] = (),
+    26               base_partition: Optional[int] = 0,
+    27               num_par_tiles: Optional[Tuple[int]] = (),
+    28               num_free_tiles: Optional[Tuple[int]] = ()):
+    29  def psum_modulo_alloc_func(idx, pdim_size, fdim_size):
+    30    # partial bank allocation is not allowed
+    31    return (modulo_allocate_func(base_bank, num_bank_tiles, 1)(idx),
+    32          modulo_allocate_func(base_partition, num_par_tiles, pdim_size)(idx),
+    33          modulo_allocate_func(base_addr, num_free_tiles, fdim_size)(idx))
+    34  return psum_modulo_alloc_func
+    35
+    
+
+Here’s an example usage of this API:
+    
+    
+    psum_tensor = nl.ndarray((4, nl.par_dim(128), 512), dtype=nl.float32,
+                             buffer=ncc.psum.mod_alloc(base_bank=0,
+                                                        base_addr=0,
+                                                        num_bank_tiles=(2,)))
+    
+    for i_block in nl.affine_range(4):
+      psum[i_block, :, :] = nisa.nc_matmul(...)
+      ...                 = nl.exp(psum[i_block, :, :])
+    
+
+This produces the following allocation:
+
+Table 3 Modulo Allocation Example# Logical Tile Index | Physical Tile `bank_id` | Physical Tile `start_partition` | Physical Tile `byte_addr`  
+---|---|---|---  
+(0, ) | 0 | 0 | 0  
+(1, ) | 1 | 0 | 0  
+(2, ) | 0 | 0 | 0  
+(3, ) | 1 | 0 | 0  
+  
+With above scheme, we are able to implement double buffering in `nki_tensor`, such that `nisa.nc_matmul` in one iteration can write to one physical tile while `nl.exp` of the previous iteration can read from the other physical tile simultaneously.
+
+Note
+
+In current release, programmers cannot mix NKI tensor declarations using automatic allocation (`ncc.psum.auto_alloc()` or the SBUF variant) and direction allocation APIs (`ncc.psum.alloc()`, `ncc.psum.mod_alloc()` or the SBUF variants).
+
+Parameters:
+    
+
+  * base_addr – the base address in bytes along the free(F) dimension of the PSUM bank. Must be 0 in the current version.
+
+  * base_bank – the base bank ID that the physical tiles start from.
+
+  * num_bank_tiles – the number of PSUM banks allocated for the tensor.
+
+  * base_partition – the partition ID the physical tiles start from. Must be 0 in the current version.
+
+  * num_par_tiles – the number of physical tiles along the partition dimension allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
+
+  * num_free_tiles – the number of physical tiles on the free dimension per PSUM bank allocated for the tensor. The length of the tuple must be empty or equal to the length of block dimension for the tensor. Currently must be an empty tuple or (1, 1, …).
+
+---
+
+### nki.compiler.psum.auto_alloc
+
+nki.compiler.psum.auto_alloc()
+    
+
+Returns a maker to indicate the tensor should be automatically allocated by compiler. All PSUM tensors in a kernel must either all be marked as `auto_alloc()`, or all be allocated with `alloc` or `mod_alloc`.
+
+Initialize a tensor with `buffer=nl.psum` is equivalent to `buffer=ncc.psum.auto_alloc()`.
+
+## Indexing, Slicing, and Shape Manipulation
+
+### nki.language.arange
+
+# nki.language.arange
+nki.language.arange(*args)
+    
+
+Return contiguous values within a given interval, used for indexing a tensor to define a tile.
+
+((Similar to numpy.arange))
+
+arange can be called as:
+    
+
+  * `arange(stop)`: Values are generated within the half-open interval `[0, stop)` (the interval including zero, excluding stop).
+
+  * `arange(start, stop)`: Values are generated within the half-open interval `[start, stop)` (the interval including start, excluding stop).
+
+
+---
+
+### nki.language.mgrid
+
+# nki.language.mgrid
+nki.language.mgrid = Ellipsis#
+    
+
+Same as NumPy mgrid: “An instance which returns a dense (or fleshed out) mesh-grid when indexed, so that each returned argument has the same shape. The dimensions and number of the output arrays are equal to the number of indexing dimensions.”
+
+Complex numbers are not supported in the step length.
+
+((Similar to numpy.mgrid))
+    
+    
+    import neuronxcc.nki.language as nl
+    ...
+    
+    
+    i_p, i_f = nl.mgrid[0:128, 0:512]
+    tile = nl.load(in_tensor[i_p, i_f])
+    ...
+    nl.store(out_tensor[i_p, i_f], tile)
+    
+    
+    
+    
+    import neuronxcc.nki.language as nl
+    ...
+    
+    
+    grid = nl.mgrid[0:128, 0:512]
+    tile = nl.load(in_tensor[grid.p, grid.x])
+    ...
+    nl.store(out_tensor[grid.p, grid.x], tile)
+    
+
+---
+
+### nki.language.ds
+
+nki.language.ds(start, size)
+    
+
+Construct a dynamic slice for simple tensor indexing.
+    
+    
+    import neuronxcc.nki.language as nl
+    ...
+    
+    
+    
+    @nki.jit(mode="simulation")
+    def example_kernel(in_tensor):
+      out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
+                              buffer=nl.shared_hbm)
+      for i in nl.affine_range(in_tensor.shape[1] // 512):
+        tile = nl.load(in_tensor[:, (i * 512):((i + 1) * 512)])
+        # Same as above but use ds (dynamic slice) instead of the native
+        # slice syntax
+        tile = nl.load(in_tensor[:, nl.ds(i * 512, 512)])
+    
+
+---
+
+### nki.language.par_dim
+
+# nki.language.par_dim
+nki.language.par_dim = Ellipsis#
+    
+
+Mark a dimension explicitly as a partition dimension.
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
+
+---
+
+### nki.language.expand_dims
+
+# nki.language.expand_dims
+nki.language.expand_dims(data, axis)
+    
+
+Expand the shape of a tile. Insert a new axis that will appear at the `axis` position in the expanded tile shape. Currently only supports expanding dimensions after the last index of the tile.
+
+((Similar to numpy.expand_dims))
+
+Parameters:
+    
+
+  * data – a tile input
+
+  * axis – int or tuple/list of ints. Position in the expanded axes where the new axis (or axes) is placed; must be free dimensions, not partition dimension (0); Currently only supports axis (or axes) after the last index.
+
+Returns:
+    
+
+a tile with view of input `data` with the number of dimensions increased.
 
 ---
 
@@ -2265,327 +1736,30 @@ a new tile broadcast along the partition dimension of `src`, this new tile will 
     nl.store(out_tensor, out_tile)
     
 
-### nki.language.broadcast_to
-
-    * `nki.language` new APIs: `mod`, `fmod`, `reciprocal`, `broadcast_to`, `empty_like`
-
 ---
 
-### broadcast_to
+### nki.language.transpose
 
-broadcast_to(shape)
+nki.language.transpose(x, *, dtype=None, mask=None, **kwargs)
     
 
-Broadcast tensor to a new shape based on numpy broadcast rules. The tensor object must be a tile or can be implicitly converted to a tile. A tensor can be implicitly converted to a tile iff the partition dimension is the highest dimension.
+Transposes a 2D tile between its partition and free dimension.
 
 Parameters:
     
 
-shape – The new shape
+  * x – 2D input tile
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
 Returns:
     
 
-Return a new view of the tensor, no copy will occur
+a tile that has the values of the input tile with its partition and free dimensions swapped.
 
-### broadcast_to
-
-`broadcast_to` | Broadcast the `src` tile to a new shape based on numpy broadcast rules.  
-
-## Indexing and Slicing
-
-### nl.mgrid
-
-    18  i_lhsT_p, i_lhsT_f = nl.mgrid[0:128, 0:64]
-    19
-    20  # Defining indexes for input RHS
-    21  # - Note: here we take LayoutConstraint #1 into account:
-    22  # "For MatMult, contraction axis must be mapped to P-dim"
-    23  i_rhs_p, i_rhs_f = nl.mgrid[0:128, 0:512]
-    24
-    25  # Defining indexes for the output ([64,128]@[128,512] -> [64,512])
-    26  i_out_p, i_out_f = nl.mgrid[0:64, 0:512]
-
----
-
-### nki.language.mgrid
-
-# nki.language.mgrid
-nki.language.mgrid = Ellipsis#
-    
-
-Same as NumPy mgrid: “An instance which returns a dense (or fleshed out) mesh-grid when indexed, so that each returned argument has the same shape. The dimensions and number of the output arrays are equal to the number of indexing dimensions.”
-
-Complex numbers are not supported in the step length.
-
-((Similar to numpy.mgrid))
-    
-    
-    import neuronxcc.nki.language as nl
-    ...
-    
-    
-    i_p, i_f = nl.mgrid[0:128, 0:512]
-    tile = nl.load(in_tensor[i_p, i_f])
-    ...
-    nl.store(out_tensor[i_p, i_f], tile)
-    
-    
-    
-    
-    import neuronxcc.nki.language as nl
-    ...
-    
-    
-    grid = nl.mgrid[0:128, 0:512]
-    tile = nl.load(in_tensor[grid.p, grid.x])
-    ...
-    nl.store(out_tensor[grid.p, grid.x], tile)
-
----
-
-### mgrid
-
-`mgrid` | Same as NumPy mgrid: "An instance which returns a dense (or fleshed out) mesh-grid when indexed, so that each returned argument has the same shape.  
-
----
-
-### nki.language.arange
-
-nki.language.arange(*args)
-    
-
-Return contiguous values within a given interval, used for indexing a tensor to define a tile.
-
-((Similar to numpy.arange))
-
-arange can be called as:
-    
-
-  * `arange(stop)`: Values are generated within the half-open interval `[0, stop)` (the interval including zero, excluding stop).
-
-  * `arange(start, stop)`: Values are generated within the half-open interval `[start, stop)` (the interval including start, excluding stop).
-
----
-
-### arange
-
-`arange` | Return contiguous values within a given interval, used for indexing a tensor to define a tile.  
-
----
-
-### nki.language.ds
-
-nki.language.ds(start, size)
-    
-
-Construct a dynamic slice for simple tensor indexing.
-    
-    
-    import neuronxcc.nki.language as nl
-    ...
-    
-    
-    
-    @nki.jit(mode="simulation")
-    def example_kernel(in_tensor):
-      out_tensor = nl.ndarray(in_tensor.shape, dtype=in_tensor.dtype,
-                              buffer=nl.shared_hbm)
-      for i in nl.affine_range(in_tensor.shape[1] // 512):
-        tile = nl.load(in_tensor[:, (i * 512):((i + 1) * 512)])
-        # Same as above but use ds (dynamic slice) instead of the native
-        # slice syntax
-        tile = nl.load(in_tensor[:, nl.ds(i * 512, 512)])
-
-### nki.language.ds
-
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
-
----
-
-### ds
-
-`ds` | Construct a dynamic slice for simple tensor indexing.  
-
----
-
-### nki.language.expand_dims
-
-nki.language.expand_dims(data, axis)
-    
-
-Expand the shape of a tile. Insert a new axis that will appear at the `axis` position in the expanded tile shape. Currently only supports expanding dimensions after the last index of the tile.
-
-((Similar to numpy.expand_dims))
-
-Parameters:
-    
-
-  * data – a tile input
-
-  * axis – int or tuple/list of ints. Position in the expanded axes where the new axis (or axes) is placed; must be free dimensions, not partition dimension (0); Currently only supports axis (or axes) after the last index.
-
-Returns:
-    
-
-a tile with view of input `data` with the number of dimensions increased.
-
----
-
-### expand_dims
-
-expand_dims(axis)
-    
-
-Gives a new shape to a tensor by adding a dimension of size 1 at the specified position.
-
-Parameters:
-    
-
-axis – the position of the new dimension.
-
-Returns:
-    
-
-Return a new tensor with expanded shape
-
-### expand_dims
-
-`expand_dims` | Expand the shape of a tile.  
-
----
-
-### nki.language.par_dim
-
-nki.language.par_dim = Ellipsis#
-    
-
-Mark a dimension explicitly as a partition dimension.
-
----
-
-### nl.par_dim
-
-    35    lhsT_tiles = nl.ndarray((K // TILE_K, nl.par_dim(TILE_K), TILE_N),
-
----
-
-### par_dim
-
-`par_dim` | Mark a dimension explicitly as a partition dimension.  
-
----
-
-### NKI API Masking
-
-## NKI API Masking
-All nki.language and nki.isa APIs accept an optional input field, `mask`. The `mask` field is an execution predicate known at compile-time, which informs the compiler to skip generating the instruction or generate the instruction with a smaller input tile shape. Masking is handled completely by Neuron compiler and hence does not incur any performance overhead in the generated instructions.
-
-The `mask` can be created using comparison expressions (e.g., `a < b`) or multiple comparison expressions concatenated with `&` (e.g., `(a < b) & (c > d)`). The left- or right-hand side expression of each comparator must be an affine expression of `nki.language.arange()`, `nki.language.affine_range()` or `nki.language.program_id()` . Each comparison expression should indicate which range of indices along one of the input tile axes should be valid for the computation. For example, assume we have an input tile `in_tile` of shape `(128, 512)`, and we would like to perform a square operation on this tile for elements in `[0:64, 0:256]`, we can invoke the `nki.language.square()` API using the following:
-    
-    
-    import neuronxcc.nki.language as nl
-    
-    ...
-    i_p = nl.arange(128)[:, None]
-    i_f = nl.arange(512)[None, :]
-    
-    out_tile = nl.square(in_tile, mask=((i_p<64) & (i_f<256)))
-    
-
-The above example will be lowered into a hardware ISA instruction that only processes 64x256 elements by Neuron Compiler.
-
-The above `mask` definition works for most APIs where there is only one input tile or both input tiles share the same axes. One exception is the `nki.language.matmul` and similarly `nki.isa.nc_matmul` API, where the two input tiles `lhs` and `rhs` contain three unique axes:
-
-  1. The contraction axis: both `lhs` and `rhs` partition axis (`lhs_rhs_p`)
-
-  2. The first axis of matmul output: `lhs` free axis (`lhs_f`)
-
-  3. The second axis of matmul output: `rhs` free axis (`rhs_f`)
-
-As an example, let’s assume we have `lhs` tile of shape `(sz_p, sz_m)` and `rhs` tile of shape `(sz_p, sz_n)`, and we call `nki.language.matmul` to calculate an output tile of shape `(sz_m, sz_n)`:
-    
-    
-    import neuronxcc.nki.language as nl
-    
-    i_p = nl.arange(sz_p)[:, None]
-    
-    i_lhs_f = nl.arange(sz_m)[None, :]
-    i_rhs_f = nl.arange(sz_n)[None, :] # same as `i_rhs_f = i_lhs_f`
-    
-    result = nl.matmul(lhs[i_p, i_lhs_f], rhs[i_p, i_rhs_f], transpose_x=True)
-    
-
-Since both `i_lhs_f` and `i_rhs_f` are identical to the Neuron Compiler, the Neuron Compiler cannot distinguish the two input axes if they were to be passed into the `mask` field directly.
-
-Therefore, we introduce “operand masking” syntax for matmult APIs to let users to precisely define the masking on the inputs to the matmult APIs (currently only matmult APIs support operand masking, subject to changes in future releases). Let’s assume we need to constraint `sz_m <= 64` and `sz_n <= 256`:
-    
-    
-    import neuronxcc.nki.language as nl
-    
-    i_p = nl.arange(sz_p)[:, None]
-    
-    i_lhs_f = nl.arange(sz_m)[None, :]
-    i_rhs_f = nl.arange(sz_n)[None, :] # same as `i_rhs_f = i_lhs_f`
-    
-    i_lhs_f_virtual = nl.arange(sz_m)[None, :, None]
-    
-    result = nl.matmul(lhs_T[i_lhs_f <= 64], rhs[i_rhs_f <= 256], transpose_x=True)
-    
-
-There are two notable use cases for masking:
-
-  1. When the tiling factor doesn’t divide the tensor dimension sizes
-
-  2. Skip ineffectual instructions that compute known output values
-
-We will present an example of the first use case below. Let’s assume we would like to evaluate the exponential function on an input tensor of shape `[sz_p, sz_f]` from HBM. Since the input to `nki.language.load/nki.language.store/nki.language.exp` expects a tile with a partition axis size not exceeding `nki.language.tile_size.pmax == 128`, we should loop over the input tensor using a tile size of `[nki.language.tile_size.pmax, sz_f]`.
-
-However, `sz_p` is not guaranteed to be an integer multiple of `nki.language.tile_size.pmax`. In this case, one option is to write a loop with trip count of `sz_p // nki.language.tile_size.pmax` followed by a single invocation of `nki.language.exp` with an input tile of shape `[sz_p % nki.language.tile_size.pmax, sz_f]`. This effectively “unrolls” the last instance of tile computation, which could lead to messy code in a complex kernel. Using masking here will allow us to avoid such unrolling, as illustrated in the example below:
-    
-    
-    import neuronxcc.nki.language as nl
-    from torch_neuronx import nki_jit
-    
-    @nki_jit
-    def tensor_exp_kernel_(in_tensor, out_tensor):
-    
-    sz_p, sz_f = in_tensor.shape
-    
-    i_f = nl.arange(sz_f)[None, :]
-    
-    trip_count = math.ceil(sz_p/nl.tile_size.pmax)
-    
-    for p in nl.affine_range(trip_count):
-        # Generate tensor indices for the input/output tensors
-        # pad index to pmax, for simplicity
-        i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
-    
-        # Load input data from external memory to on-chip memory
-        # only read up to sz_p
-        in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p < sz_p))
-    
-        # perform the computation
-        out_tile = nl.exp(in_tile, mask=(i_p < sz_p))
-    
-        # store the results back to external memory
-        # only write up to sz_p
-        nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p))
-    
-
-## Control Flow and Loop Iterators
-
-### nl.affine_range
-
-    26  for m in nl.affine_range(M // TILE_M):
-    27    for n in nl.affine_range(N // TILE_N):
-    28      # Allocate a tensor in PSUM
-    29      res_psum = nl.zeros((TILE_M, TILE_N), nl.float32, buffer=nl.psum)
-    30
-    31      for k in nl.affine_range(K // TILE_K):
-    32        # Declare the tiles on SBUF
-
----
+## Control Flow and SPMD
 
 ### nki.language.affine_range
 
@@ -2638,19 +1812,6 @@ Notes:
     29  y_sbuf = nl.load(offset:offset+128, 0:y.shape[1]])
     30
     31  result_psum += nl.matmul(xT_sbuf, y_sbuf, transpose_x=True)
-    
-
----
-
-### affine_range
-
-`affine_range` | Create a sequence of numbers for use as parallel loop iterators in NKI.  
-
----
-
-### nl.sequential_range
-
-     58    for k in nl.sequential_range(NUM_BLOCK_K):
 
 ---
 
@@ -2702,16 +1863,6 @@ Notes:
     26  init[:, :] = result[:, 511]
     
 
-### nki.language.sequential_range
-
-  * Fixed dynamic for loop incorrectly incrementing the loop induction variable. In loops with a runtime-determined trip count (`sequential_range` with non-constant bounds), the compiler generated incorrect increment code, causing the loop counter to never advance and the loop to run indefinitely or produce incorrect iteration values. See nki.language.sequential_range.
-
----
-
-### sequential_range
-
-`sequential_range` | Create a sequence of numbers for use as sequential loop iterators in NKI.  
-
 ---
 
 ### nki.language.static_range
@@ -2733,79 +1884,129 @@ Notes:
 
 ---
 
-### static_range
+### nki.language.nc
 
-`static_range` | Create a sequence of numbers for use as loop iterators in NKI, resulting in a fully unrolled loop.  
+# nki.language.nc
+nki.language.nc = Ellipsis#
+    
+
+Create a logical neuron core dimension in launch grid.
+
+The instances of spmd kernel will be distributed to different physical neuron cores on the annotated dimension.
+    
+    
+    # Let compiler decide how to distribute the instances of spmd kernel
+    c = kernel[2, 2](a, b)
+    
+    import neuronxcc.nki.language as nl
+    
+    # Distribute the kernel to physical neuron cores around the first dimension
+    # of the spmd grid.
+    c = kernel[nl.nc(2), 2](a, b)
+    # This means:
+    # Physical NC [0]: kernel[0, 0], kernel[0, 1]
+    # Physical NC [1]: kernel[1, 0], kernel[1, 1]
+    
+
+Sometimes the size of a spmd dimension is bigger than the number of available physical neuron cores. We can control the distribution with the following syntax:
+    
+    
+    import neuronxcc.nki.language as nl
+    
+    
+    @nki.jit
+    def nki_spmd_kernel(a):
+      b = nl.ndarray(a.shape, dtype=a.dtype, buffer=nl.shared_hbm)
+      i = nl.program_id(0)
+      j = nl.program_id(1)
+      
+      a_tile = nl.load(a[i, j])
+      nl.store(b[i, j], a_tile)
+    
+      return b
+    
+    ############################################################################
+    # Example 1: Let compiler decide how to distribute the instances of spmd kernel
+    ############################################################################
+    dst = nki_spmd_kernel[4, 2](src)
+    
+    ############################################################################
+    # Example 2: Distribute SPMD kernel instances to physical NeuronCores with
+    # explicit annotations. Expected physical NeuronCore assignments:
+    #   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[1, 0], kernel[1, 1]
+    #   Physical NC [1]: kernel[2, 0], kernel[2, 1], kernel[3, 0], kernel[3, 1]
+    ############################################################################
+    dst = nki_spmd_kernel[nl.spmd_dim(nl.nc(2), 2), 2](src)
+    dst = nki_spmd_kernel[nl.nc(2) * 2, 2](src)  # syntactic sugar
+    
+    ############################################################################
+    # Example 3: Distribute SPMD kernel instances to physical NeuronCores with
+    # explicit annotations. Expected physical NeuronCore assignments:
+    #   Physical NC [0]: kernel[0, 0], kernel[0, 1], kernel[2, 0], kernel[2, 1]
+    #   Physical NC [1]: kernel[1, 0], kernel[1, 1], kernel[3, 0], kernel[3, 1]
+    ############################################################################
+    dst = nki_spmd_kernel[nl.spmd_dim(2, nl.nc(2)), 2](src)
+    dst = nki_spmd_kernel[2 * nl.nc(2), 2](src)  # syntactic sugar
+    
 
 ---
 
-### nki.language.loop_reduce
+### nki.language.program_id
 
-nki.language.loop_reduce(x, op, loop_indices, *, dtype=None, mask=None, **kwargs)
-    
-
-Apply reduce operation over a loop. This is an ideal instruction to compute a high performance reduce_max or reduce_min.
-
-Note: The destination tile is also the rhs input to `op`. For example,
-    
-    
-    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=float32, buffer=nl.sbuf)
-    for k_i in affine_range(NUM_K_BLOCKS):
-    
-      # Skipping over multiple nested loops here.
-      # a, is a psum tile from a matmul accumulation group.
-      b = nl.loop_reduce(a, op=np.add, loop_indices=[k_i], dtype=nl.float32)
+nki.language.program_id(axis)
     
 
-is the same as:
-    
-    
-    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=nl.float32, buffer=nl.sbuf)
-    for k_i in affine_range(NUM_K_BLOCKS):
-    
-      # Skipping over multiple nested loops here.
-      # a, is a psum tile from a matmul accumulation group.
-      b = nisa.tensor_tensor(data1=b, data2=a, op=np.add, dtype=nl.float32)
-    
-
-If you are trying to use this instruction only for accumulating results on SBUF, consider simply using the `+=` operator instead.
-
-The `loop_indices` list enables the compiler to recognize which loops this reduction can be optimized across as part of any aggressive loop-level optimizations it may perform.
+Index of the current SPMD program along the given axis in the launch grid.
 
 Parameters:
     
 
-  * x – a tile.
-
-  * op – numpy ALU operator to use to reduce over the input tile.
-
-  * loop_indices – a single loop index or a tuple of loop indices along which the reduction operation is performed. Can be numbers or loop_index objects coming from `nl.affine_range`.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+axis – The axis of the ND launch grid.
 
 Returns:
     
 
-the reduced resulting tile
+The program id along `axis` in the launch grid
 
 ---
 
-### loop_reduce
+### nki.language.program_ndim
 
-`loop_reduce` | Apply reduce operation over a loop.  
+nki.language.program_ndim()
+    
 
-## Arithmetic Operations
+Number of dimensions in the SPMD launch grid.
 
-### nl.add
+Returns:
+    
 
+The number of dimensions in the launch grid, i.e. the number of axes
 
 
 ---
+
+### nki.language.num_programs
+
+nki.language.num_programs(axes=None)
+    
+
+Number of SPMD programs along the given axes in the launch grid. If `axes` is not provided, returns the total number of programs.
+
+Parameters:
+    
+
+axes – The axes of the ND launch grid. If not provided, returns the total number of programs along the entire launch grid.
+
+Returns:
+    
+
+The number of SPMD(single process multiple data) programs along `axes` in the launch grid
+
+## Element-wise Arithmetic Operations
 
 ### nki.language.add
 
+# nki.language.add
 nki.language.add(x, y, *, dtype=None, mask=None, **kwargs)
     
 
@@ -2875,11 +2076,6 @@ Note
 
 Broadcasting in the partition dimension is generally more expensive than broadcasting in free dimension. It is recommended to align your data to perform free dimension broadcast whenever possible.
 
----
-
-### add
-
-`add` | Add the inputs, element-wise.  
 
 ---
 
@@ -2910,12 +2106,6 @@ a tile that has `x - y`, element-wise.
 
 ---
 
-### subtract
-
-`subtract` | Subtract the inputs, element-wise.  
-
----
-
 ### nki.language.multiply
 
 nki.language.multiply(x, y, *, dtype=None, mask=None, **kwargs)
@@ -2940,12 +2130,6 @@ Returns:
     
 
 a tile that has `x * y`, element-wise.
-
----
-
-### multiply
-
-`multiply` | Multiply the inputs, element-wise.  
 
 ---
 
@@ -2976,12 +2160,6 @@ a tile that has `x / y`, element-wise.
 
 ---
 
-### divide
-
-`divide` | Divide the inputs, element-wise.  
-
----
-
 ### nki.language.power
 
 nki.language.power(x, y, *, dtype=None, mask=None, **kwargs)
@@ -3006,105 +2184,6 @@ Returns:
     
 
 a tile that has values `x` to the power of `y`.
-
----
-
-### power
-
-`power` | Elements of x raised to powers of y, element-wise.  
-
----
-
-### nki.language.negative
-
-nki.language.negative(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Numerical negative of the input, element-wise.
-
-((Similar to numpy.negative))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has numerical negative values of `x`.
-
----
-
-### negative
-
-`negative` | Numerical negative of the input, element-wise.  
-
----
-
-### nki.language.abs
-
-nki.language.abs(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Absolute value of the input, element-wise.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has absolute values of `x`.
-
----
-
-### abs
-
-`abs` | Absolute value of the input, element-wise.  
-
----
-
-### nki.language.sign
-
-nki.language.sign(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Sign of the numbers of the input, element-wise.
-
-((Similar to numpy.sign))
-
-The sign function returns `-1` if `x < 0`, `0` if `x==0`, `1` if `x > 0`.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has sign values of `x`.
-
----
-
-### sign
-
-`sign` | Sign of the numbers of the input, element-wise.  
 
 ---
 
@@ -3133,22 +2212,12 @@ a tile that has square of `x`.
 
 ---
 
-### square
+### nki.language.abs
 
-`square` | Square of the input, element-wise.  
-
----
-
-### nki.language.reciprocal
-
-nki.language.reciprocal(x, *, dtype=None, mask=None, **kwargs)
+nki.language.abs(x, *, dtype=None, mask=None, **kwargs)
     
 
-Reciprocal of the the input, element-wise.
-
-((Similar to numpy.reciprocal))
-
-`reciprocal(x) = 1 / x`
+Absolute value of the input, element-wise.
 
 Parameters:
     
@@ -3162,60 +2231,63 @@ Parameters:
 Returns:
     
 
-a tile that has reciprocal values of `x`.
-
-### nki.language.reciprocal
-
-    * `nki.language` new APIs: `mod`, `fmod`, `reciprocal`, `broadcast_to`, `empty_like`
+a tile that has absolute values of `x`.
 
 ---
 
-### reciprocal
+### nki.language.floor
 
-`reciprocal` | Compute reciprocal of each element in the input `data` tile using Vector Engine.  
-
-### reciprocal
-
-`reciprocal` | Reciprocal of the the input, element-wise.  
-
----
-
-### nki.language.mod
-
-nki.language.mod(x, y, dtype=None, mask=None, **kwargs)
+# nki.language.floor
+nki.language.floor(x, *, dtype=None, mask=None, **kwargs)
     
 
-Integer Mod of `x / y`, element-wise
+Floor of the input, element-wise.
 
-Computes the remainder complementary to the floor_divide function. It is equivalent to the Python modulus x % y and has the same sign as the divisor y.
+((Similar to numpy.floor))
 
-((Similar to numpy.mod))
+The floor of the scalar x is the largest integer i, such that i <= x.
 
 Parameters:
     
 
-  * x – a tile. If x is a scalar value it will be broadcast to the shape of y. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+  * x – a tile.
 
-  * y – a tile or a scalar value. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
 
   * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
 Returns:
     
 
-a tile that has values `x mod y`.
-
-### nki.language.mod
-
-    * `nki.language` new APIs: `mod`, `fmod`, `reciprocal`, `broadcast_to`, `empty_like`
+a tile that has floor values of `x`.
 
 ---
 
-### mod
+### nki.language.ceil
 
-`mod` | Integer Mod of `x / y`, element-wise  
+# nki.language.ceil
+nki.language.ceil(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Ceiling of the input, element-wise.
+
+((Similar to numpy.ceil))
+
+The ceil of the scalar x is the smallest integer i, such that i >= x.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has ceiling values of `x`.
 
 ---
 
@@ -3246,1116 +2318,34 @@ Returns:
 
 a tile that has values `x fmod y`.
 
-### nki.language.fmod
-
-    * `nki.language` new APIs: `mod`, `fmod`, `reciprocal`, `broadcast_to`, `empty_like`
-
 ---
 
-### fmod
+### nki.language.mod
 
-`fmod` | Floor-mod of `x / y`, element-wise.  
-
-## Math Functions
-
-### nki.language.exp
-
-nki.language.exp(x, *, dtype=None, mask=None, **kwargs)
+nki.language.mod(x, y, dtype=None, mask=None, **kwargs)
     
 
-Exponential of the input, element-wise.
+Integer Mod of `x / y`, element-wise
 
-((Similar to numpy.exp))
+Computes the remainder complementary to the floor_divide function. It is equivalent to the Python modulus x % y and has the same sign as the divisor y.
 
-The `exp(x)` is `e^x` where `e` is the Euler’s number = 2.718281…
+((Similar to numpy.mod))
 
 Parameters:
     
 
-  * x – a tile.
+  * x – a tile. If x is a scalar value it will be broadcast to the shape of y. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
 
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+  * y – a tile or a scalar value. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
 
   * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
 Returns:
     
 
-a tile that has exponential values of `x`.
-
----
-
-### exp
-
-`exp` | Exponential of the input, element-wise.  
-
----
-
-### nki.language.log
-
-nki.language.log(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Natural logarithm of the input, element-wise.
-
-((Similar to numpy.log))
-
-It is the inverse of the exponential function, such that: `log(exp(x)) = x` . The natural logarithm base is `e`.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has natural logarithm values of `x`.
-
----
-
-### log
-
-`log` | Natural logarithm of the input, element-wise.  
-
----
-
-### nki.language.sqrt
-
-nki.language.sqrt(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Non-negative square-root of the input, element-wise.
-
-((Similar to numpy.sqrt))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has square-root values of `x`.
-
----
-
-### sqrt
-
-`sqrt` | Non-negative square-root of the input, element-wise.  
-
----
-
-### nki.language.rsqrt
-
-nki.language.rsqrt(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Reciprocal of the square-root of the input, element-wise.
-
-((Similar to torch.rsqrt))
-
-`rsqrt(x) = 1 / sqrt(x)`
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has reciprocal square-root values of `x`.
-
----
-
-### rsqrt
-
-`rsqrt` | Reciprocal of the square-root of the input, element-wise.  
-
----
-
-### nki.language.cos
-
-nki.language.cos(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Cosine of the input, element-wise.
-
-((Similar to numpy.cos))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has cosine values of `x`.
-
----
-
-### cos
-
-`cos` | Cosine of the input, element-wise.  
-
----
-
-### nki.language.sin
-
-nki.language.sin(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Sine of the input, element-wise.
-
-((Similar to numpy.sin))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has sine values of `x`.
-
----
-
-### sin
-
-`sin` | Sine of the input, element-wise.  
-
----
-
-### nki.language.tan
-
-nki.language.tan(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Tangent of the input, element-wise.
-
-((Similar to numpy.tan))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has tangent values of `x`.
-
-### nki.language.tan
-
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
-
----
-
-### tan
-
-`tan` | Tangent of the input, element-wise.  
-
----
-
-### nki.language.tanh
-
-nki.language.tanh(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Hyperbolic tangent of the input, element-wise.
-
-((Similar to numpy.tanh))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has hyperbolic tangent values of `x`.
-
----
-
-### tanh
-
-`tanh` | Hyperbolic tangent of the input, element-wise.  
-
----
-
-### nki.language.arctan
-
-nki.language.arctan(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Inverse tangent of the input, element-wise.
-
-((Similar to numpy.arctan))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has inverse tangent values of `x`.
-
----
-
-### arctan
-
-`arctan` | Inverse tangent of the input, element-wise.  
-
----
-
-### nki.language.erf
-
-nki.language.erf(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Error function of the input, element-wise.
-
-((Similar to torch.erf))
-
-`erf(x) = 2/sqrt(pi)*integral(exp(-t**2), t=0..x)` .
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has erf of `x`.
-
----
-
-### erf
-
-`erf` | Error function of the input, element-wise.  
-
----
-
-### erf_dx
-
-`erf_dx` | Derivative of the Error function (erf) on the input, element-wise.  
-
-## Rounding Operations
-
-### nki.language.trunc
-
-nki.language.trunc(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Truncated value of the input, element-wise.
-
-((Similar to numpy.trunc))
-
-The truncated value of the scalar x is the nearest integer i which is closer to zero than x is. In short, the fractional part of the signed number x is discarded.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has truncated values of `x`.
-
----
-
-### trunc
-
-`trunc` | Truncated value of the input, element-wise.  
-
----
-
-### nki.language.floor
-
-nki.language.floor(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Floor of the input, element-wise.
-
-((Similar to numpy.floor))
-
-The floor of the scalar x is the largest integer i, such that i <= x.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has floor values of `x`.
-
----
-
-### floor
-
-`floor` | Floor of the input, element-wise.  
-
----
-
-### nki.language.ceil
-
-nki.language.ceil(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Ceiling of the input, element-wise.
-
-((Similar to numpy.ceil))
-
-The ceil of the scalar x is the smallest integer i, such that i >= x.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has ceiling values of `x`.
-
----
-
-### ceil
-
-`ceil` | Ceiling of the input, element-wise.  
-
-## Activation Functions
-
-### nki.language.sigmoid
-
-nki.language.sigmoid(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Logistic sigmoid activation function on the input, element-wise.
-
-((Similar to torch.nn.functional.sigmoid))
-
-`sigmoid(x) = 1/(1+exp(-x))`
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has sigmoid of `x`.
-
----
-
-### sigmoid
-
-`sigmoid` | Logistic sigmoid activation function on the input, element-wise.  
-
----
-
-### nki.language.relu
-
-nki.language.relu(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Rectified Linear Unit activation function on the input, element-wise.
-
-`relu(x) = (x)+ = max(0,x)`
-
-((Similar to torch.nn.functional.relu))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has relu of `x`.
-
----
-
-### relu
-
-`relu` | Rectified Linear Unit activation function on the input, element-wise.  
-
----
-
-### nki.language.gelu
-
-nki.language.gelu(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Gaussian Error Linear Unit activation function on the input, element-wise.
-
-((Similar to torch.nn.functional.gelu))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has gelu of `x`.
-
----
-
-### gelu
-
-`gelu` | Gaussian Error Linear Unit activation function on the input, element-wise.  
-
----
-
-### nki.language.gelu_dx
-
-nki.language.gelu_dx(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Derivative of Gaussian Error Linear Unit (gelu) on the input, element-wise.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has gelu_dx of `x`.
-
----
-
-### gelu_dx
-
-`gelu_dx` | Derivative of Gaussian Error Linear Unit (gelu) on the input, element-wise.  
-
----
-
-### nki.language.gelu_apprx_tanh
-
-nki.language.gelu_apprx_tanh(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Gaussian Error Linear Unit activation function on the input, element-wise, with tanh approximation.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has gelu of `x`.
-
----
-
-### gelu_apprx_tanh
-
-`gelu_apprx_tanh` | Gaussian Error Linear Unit activation function on the input, element-wise, with tanh approximation.  
-
----
-
-### nki.language.gelu_apprx_sigmoid
-
-nki.language.gelu_apprx_sigmoid(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Gaussian Error Linear Unit activation function on the input, element-wise, with sigmoid approximation.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has gelu of `x`.
-
-### nki.language.gelu_apprx_sigmoid
-
-    * `nki.language.gelu_apprx_sigmoid` \- Gaussian Error Linear Unit activation function with sigmoid approximation.
-
----
-
-### gelu_apprx_sigmoid
-
-`gelu_apprx_sigmoid` | Gaussian Error Linear Unit activation function on the input, element-wise, with sigmoid approximation.  
-
----
-
-### nki.language.silu
-
-nki.language.silu(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Sigmoid Linear Unit activation function on the input, element-wise.
-
-((Similar to torch.nn.functional.silu))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has silu of `x`.
-
----
-
-### silu
-
-`silu` | Sigmoid Linear Unit activation function on the input, element-wise.  
-
----
-
-### nki.language.silu_dx
-
-nki.language.silu_dx(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Derivative of Sigmoid Linear Unit activation function on the input, element-wise.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has silu_dx of `x`.
-
----
-
-### silu_dx
-
-`silu_dx` | Derivative of Sigmoid Linear Unit activation function on the input, element-wise.  
-
----
-
-### nki.language.softplus
-
-nki.language.softplus(x, *, dtype=None, mask=None, **kwargs)
-    
-
-Softplus activation function on the input, element-wise.
-
-Softplus is a smooth approximation to the ReLU activation, defined as:
-
-`softplus(x) = log(1 + exp(x))`
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has softplus of `x`.
-
----
-
-### softplus
-
-`softplus` | Softplus activation function on the input, element-wise.  
-
----
-
-### mish
-
-`mish` | Mish activation function on the input, element-wise.  
-
----
-
-### nki.language.softmax
-
-nki.language.softmax(x, axis, *, dtype=None, compute_dtype=None, mask=None, **kwargs)
-    
-
-Softmax activation function on the input, element-wise.
-
-((Similar to torch.nn.functional.softmax))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * compute_dtype – (optional) dtype for the internal computation - currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile that has softmax of `x`.
-
----
-
-### softmax
-
-`softmax` | Softmax activation function on the input, element-wise.  
-
----
-
-### Supported Activation Functions for NKI ISA
-
-## Supported Activation Functions for NKI ISA
-Supported Activation Functions by NKI ISA below lists all the activation function supported by the `nki.isa.activation` API. These activation functions are approximated with piece-wise polynomials on Scalar Engine. NOTE: if input values fall outside the supported Valid Input Range listed below, the Scalar Engine will generate invalid output results.
-
-Table 8 Supported Activation Functions by NKI ISA# Function Name | Accepted `op` by Scalar Engine | Valid Input Range  
----|---|---  
-Identity | `nki.language.copy` or `numpy.copy` | `[-inf, inf]`  
-Square | `nki.language.square` or `numpy.square` | `[-inf, inf]`  
-Sigmoid | `nki.language.sigmoid` | `[-inf, inf]`  
-Relu | `nki.language.relu` | `[-inf, inf]`  
-Gelu | `nki.language.gelu` | `[-inf, inf]`  
-Gelu Derivative | `nki.language.gelu_dx` | `[-inf, inf]`  
-Gelu with Tanh Approximation | `nki.language.gelu_apprx_tanh` | `[-inf, inf]`  
-Gelu with Sigmoid Approximation | `nki.language.gelu_apprx_sigmoid` | `[-inf, inf]`  
-Silu | `nki.language.silu` | `[-inf, inf]`  
-Silu Derivative | `nki.language.silu_dx` | `[-inf, inf]`  
-Tanh | `nki.language.tanh` or `numpy.tanh` | `[-inf, inf]`  
-Softplus | `nki.language.softplus` | `[-inf, inf]`  
-Mish | `nki.language.mish` | `[-inf, inf]`  
-Erf | `nki.language.erf` | `[-inf, inf]`  
-Erf Derivative | `nki.language.erf_dx` | `[-inf, inf]`  
-Exponential | `nki.language.exp` or `numpy.exp` | `[-inf, inf]`  
-Natural Log | `nki.language.log` or `numpy.log` | `[2^-64, 2^64]`  
-Sine | `nki.language.sin` or `numpy.sin` | `[-PI, PI]`  
-Arctan | `nki.language.arctan` or `numpy.arctan` | `[-PI/2, PI/2]`  
-Square Root | `nki.language.sqrt` or `numpy.sqrt` | `[2^-116, 2^118]`  
-Reverse Square Root | `nki.language.rsqrt` | `[2^-87, 2^97]`  
-Reciprocal | `nki.language.reciprocal` or `numpy.reciprocal` | `±[2^-42, 2^42]`  
-Sign | `nki.language.sign` or `numpy.sign` | `[-inf, inf]`  
-Absolute | `nki.language.abs` or `numpy.abs` | `[-inf, inf]`  
-  
-
-## Normalization and Dropout
-
-### nki.language.rms_norm
-
-nki.language.rms_norm(x, w, axis, n, epsilon=1e-06, *, dtype=None, compute_dtype=None, mask=None, **kwargs)
-    
-
-Apply Root Mean Square Layer Normalization.
-
-Parameters:
-    
-
-  * x – input tile
-
-  * w – weight tile
-
-  * axis – axis along which to compute the root mean square (rms) value
-
-  * n – total number of values to calculate rms
-
-  * epsilon – epsilon value used by rms calculation to avoid divide-by-zero
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * compute_dtype – (optional) dtype for the internal computation - currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-`` x / RMS(x) * w ``
-
----
-
-### rms_norm
-
-`rms_norm` | Apply Root Mean Square Layer Normalization.  
-
----
-
-### nki.language.dropout
-
-nki.language.dropout(x, rate, *, dtype=None, mask=None, **kwargs)
-    
-
-Randomly zeroes some of the elements of the input tile given a probability rate.
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * rate – a scalar value or a tile with 1 element, with the probability rate.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile with randomly zeroed elements of `x`.
-
----
-
-### dropout
-
-`dropout` | Randomly replace some elements of the input tile `data` with zeros based on input probabilities using Vector Engine.  
-
-### dropout
-
-`dropout` | Randomly zeroes some of the elements of the input tile given a probability rate.  
-
-## Reduction Operations
-
-### nki.language.max
-
-nki.language.max(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
-    
-
-Maximum of elements along the specified axis (or axes) of the input.
-
-((Similar to numpy.max))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
-
-Returns:
-    
-
-a tile with the maximum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### max
-
-`max` | Maximum of elements along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.min
-
-nki.language.min(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
-    
-
-Minimum of elements along the specified axis (or axes) of the input.
-
-((Similar to numpy.min))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
-
-Returns:
-    
-
-a tile with the minimum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### min
-
-`min` | FP32 Bit pattern (0xff7fffff) representing the minimum (or maximum negative) FP32 value  
-
-### min
-
-`min` | Minimum of elements along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.sum
-
-nki.language.sum(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
-    
-
-Sum of elements along the specified axis (or axes) of the input.
-
-((Similar to numpy.sum))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
-
-Returns:
-    
-
-a tile with the sum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### sum
-
-`sum` | Sum of elements along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.prod
-
-nki.language.prod(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
-    
-
-Product of elements along the specified axis (or axes) of the input.
-
-((Similar to numpy.prod))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
-
-Returns:
-    
-
-a tile with the product of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### prod
-
-`prod` | Product of elements along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.mean
-
-nki.language.mean(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
-    
-
-Arithmetic mean along the specified axis (or axes) of the input.
-
-((Similar to numpy.mean))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile with the average of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed. `float32` intermediate and return values are used for integer inputs.
-
----
-
-### mean
-
-`mean` | Arithmetic mean along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.var
-
-nki.language.var(x, axis, *, dtype=None, mask=None, **kwargs)
-    
-
-Variance along the specified axis (or axes) of the input.
-
-((Similar to numpy.var))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile with the variance of the elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### var
-
-`var` | Variance along the specified axis (or axes) of the input.  
-
----
-
-### nki.language.all
-
-nki.language.all(x, axis, *, dtype=<class 'bool'>, mask=None, **kwargs)
-    
-
-Whether all elements along the specified axis (or axes) evaluate to True.
-
-((Similar to numpy.all))
-
-Parameters:
-    
-
-  * x – a tile.
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a boolean tile with the result. This return tile will have a shape of the input tile’s shape with the specified axes removed.
-
----
-
-### all
-
-`all` | Whether all elements along the specified axis (or axes) evaluate to True.  
+a tile that has values `x mod y`.
 
 ---
 
@@ -4386,12 +2376,6 @@ a tile that has the maximum of each elements from x and y.
 
 ---
 
-### maximum
-
-`maximum` | Maximum of the inputs, element-wise.  
-
----
-
 ### nki.language.minimum
 
 nki.language.minimum(x, y, *, dtype=None, mask=None, **kwargs)
@@ -4417,29 +2401,25 @@ Returns:
 
 a tile that has the minimum of each elements from x and y.
 
----
+## Bitwise Operations
 
-### minimum
+### nki.language.bitwise_and
 
-`minimum` | Minimum of the inputs, element-wise.  
-
-## Comparison and Logical Operations
-
-### nki.language.equal
-
-nki.language.equal(x, y, *, dtype=<class 'bool'>, mask=None, **kwargs)
+nki.language.bitwise_and(x, y, *, dtype=None, mask=None, **kwargs)
     
 
-Element-wise boolean result of x == y.
+Bitwise AND of the two inputs, element-wise.
 
-((Similar to numpy.equal))
+((Similar to numpy.bitwise_and))
+
+Computes the bit-wise AND of the underlying binary representation of the integers in the input tiles. This function implements the C/Python operator `&`
 
 Parameters:
     
 
-  * x – a tile or a scalar value.
+  * x – a tile or a scalar value of integer type.
 
-  * y – a tile or a scalar value. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+  * y – a tile or a scalar value of integer type. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
 
   * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
 
@@ -4448,21 +2428,125 @@ Parameters:
 Returns:
     
 
-a tile with boolean result of `x == y` element-wise.
+a tile that has values `x & y`.
 
 ---
 
-### equal
+### nki.language.bitwise_or
 
-`equal` | Element-wise boolean result of x == y.  
+nki.language.bitwise_or(x, y, *, dtype=None, mask=None, **kwargs)
+    
+
+Bitwise OR of the two inputs, element-wise.
+
+((Similar to numpy.bitwise_or))
+
+Computes the bit-wise OR of the underlying binary representation of the integers in the input tiles. This function implements the C/Python operator `|`
+
+Parameters:
+    
+
+  * x – a tile or a scalar value of integer type.
+
+  * y – a tile or a scalar value of integer type. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has values `x | y`.
 
 ---
 
-### not_equal
+### nki.language.bitwise_xor
 
-`not_equal` | Element-wise boolean result of x != y.  
+nki.language.bitwise_xor(x, y, *, dtype=None, mask=None, **kwargs)
+    
+
+Bitwise XOR of the two inputs, element-wise.
+
+((Similar to numpy.bitwise_xor))
+
+Computes the bit-wise XOR of the underlying binary representation of the integers in the input tiles. This function implements the C/Python operator `^`
+
+Parameters:
+    
+
+  * x – a tile or a scalar value of integer type.
+
+  * y – a tile or a scalar value of integer type. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has values `x ^ y`.
 
 ---
+
+### nki.language.left_shift
+
+nki.language.left_shift(x, y, *, dtype=None, mask=None, **kwargs)
+    
+
+Bitwise left-shift x by y, element-wise.
+
+((Similar to numpy.left_shift))
+
+Computes the bit-wise left shift of the underlying binary representation of the integers in the input tiles. This function implements the C/Python operator `<<`
+
+Parameters:
+    
+
+  * x – a tile or a scalar value of integer type.
+
+  * y – a tile or a scalar value of integer type. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has values `x << y`.
+
+---
+
+### nki.language.right_shift
+
+nki.language.right_shift(x, y, *, dtype=None, mask=None, **kwargs)
+    
+
+Bitwise right-shift x by y, element-wise.
+
+((Similar to numpy.right_shift))
+
+Computes the bit-wise right shift of the underlying binary representation of the integers in the input tiles. This function implements the C/Python operator `>>`
+
+Parameters:
+    
+
+  * x – a tile or a scalar value of integer type.
+
+  * y – a tile or a scalar value of integer type. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has values `x >> y`.
+
+## Comparison and Logical Operations
 
 ### nki.language.greater
 
@@ -4488,12 +2572,6 @@ Returns:
     
 
 a tile with boolean result of `x > y` element-wise.
-
----
-
-### greater
-
-`greater` | Element-wise boolean result of x > y.  
 
 ---
 
@@ -4524,45 +2602,6 @@ a tile with boolean result of `x >= y` element-wise.
 
 ---
 
-### greater_equal
-
-`greater_equal` | Element-wise boolean result of x >= y.  
-
----
-
-### nki.language.less
-
-nki.language.less(x, y, *, dtype=<class 'bool'>, mask=None, **kwargs)
-    
-
-Element-wise boolean result of x < y.
-
-((Similar to numpy.less))
-
-Parameters:
-    
-
-  * x – a tile or a scalar value.
-
-  * y – a tile or a scalar value. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-a tile with boolean result of `x < y` element-wise.
-
----
-
-### less
-
-`less` | Element-wise boolean result of x < y.  
-
----
-
 ### nki.language.less_equal
 
 nki.language.less_equal(x, y, *, dtype=<class 'bool'>, mask=None, **kwargs)
@@ -4590,9 +2629,30 @@ a tile with boolean result of `x <= y` element-wise.
 
 ---
 
-### less_equal
+### nki.language.not_equal
 
-`less_equal` | Element-wise boolean result of x <= y.  
+nki.language.not_equal(x, y, *, dtype=<class 'bool'>, mask=None, **kwargs)
+    
+
+Element-wise boolean result of x != y.
+
+((Similar to numpy.not_equal))
+
+Parameters:
+    
+
+  * x – a tile or a scalar value.
+
+  * y – a tile or a scalar value. `x.shape` and `y.shape` must be broadcastable to a common shape, that will become the shape of the output.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile with boolean result of `x != y` element-wise.
 
 ---
 
@@ -4623,12 +2683,6 @@ a tile with boolean result of `x AND y` element-wise.
 
 ---
 
-### logical_and
-
-`logical_and` | Element-wise boolean result of x AND y.  
-
----
-
 ### nki.language.logical_or
 
 nki.language.logical_or(x, y, *, dtype=<class 'bool'>, mask=None, **kwargs)
@@ -4653,12 +2707,6 @@ Returns:
     
 
 a tile with boolean result of `x OR y` element-wise.
-
----
-
-### logical_or
-
-`logical_or` | Element-wise boolean result of x OR y.  
 
 ---
 
@@ -4689,12 +2737,6 @@ a tile with boolean result of `x XOR y` element-wise.
 
 ---
 
-### logical_xor
-
-`logical_xor` | Element-wise boolean result of x XOR y.  
-
----
-
 ### nki.language.logical_not
 
 nki.language.logical_not(x, *, dtype=<class 'bool'>, mask=None, **kwargs)
@@ -4717,12 +2759,6 @@ Returns:
     
 
 a tile with boolean result of `NOT x` element-wise.
-
----
-
-### logical_not
-
-`logical_not` | Element-wise boolean result of NOT x.  
 
 ---
 
@@ -4755,40 +2791,43 @@ a tile with elements from x where condition is True, and elements from y otherwi
 
 ---
 
-### where
+### nki.language.all
 
-`where` | Return elements chosen from x or y depending on condition.  
-
-## Bitwise Operations
-
-### bitwise_and
-
-`bitwise_and` | Bitwise AND of the two inputs, element-wise.  
-
----
-
-### bitwise_or
-
-`bitwise_or` | Bitwise OR of the two inputs, element-wise.  
-
----
-
-### bitwise_xor
-
-`bitwise_xor` | Bitwise XOR of the two inputs, element-wise.  
-
----
-
-### nki.language.invert
-
-nki.language.invert(x, *, dtype=None, mask=None, **kwargs)
+nki.language.all(x, axis, *, dtype=<class 'bool'>, mask=None, **kwargs)
     
 
-Bitwise NOT of the input, element-wise.
+Whether all elements along the specified axis (or axes) evaluate to True.
 
-((Similar to numpy.invert))
+((Similar to numpy.all))
 
-Computes the bit-wise NOT of the underlying binary representation of the integers in the input tile. This ufunc implements the C/Python operator `~`
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a boolean tile with the result. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+## Math and Transcendental Functions
+
+### nki.language.exp
+
+nki.language.exp(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Exponential of the input, element-wise.
+
+((Similar to numpy.exp))
+
+The `exp(x)` is `e^x` where `e` is the Euler’s number = 2.718281…
 
 Parameters:
     
@@ -4802,45 +2841,862 @@ Parameters:
 Returns:
     
 
-a tile with bitwise NOT `x` element-wise.
+a tile that has exponential values of `x`.
 
 ---
 
-### invert
+### nki.language.log
 
-`invert` | Bitwise NOT of the input, element-wise.  
+nki.language.log(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Natural logarithm of the input, element-wise.
+
+((Similar to numpy.log))
+
+It is the inverse of the exponential function, such that: `log(exp(x)) = x` . The natural logarithm base is `e`.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has natural logarithm values of `x`.
 
 ---
 
-### nki.language.left_shift
+### nki.language.sqrt
 
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
+nki.language.sqrt(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Non-negative square-root of the input, element-wise.
+
+((Similar to numpy.sqrt))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has square-root values of `x`.
 
 ---
 
-### left_shift
+### nki.language.rsqrt
 
-`left_shift` | Bitwise left-shift x by y, element-wise.  
+# nki.language.rsqrt
+nki.language.rsqrt(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Reciprocal of the square-root of the input, element-wise.
+
+((Similar to torch.rsqrt))
+
+`rsqrt(x) = 1 / sqrt(x)`
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has reciprocal square-root values of `x`.
 
 ---
 
-### nki.language.right_shift
+### nki.language.reciprocal
 
-    * `nki.language`: new APIs (`shared_identity_matrix`, `tan`, `silu`, `silu_dx`, `left_shift`, `right_shift`, `ds`, `spmd_dim`, `nc`).
+nki.language.reciprocal(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Reciprocal of the the input, element-wise.
+
+((Similar to numpy.reciprocal))
+
+`reciprocal(x) = 1 / x`
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has reciprocal values of `x`.
 
 ---
 
-### right_shift
+### nki.language.sin
 
-`right_shift` | Bitwise right-shift x by y, element-wise.  
+nki.language.sin(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Sine of the input, element-wise.
+
+((Similar to numpy.sin))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has sine values of `x`.
+
+---
+
+### nki.language.cos
+
+nki.language.cos(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Cosine of the input, element-wise.
+
+((Similar to numpy.cos))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has cosine values of `x`.
+
+---
+
+### nki.language.tan
+
+nki.language.tan(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Tangent of the input, element-wise.
+
+((Similar to numpy.tan))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has tangent values of `x`.
+
+---
+
+### nki.language.tanh
+
+# nki.language.tanh
+nki.language.tanh(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Hyperbolic tangent of the input, element-wise.
+
+((Similar to numpy.tanh))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has hyperbolic tangent values of `x`.
+
+---
+
+### nki.language.erf
+
+nki.language.erf(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Error function of the input, element-wise.
+
+((Similar to torch.erf))
+
+`erf(x) = 2/sqrt(pi)*integral(exp(-t**2), t=0..x)` .
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has erf of `x`.
+
+---
+
+### nki.language.erf_dx
+
+nki.language.erf_dx(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Derivative of the Error function (erf) on the input, element-wise.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has erf_dx of `x`.
+
+## Activation Functions
+
+### nki.language.relu
+
+nki.language.relu(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Rectified Linear Unit activation function on the input, element-wise.
+
+`relu(x) = (x)+ = max(0,x)`
+
+((Similar to torch.nn.functional.relu))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has relu of `x`.
+
+---
+
+### nki.language.sigmoid
+
+# nki.language.sigmoid
+nki.language.sigmoid(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Logistic sigmoid activation function on the input, element-wise.
+
+((Similar to torch.nn.functional.sigmoid))
+
+`sigmoid(x) = 1/(1+exp(-x))`
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has sigmoid of `x`.
+
+---
+
+### nki.language.gelu
+
+nki.language.gelu(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Gaussian Error Linear Unit activation function on the input, element-wise.
+
+((Similar to torch.nn.functional.gelu))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has gelu of `x`.
+
+---
+
+### nki.language.gelu_apprx_tanh
+
+nki.language.gelu_apprx_tanh(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Gaussian Error Linear Unit activation function on the input, element-wise, with tanh approximation.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has gelu of `x`.
+
+---
+
+### nki.language.gelu_apprx_sigmoid
+
+nki.language.gelu_apprx_sigmoid(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Gaussian Error Linear Unit activation function on the input, element-wise, with sigmoid approximation.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has gelu of `x`.
+
+---
+
+### nki.language.gelu_dx
+
+nki.language.gelu_dx(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Derivative of Gaussian Error Linear Unit (gelu) on the input, element-wise.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has gelu_dx of `x`.
+
+---
+
+### nki.language.silu
+
+nki.language.silu(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Sigmoid Linear Unit activation function on the input, element-wise.
+
+((Similar to torch.nn.functional.silu))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has silu of `x`.
+
+---
+
+### nki.language.silu_dx
+
+nki.language.silu_dx(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Derivative of Sigmoid Linear Unit activation function on the input, element-wise.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has silu_dx of `x`.
+
+---
+
+### nki.language.softplus
+
+# nki.language.softplus
+nki.language.softplus(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Softplus activation function on the input, element-wise.
+
+Softplus is a smooth approximation to the ReLU activation, defined as:
+
+`softplus(x) = log(1 + exp(x))`
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has softplus of `x`.
+
+---
+
+### nki.language.softmax
+
+nki.language.softmax(x, axis, *, dtype=None, compute_dtype=None, mask=None, **kwargs)
+    
+
+Softmax activation function on the input, element-wise.
+
+((Similar to torch.nn.functional.softmax))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * compute_dtype – (optional) dtype for the internal computation - currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has softmax of `x`.
+
+---
+
+### nki.language.mish
+
+nki.language.mish(x, *, dtype=None, mask=None, **kwargs)
+    
+
+Mish activation function on the input, element-wise.
+
+Mish: A Self Regularized Non-Monotonic Neural Activation Function is defined as:
+
+\\[mish(x) = x * tanh(softplus(x))\\]
+
+see: https://arxiv.org/abs/1908.08681
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile that has mish of `x`.
+
+---
+
+### nki.language.dropout
+
+nki.language.dropout(x, rate, *, dtype=None, mask=None, **kwargs)
+    
+
+Randomly zeroes some of the elements of the input tile given a probability rate.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * rate – a scalar value or a tile with 1 element, with the probability rate.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile with randomly zeroed elements of `x`.
+
+## Reduction Operations
+
+### nki.language.sum
+
+nki.language.sum(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
+    
+
+Sum of elements along the specified axis (or axes) of the input.
+
+((Similar to numpy.sum))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+
+Returns:
+    
+
+a tile with the sum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+---
+
+### nki.language.prod
+
+nki.language.prod(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
+    
+
+Product of elements along the specified axis (or axes) of the input.
+
+((Similar to numpy.prod))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+
+Returns:
+    
+
+a tile with the product of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+---
+
+### nki.language.max
+
+nki.language.max(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
+    
+
+Maximum of elements along the specified axis (or axes) of the input.
+
+((Similar to numpy.max))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+
+Returns:
+    
+
+a tile with the maximum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+---
+
+### nki.language.min
+
+nki.language.min(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
+    
+
+Minimum of elements along the specified axis (or axes) of the input.
+
+((Similar to numpy.min))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+
+Returns:
+    
+
+a tile with the minimum of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+---
+
+### nki.language.mean
+
+nki.language.mean(x, axis, *, dtype=None, mask=None, keepdims=False, **kwargs)
+    
+
+Arithmetic mean along the specified axis (or axes) of the input.
+
+((Similar to numpy.mean))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile with the average of elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed. `float32` intermediate and return values are used for integer inputs.
+
+---
+
+### nki.language.var
+
+nki.language.var(x, axis, *, dtype=None, mask=None, **kwargs)
+    
+
+Variance along the specified axis (or axes) of the input.
+
+((Similar to numpy.var))
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+a tile with the variance of the elements along the provided axis. This return tile will have a shape of the input tile’s shape with the specified axes removed.
+
+---
+
+### nki.language.loop_reduce
+
+nki.language.loop_reduce(x, op, loop_indices, *, dtype=None, mask=None, **kwargs)
+    
+
+Apply reduce operation over a loop. This is an ideal instruction to compute a high performance reduce_max or reduce_min.
+
+Note: The destination tile is also the rhs input to `op`. For example,
+    
+    
+    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=float32, buffer=nl.sbuf)
+    for k_i in affine_range(NUM_K_BLOCKS):
+    
+      # Skipping over multiple nested loops here.
+      # a, is a psum tile from a matmul accumulation group.
+      b = nl.loop_reduce(a, op=np.add, loop_indices=[k_i], dtype=nl.float32)
+    
+
+is the same as:
+    
+    
+    b = nl.zeros((N_TILE_SIZE, M_TILE_SIZE), dtype=nl.float32, buffer=nl.sbuf)
+    for k_i in affine_range(NUM_K_BLOCKS):
+    
+      # Skipping over multiple nested loops here.
+      # a, is a psum tile from a matmul accumulation group.
+      b = nisa.tensor_tensor(data1=b, data2=a, op=np.add, dtype=nl.float32)
+    
+
+If you are trying to use this instruction only for accumulating results on SBUF, consider simply using the `+=` operator instead.
+
+The `loop_indices` list enables the compiler to recognize which loops this reduction can be optimized across as part of any aggressive loop-level optimizations it may perform.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * op – numpy ALU operator to use to reduce over the input tile.
+
+  * loop_indices – a single loop index or a tuple of loop indices along which the reduction operation is performed. Can be numbers or loop_index objects coming from `nl.affine_range`.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+the reduced resulting tile
+
+---
+
+### nki.language.all_reduce
+
+nki.language.all_reduce(x, op, program_axes, *, dtype=None, mask=None, parallel_reduce=True, asynchronous=False, **kwargs)
+    
+
+Apply reduce operation over multiple SPMD programs.
+
+Parameters:
+    
+
+  * x – a tile.
+
+  * op – numpy ALU operator to use to reduce over the input tile.
+
+  * program_axes – a single axis or a tuple of axes along which the reduction operation is performed.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * parallel_reduce – optional boolean parameter whether to turn on parallel reduction. Enable parallel reduction consumes additional memory.
+
+  * asynchronous – Defaults to False. If True, caller should synchronize before reading final result, e.g. using nki.sync_thread.
+
+Returns:
+    
+
+the reduced resulting tile
+
+---
+
+### nki.language.rms_norm
+
+nki.language.rms_norm(x, w, axis, n, epsilon=1e-06, *, dtype=None, compute_dtype=None, mask=None, **kwargs)
+    
+
+Apply Root Mean Square Layer Normalization.
+
+Parameters:
+    
+
+  * x – input tile
+
+  * w – weight tile
+
+  * axis – axis along which to compute the root mean square (rms) value
+
+  * n – total number of values to calculate rms
+
+  * epsilon – epsilon value used by rms calculation to avoid divide-by-zero
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * compute_dtype – (optional) dtype for the internal computation - currently `dtype` and `compute_dtype` behave the same, both sets internal compute and return dtype.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+`` x / RMS(x) * w ``
 
 ## Matrix Multiplication
-
-### nl.matmul
-
-    37  result_psum = nl.matmul(lhs_tile, rhs_tile, transpose_x=True)
-
----
 
 ### nki.language.matmul
 
@@ -4877,22 +3733,9 @@ Returns:
 
 ---
 
-### matmul
-
-`matmul` | `x @ y` matrix multiplication of `x` and `y`.  
-
----
-
-### nisa.nc_matmul
-
-     92              res_tile[...] += nisa.nc_matmul(
-     93                  lhsT_tiles[bk, i_lhsT_mm.p, bm * TILE_M + i_lhsT_mm.x],
-     94                  rhs_tiles[bk, i_rhs_mm.p, bn * TILE_N + i_rhs_mm.x])
-
----
-
 ### nki.isa.nc_matmul
 
+# nki.isa.nc_matmul
 nki.isa.nc_matmul(stationary, moving, *, is_stationary_onezero=False, is_moving_onezero=False, is_transpose=False, tile_position=(), tile_size=(), mask=None, **kwargs)
     
 
@@ -5021,123 +3864,91 @@ Example:
     return c_tensor, f_tensor, i_tensor
     
 
-### nki.isa.nc_matmul
+## ISA Tensor and Element-wise Operations
 
-  * nki.isa.nc_matmul parameter `psumAccumulateFlag` has been removed. This parameter had no effect on compilation or execution. Simply remove it from your kernel code.
+### nki.isa.tensor_tensor
 
-  * nki.isa.nc_matmul parameter `is_moving_zero` has been renamed to `is_moving_onezero` to match hardware semantics, consistent with the companion `is_stationary_onezero` parameter. Kernels that passed `is_moving_zero` by name should update to `is_moving_onezero`.
-
----
-
-### nc_matmul
-
-`nc_matmul` | Compute `stationary.T @ moving` matrix multiplication using Tensor Engine.  
-
-## Transpose
-
-### nki.language.transpose
-
-nki.language.transpose(x, *, dtype=None, mask=None, **kwargs)
+nki.isa.tensor_tensor(data1, data2, op, *, dtype=None, mask=None, engine=engine.unknown, **kwargs)
     
 
-Transposes a 2D tile between its partition and free dimension.
+Perform an element-wise operation of input two tiles using Vector Engine or GpSimd Engine. The two tiles must have the same partition axis size and the same number of elements per partition.
 
-Parameters:
-    
+The element-wise operator is specified using the `op` field and can be any binary operator supported by NKI (see Supported Math Operators for NKI ISA for details) that runs on the Vector Engine, or it can be `power` or integer `add`, `multiply``, or `subtract` which run on the GpSimd Engine. For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the element-wise operation in float32 math (unless it is one of the supported integer ops mentioned above). The float32 results are cast to the target data type specified in the `dtype` field before written into the output tile. If the `dtype` field is not specified, it is default to be the same as the data type of `data1` or `data2`, whichever has the higher precision.
 
-  * x – 2D input tile
+Since GpSimd Engine cannot access PSUM, the input or output tiles cannot be in PSUM if `op` is one of the GpSimd operations mentioned above. (see NeuronCore-v2 Compute Engines for details). Otherwise, the output tile can be in either SBUF or PSUM. However, the two input tiles, `data1` and `data2` cannot both reside in PSUM. The three legal cases are:
 
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+  1. Both `data1` and `data2` are in SBUF.
 
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+  2. `data1` is in SBUF, while `data2` is in PSUM.
 
-Returns:
-    
+  3. `data1` is in PSUM, while `data2` is in SBUF.
 
-a tile that has the values of the input tile with its partition and free dimensions swapped.
-
----
-
-### transpose
-
-`transpose` | Transposes a 2D tile between its partition and free dimension.  
-
----
-
-### nki.isa.nc_transpose
-
-nki.isa.nc_transpose(data, *, mask=None, dtype=None, engine=engine.unknown, **kwargs)
-    
-
-Perform a 2D transpose between the partition axis and the free axis of input `data`, i.e., a PF-transpose, using Tensor or Vector Engine. If the `data` tile has more than one free axes, this API implicitly collapses all free axes into one axis and then performs a 2D PF-transpose.
-
-In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but they support different input shapes. Tensor Engine `nc_transpose` can handle an input tile of shape (128, 128) or smaller, while Vector Engine can handle shape (32, 32) or smaller. Therefore, when the input tile shape is (32, 32) or smaller, we have an option to run it on either engine, which is controlled by the `engine` field. If no `engine` is specified, Neuron Compiler will automatically select an engine based on the input shape. Note, similar to other Tensor Engine instructions, the Tensor Engine `nc_transpose` must read the input tile from SBUF and write the transposed result to PSUM. On the other hand, Vector Engine `nc_transpose` can read/write from/to either SBUF or PSUM.
-
-Note, PF-transpose on Tensor Engine is done by performing a matrix multiplication between `data` as the stationary tensor and an identity matrix as the moving tensor. See architecture guide for more information. On NeuronCore-v2, such matmul-style transpose is not bit-accurate if the input `data` contains NaN/Inf. You may consider replacing NaN/Inf with regular floats (float_max/float_min/zeros) in the input matrix before calling `nc_transpose(engine=nki.isa.constants.engine.tensor)`.
+Note, if you need broadcasting capability in the free dimension for either input tile, you should consider using nki.isa.tensor_scalar API instead, which has better performance than `nki.isa.tensor_tensor` in general.
 
 Estimated instruction cost:
 
-Cost (Engine Cycles) | Condition  
+See below table for tensor_tensor performance when it runs on Vector Engine.
+
+Cost (Vector Engine Cycles) | Condition  
 ---|---  
-`max(MIN_II, N)` | `engine` set to `nki.isa.constants.engine.vector`  
-`max(P, min(64, F))` | `engine` set to `nki.isa.constants.engine.tensor` and assuming many back-to-back `nc_transpose` of the same shape on Tensor Engine  
+`max(MIN_II, N)` | one input tile is in PSUM and the other is in SBUF  
+`max(MIN_II, N)` | all of the below:
+
+  * both input tiles are in SBUF,
+  * input/output data types are all `bfloat16`,
+  * the operator is add, multiply or subtract,
+  * Input tensor data is contiguous along the free dimension (that is, stride in each partition is 1 element)
+
+  
+`max(MIN_II, 2N)` | otherwise  
   
 where,
 
-  * `N` is the number of elements per partition in `data`.
+  * `N` is the number of elements per partition in `data1`/`data2`.
 
   * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-  * `P` is partition axis size of `data`.
-
-  * `F` is the number of elements per partition in `data`.
 
 Parameters:
     
 
-  * data – the input tile to be transposed
+  * data1 – lhs input operand of the element-wise operation
+
+  * data2 – rhs input operand of the element-wise operation
+
+  * op – a binary math operator (see Supported Math Operators for NKI ISA for supported operators)
 
   * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
-  * dtype – if specified and it’s different from the data type of input tile `data`, an additional nki.isa.cast instruction will be inserted to cast the transposed data into the target `dtype` (see Supported Data Types for more information)
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
 
-  * engine – specify which engine to use for transpose: `nki.isa.tensor_engine` or `nki.isa.vector_engine` ; by default, the best engine will be selected for the given input tile shape
+  * engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.gpsimd_engine or nki.isa.unknown_engine (default, let compiler select best engine based on the input tile shape).
 
 Returns:
     
 
-a tile with transposed result of input `data` tile
+an output tile of the element-wise operation
 
 Example:
     
     
     import neuronxcc.nki.isa as nisa
     import neuronxcc.nki.language as nl
+    from neuronxcc.nki.typing import tensor
     ...
     
     ##################################################################
-    # Example 1: transpose tile a of shape (128, 64)
+    # Example 1: add two tiles, a and b, of the same
+    # shape (128, 512) element-wise and get
+    # the addition result in tile c
     ##################################################################
-    i_p_a = nl.arange(128)[:, None]
-    i_f_a = nl.arange(64)[None, :]
-    aT = nisa.nc_transpose(a[i_p_a, i_f_a])
+    a: tensor[128, 512] = nl.load(a_tensor)
+    b: tensor[128, 512] = nl.load(b_tensor)
     
+    c: tensor[128, 512] = nisa.tensor_tensor(a, b, op=nl.add)
     
-    ##################################################################
-    # Example 2: transpose tile b of shape (32, 2) using Vector Engine
-    ##################################################################
-    i_p_b = nl.arange(32)[:, None]
-    i_f_b = nl.arange(2)[None, :]
-    bT = nisa.nc_transpose(b[i_p_b, i_f_b], engine=nisa.vector_engine)
     
 
 ---
-
-### nc_transpose
-
-`nc_transpose` | Perform a 2D transpose between the partition axis and the free axis of input `data`, i.e., a PF-transpose, using Tensor or Vector Engine.  
-
-## ISA Tensor Operations
 
 ### nki.isa.tensor_scalar
 
@@ -5248,111 +4059,6 @@ Example:
     g = nisa.tensor_scalar(e[i_p_ef, i_f_e], op0=np.multiply, operand0=f[i_p_ef, i_f_f], op1=np.add, operand1=2.5)  
     
 
-### nki.isa.tensor_scalar
-
-  * Fixed missing ALU operators (`rsqrt`, `abs`, `power`) in nki.isa.tensor_scalar and nki.isa.tensor_tensor. Passing these operators previously raised an “unsupported operator” error. See NKI Language Guide.
-
----
-
-### tensor_scalar
-
-`tensor_scalar` | Apply up to two math operators to the input `data` tile by broadcasting scalar/vector operands in the free dimension using Vector or Scalar or GpSimd Engine: `(data <op0> operand0) <op1> operand1`.  
-
----
-
-### nki.isa.tensor_tensor
-
-nki.isa.tensor_tensor(data1, data2, op, *, dtype=None, mask=None, engine=engine.unknown, **kwargs)
-    
-
-Perform an element-wise operation of input two tiles using Vector Engine or GpSimd Engine. The two tiles must have the same partition axis size and the same number of elements per partition.
-
-The element-wise operator is specified using the `op` field and can be any binary operator supported by NKI (see Supported Math Operators for NKI ISA for details) that runs on the Vector Engine, or it can be `power` or integer `add`, `multiply``, or `subtract` which run on the GpSimd Engine. For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the element-wise operation in float32 math (unless it is one of the supported integer ops mentioned above). The float32 results are cast to the target data type specified in the `dtype` field before written into the output tile. If the `dtype` field is not specified, it is default to be the same as the data type of `data1` or `data2`, whichever has the higher precision.
-
-Since GpSimd Engine cannot access PSUM, the input or output tiles cannot be in PSUM if `op` is one of the GpSimd operations mentioned above. (see NeuronCore-v2 Compute Engines for details). Otherwise, the output tile can be in either SBUF or PSUM. However, the two input tiles, `data1` and `data2` cannot both reside in PSUM. The three legal cases are:
-
-  1. Both `data1` and `data2` are in SBUF.
-
-  2. `data1` is in SBUF, while `data2` is in PSUM.
-
-  3. `data1` is in PSUM, while `data2` is in SBUF.
-
-Note, if you need broadcasting capability in the free dimension for either input tile, you should consider using nki.isa.tensor_scalar API instead, which has better performance than `nki.isa.tensor_tensor` in general.
-
-Estimated instruction cost:
-
-See below table for tensor_tensor performance when it runs on Vector Engine.
-
-Cost (Vector Engine Cycles) | Condition  
----|---  
-`max(MIN_II, N)` | one input tile is in PSUM and the other is in SBUF  
-`max(MIN_II, N)` | all of the below:
-
-  * both input tiles are in SBUF,
-  * input/output data types are all `bfloat16`,
-  * the operator is add, multiply or subtract,
-  * Input tensor data is contiguous along the free dimension (that is, stride in each partition is 1 element)
-
-  
-`max(MIN_II, 2N)` | otherwise  
-  
-where,
-
-  * `N` is the number of elements per partition in `data1`/`data2`.
-
-  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * data1 – lhs input operand of the element-wise operation
-
-  * data2 – rhs input operand of the element-wise operation
-
-  * op – a binary math operator (see Supported Math Operators for NKI ISA for supported operators)
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
-
-  * engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.gpsimd_engine or nki.isa.unknown_engine (default, let compiler select best engine based on the input tile shape).
-
-Returns:
-    
-
-an output tile of the element-wise operation
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    ...
-    
-    ##################################################################
-    # Example 1: add two tiles, a and b, of the same
-    # shape (128, 512) element-wise and get
-    # the addition result in tile c
-    ##################################################################
-    a: tensor[128, 512] = nl.load(a_tensor)
-    b: tensor[128, 512] = nl.load(b_tensor)
-    
-    c: tensor[128, 512] = nisa.tensor_tensor(a, b, op=nl.add)
-    
-    
-
-
-### nki.isa.tensor_tensor
-
-  * Fixed missing ALU operators (`rsqrt`, `abs`, `power`) in nki.isa.tensor_scalar and nki.isa.tensor_tensor. Passing these operators previously raised an “unsupported operator” error. See NKI Language Guide.
-
----
-
-### tensor_tensor
-
-`tensor_tensor` | Perform an element-wise operation of input two tiles using Vector Engine or GpSimd Engine.  
-
 ---
 
 ### nki.isa.scalar_tensor_tensor
@@ -5400,220 +4106,6 @@ Returns:
     
 
 an output tile of `(data <op0> operand0) <op1> operand1` computation
-
-### nki.isa.scalar_tensor_tensor
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### scalar_tensor_tensor
-
-`scalar_tensor_tensor` | Apply up to two math operators using Vector Engine: `(data <op0> operand0) <op1> operand1`.  
-
----
-
-### nki.isa.tensor_reduce
-
-nki.isa.tensor_reduce(op, data, axis, *, mask=None, dtype=None, negate=False, keepdims=False, **kwargs)
-    
-
-Apply a reduction operation to the free axes of an input `data` tile using Vector Engine.
-
-The reduction operator is specified in the `op` input field (see Supported Math Operators for NKI ISA for a list of supported reduction operators). There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or) and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the reduction operation in float32 math. The float32 reduction results are cast to the target data type specified in the `dtype` field before written into the output tile. If the `dtype` field is not specified, it is default to be the same as input tile data type.
-
-When the reduction `op` is an arithmetic operator, the instruction can also multiply the output reduction results by `-1.0` before writing into the output tile, at no additional performance cost. This behavior is controlled by the `negate` input field.
-
-The reduction axes are specified in the `axis` field using a list of integer(s) to indicate axis indices. The reduction axes can contain up to four free axes and must start at the most minor free axis. Since axis 0 is the partition axis in a tile, the reduction axes must contain axis 1 (most-minor). In addition, the reduction axes must be consecutive: e.g., [1, 2, 3, 4] is a legal `axis` field, but [1, 3, 4] is not.
-
-Since this instruction only supports free axes reduction, the output tile must have the same partition axis size as the input `data` tile. To perform a partition axis reduction, we can either:
-
-  1. invoke a `nki.isa.nc_transpose` instruction on the input tile and then this `reduce` instruction to the transposed tile, or
-
-  2. invoke `nki.isa.nc_matmul` instructions to multiply a `nki.language.ones([128, 1], dtype=data.dtype)` vector with the input tile.
-
-Estimated instruction cost:
-
-Cost (Vector Engine Cycles) | Condition  
----|---  
-`N/2` | both input and output data types are `bfloat16` and the reduction operator is add or maximum  
-`N` | otherwise  
-  
-where,
-
-  * `N` is the number of elements per partition in `data`.
-
-  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * op – the reduction operator (see Supported Math Operators for NKI ISA for supported reduction operators)
-
-  * data – the input tile to be reduced
-
-  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * negate – if True, reduction result is multiplied by `-1.0`; only applicable when op is an arithmetic operator
-
-  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
-
-Returns:
-    
-
-output tile of the reduction result
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    import numpy as np
-    ...
-    
-    ##################################################################
-    # Example 1: reduce add tile a of shape (128, 512)
-    # in the free dimension and return
-    # reduction result in tile b of shape (128, 1)
-    ##################################################################
-    i_p_a = nl.arange(128)[:, None]
-    i_f_a = nl.arange(512)[None, :]
-    
-    b = nisa.tensor_reduce(np.add, a[i_p_a, i_f_a], axis=[1])
-    
-
----
-
-### tensor_reduce
-
-`tensor_reduce` | Apply a reduction operation to the free axes of an input `data` tile using Vector Engine.  
-
----
-
-### nki.isa.tensor_partition_reduce
-
-nki.isa.tensor_partition_reduce(op, data, *, mask=None, dtype=None, **kwargs)
-    
-
-Apply a reduction operation across partitions of an input `data` tile using GpSimd Engine.
-
-Parameters:
-    
-
-  * op – the reduction operator (add, max, bitwise_or, bitwise_and)
-
-  * data – the input tile to be reduced
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-Returns:
-    
-
-output tile with reduced result
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    import numpy as np
-    ...
-    
-    ##################################################################
-    # Example 1: reduce add tile a of shape (128, 32, 4)
-    # in the partition dimension and return
-    # reduction result in tile b of shape (1, 32, 4)
-    ##################################################################
-    a = nl.load(a_tensor[0:128, 0:32, 0:4])  
-    b = nisa.tensor_partition_reduce(np.add, a)
-    nl.store(b_tensor[0:1, 0:32, 0:4], b)
-    
-    ##################################################################
-    # Example 2: reduce add tile a of shape (b, p, f1, ...)
-    # in the partition dimension p and return
-    # reduction result in tile b of shape (b, 1, f1, ...)
-    ##################################################################
-    for i in nl.affine_range(a_tensor.shape[0]):
-      a = nl.load(a_tensor[i])
-      b = nisa.tensor_partition_reduce(np.add, a)
-      nl.store(b_tensor[i], b)
-    
-
-### nki.isa.tensor_partition_reduce
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### tensor_partition_reduce
-
-`tensor_partition_reduce` | Apply a reduction operation across partitions of an input `data` tile using GpSimd Engine.  
-
----
-
-### nki.isa.tensor_scalar_reduce
-
-nki.isa.tensor_scalar_reduce(*, data, op0, operand0, reduce_op, reduce_res, reverse0=False, dtype=None, mask=None, **kwargs)
-    
-
-Perform the same computation as `nisa.tensor_scalar` with one math operator and also a reduction along the free dimension of the `nisa.tensor_scalar` result using Vector Engine.
-
-Refer to nisa.tensor_scalar for semantics of `data/op0/operand0`. Unlike regular `nisa.tensor_scalar` where two operators are supported, only one operator is supported in this API. Also, `op0` can only be arithmetic operation in Supported Math Operators for NKI ISA. Bitvec operators are not supported in this API.
-
-In addition to nisa.tensor_scalar computation, this API also performs a reduction along the free dimension(s) of the nisa.tensor_scalar result, at a small additional performance cost. The reduction result is returned in `reduce_res` in-place, which must be a SBUF/PSUM tile with the same partition axis size as the input tile `data` and one element per partition. The `reduce_op` can be any of `nl.add`, `nl.subtract`, `nl.multiply`, `nl.max` or `nl.min`.
-
-Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will reduce across all of them.
-
-\\[\begin{split}result = data <op0> operand0 \\\ reduce\\_res = reduce\\_op(dst, axis=<FreeAxis>)\end{split}\\]
-
-Estimated instruction cost:
-
-`max(MIN_II, N) + MIN_II` Vector Engine cycles, where
-
-  * `N` is the number of elements per partition in `data`, and
-
-  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * data – the input tile
-
-  * op0 – the math operator used with operand0 (any arithmetic operator in Supported Math Operators for NKI ISA is allowed)
-
-  * operand0 – a scalar constant or a tile of shape `(data.shape[0], 1)`, where data.shape[0] is the partition axis size of the input `data` tile
-
-  * reverse0 – (not supported yet) reverse ordering of inputs to `op0`; if false, `operand0` is the rhs of `op0`; if true, `operand0` is the lhs of `op0`. <– currently not supported yet.
-
-  * reduce_op – the reduce operation to perform on the free dimension of `data <op0> operand0`
-
-  * reduce_res – a tile of shape `(data.shape[0], 1)`, where data.shape[0] is the partition axis size of the input `data` tile. The result of `reduce_op(data <op0> operand0)` is written in-place into the tile.
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-an output tile of `(data <op0> operand0)` computation
-
-
-### nki.isa.tensor_scalar_reduce
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### tensor_scalar_reduce
-
-`tensor_scalar_reduce` | Perform the same computation as `nisa.tensor_scalar` with one math operator and also a reduction along the free dimension of the `nisa.tensor_scalar` result using Vector Engine.  
 
 ---
 
@@ -5708,83 +4200,183 @@ Example:
 
 ---
 
-### tensor_tensor_scan
+### nki.isa.tensor_reduce
 
-`tensor_tensor_scan` | Perform a scan operation of two input tiles using Vector Engine.  
+nki.isa.tensor_reduce(op, data, axis, *, mask=None, dtype=None, negate=False, keepdims=False, **kwargs)
+    
 
----
+Apply a reduction operation to the free axes of an input `data` tile using Vector Engine.
 
-### Supported Math Operators for NKI ISA
+The reduction operator is specified in the `op` input field (see Supported Math Operators for NKI ISA for a list of supported reduction operators). There are two types of reduction operators: 1) bitvec operators (e.g., bitwise_and, bitwise_or) and 2) arithmetic operators (e.g., add, subtract, multiply). For bitvec operators, the input/output data types must be integer types and Vector Engine treats all input elements as bit patterns without any data type casting. For arithmetic operators, there is no restriction on the input/output data types, but the engine automatically casts input data types to float32 and performs the reduction operation in float32 math. The float32 reduction results are cast to the target data type specified in the `dtype` field before written into the output tile. If the `dtype` field is not specified, it is default to be the same as input tile data type.
 
-## Supported Math Operators for NKI ISA
-Supported Math Operators by NKI ISA below lists all the mathematical operator primitives supported by NKI. Many nki.isa APIs (instructions) allow programmable operators through the `op` field. The supported operators fall into two categories: bitvec and arithmetic. In general, instructions using bitvec operators expect integer data types and treat input elements as bit patterns. On the other hand, instructions using arithmetic operators accept any valid NKI data types and convert input elements into float32 before performing the operators.
+When the reduction `op` is an arithmetic operator, the instruction can also multiply the output reduction results by `-1.0` before writing into the output tile, at no additional performance cost. This behavior is controlled by the `negate` input field.
 
-Table 7 Supported Math Operators by NKI ISA# | Operator | `op` | Legal Reduction `op` | Supported Engine  
----|---|---|---|---  
-Bitvec | Bitwise Not | `nki.language.invert` | N | Vector  
-Bitwise And | `nki.language.bitwise_and` | Y | Vector  
-Bitwise Or | `nki.language.bitwise_or` | Y | Vector  
-Bitwise Xor | `nki.language.bitwise_xor` | Y | Vector  
-Arithmetic Shift Left | `nki.language.left_shift` | N | Vector  
-Arithmetic Shift Right | Not supported | N | Vector  
-Logical Shift Left | `nki.language.left_shift` | N | Vector  
-Logical Shift Right | `nki.language.right_shift` | N | Vector  
-Arithmetic | Add | `nki.language.add` | Y | Vector/GpSIMD/Scalar  
-Subtract | `nki.language.subtract` | Y | Vector  
-Multiply | `nki.language.multiply` | Y | Vector/GpSIMD/Scalar  
-Max | `nki.language.maximum` | Y | Vector  
-Min | `nki.language.minimum` | Y | Vector  
-Is Equal to | `nki.language.equal` | N | Vector  
-Is Not Equal to | `nki.language.not_equal` | N | Vector  
-Is Greater than or Equal to | `nki.language.greater_equal` | N | Vector  
-Is Greater than to | `nki.language.greater` | N | Vector  
-Is Less than or Equal to | `nki.language.less_equal` | N | Vector  
-Is Less than | `nki.language.less` | N | Vector  
-Logical Not | `nki.language.logical_not` | N | Vector  
-Logical And | `nki.language.logical_and` | Y | Vector  
-Logical Or | `nki.language.logical_or` | Y | Vector  
-Logical Xor | `nki.language.logical_xor` | Y | Vector  
-Reverse Square Root | `nki.language.rsqrt` | N | GpSIMD/Scalar  
-Reciprocal | `nki.language.reciprocal` | N | Vector/Scalar  
-Absolute | `nki.language.abs` | N | Vector/Scalar  
-Power | `nki.language.power` | N | GpSIMD  
+The reduction axes are specified in the `axis` field using a list of integer(s) to indicate axis indices. The reduction axes can contain up to four free axes and must start at the most minor free axis. Since axis 0 is the partition axis in a tile, the reduction axes must contain axis 1 (most-minor). In addition, the reduction axes must be consecutive: e.g., [1, 2, 3, 4] is a legal `axis` field, but [1, 3, 4] is not.
+
+Since this instruction only supports free axes reduction, the output tile must have the same partition axis size as the input `data` tile. To perform a partition axis reduction, we can either:
+
+  1. invoke a `nki.isa.nc_transpose` instruction on the input tile and then this `reduce` instruction to the transposed tile, or
+
+  2. invoke `nki.isa.nc_matmul` instructions to multiply a `nki.language.ones([128, 1], dtype=data.dtype)` vector with the input tile.
+
+Estimated instruction cost:
+
+Cost (Vector Engine Cycles) | Condition  
+---|---  
+`N/2` | both input and output data types are `bfloat16` and the reduction operator is add or maximum  
+`N` | otherwise  
   
-Note Add and Multiply are supported on Scalar Engine only from NeuronCore-v3. 32-bit integer Add and Multiply are only supported on GpSIMD Engine.
+where,
+
+  * `N` is the number of elements per partition in `data`.
+
+  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+Parameters:
+    
+
+  * op – the reduction operator (see Supported Math Operators for NKI ISA for supported reduction operators)
+
+  * data – the input tile to be reduced
+
+  * axis – int or tuple/list of ints. The axis (or axes) along which to operate; must be free dimensions, not partition dimension (0); can only be the last contiguous dim(s) of the tile: `[1], [1,2], [1,2,3], [1,2,3,4]`
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * negate – if True, reduction result is multiplied by `-1.0`; only applicable when op is an arithmetic operator
+
+  * keepdims – If this is set to True, the axes which are reduced are left in the result as dimensions with size one. With this option, the result will broadcast correctly against the input array.
+
+Returns:
+    
+
+output tile of the reduction result
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    import numpy as np
+    ...
+    
+    ##################################################################
+    # Example 1: reduce add tile a of shape (128, 512)
+    # in the free dimension and return
+    # reduction result in tile b of shape (128, 1)
+    ##################################################################
+    i_p_a = nl.arange(128)[:, None]
+    i_f_a = nl.arange(512)[None, :]
+    
+    b = nisa.tensor_reduce(np.add, a[i_p_a, i_f_a], axis=[1])
+    
 
 ---
 
-### NKI Engine Selection for Operators Supported on Multiple Engines
+### nki.isa.tensor_scalar_reduce
 
-## NKI Engine Selection for Operators Supported on Multiple Engines
-There is a tradeoff between precision and speed on different engines for operators with multiple engine options. Users can select which engine to map to based on their needs. We take reciprocal and reverse square root as two examples and explain the tradeoff below.
+nki.isa.tensor_scalar_reduce(*, data, op0, operand0, reduce_op, reduce_res, reverse0=False, dtype=None, mask=None, **kwargs)
+    
 
-  1. Reciprocal can run on Scalar Engine or Vector Engine:
+Perform the same computation as `nisa.tensor_scalar` with one math operator and also a reduction along the free dimension of the `nisa.tensor_scalar` result using Vector Engine.
 
-> Reciprocal can run on Vector Engine with `nki.isa.reciprocal` or on Scalar Engine with `nki.isa.activation(nl.reciprocal)`. Vector Engine performs reciprocal at a higher precision compared to Scalar Engine; however, the computation throughput of reciprocal on Vector Engine is about 8x lower than Scalar Engine for large input tiles. For input tiles with a small number of elements per partition (less than 64, processed one per cycle), instruction initiation interval (roughly 64 cycles) dominates performance so Scalar Engine and Vector Engine have comparable performance. In this case, we suggest using Vector Engine to achieve better precision.
-> 
-> Estimated cycles on different engines:
-> 
-> Cost (Engine Cycles) | Condition  
-> ---|---  
-> `max(MIN_II, N)` | mapped to Scalar Engine `nki.isa.scalar_engine`  
-> `max(MIN_II, 8*N)` | mapped to Vector Engine `nki.isa.vector_engine`  
->   
-> where,
-> 
->   * `N` is the number of elements per partition in the input tile.
-> 
->   * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-> 
-> 
+Refer to nisa.tensor_scalar for semantics of `data/op0/operand0`. Unlike regular `nisa.tensor_scalar` where two operators are supported, only one operator is supported in this API. Also, `op0` can only be arithmetic operation in Supported Math Operators for NKI ISA. Bitvec operators are not supported in this API.
 
-> 
-> Note `nki.isa.activation(op=nl.reciprocal)` doesn’t support setting bias on NeuronCore-v2.
+In addition to nisa.tensor_scalar computation, this API also performs a reduction along the free dimension(s) of the nisa.tensor_scalar result, at a small additional performance cost. The reduction result is returned in `reduce_res` in-place, which must be a SBUF/PSUM tile with the same partition axis size as the input tile `data` and one element per partition. The `reduce_op` can be any of `nl.add`, `nl.subtract`, `nl.multiply`, `nl.max` or `nl.min`.
 
-  2. Reverse square root can run on GpSIMD Engine or Scalar Engine:
+Reduction axis is not configurable in this API. If the input tile has multiple free axis, the API will reduce across all of them.
 
-> Reverse square root can run on GpSIMD Engine with `nki.isa.tensor_scalar(op0=nl.rsqrt, operand0=0.0)` or on Scalar Engine with `nki.isa.activation(nl.rsqrt)`. GpSIMD Engine performs reverse square root at a higher precision compared to Scalar Engine; however, the computation throughput of reverse square root on GpSIMD Engine is 4x lower than Scalar Engine.
+\\[\begin{split}result = data <op0> operand0 \\\ reduce\\_res = reduce\\_op(dst, axis=<FreeAxis>)\end{split}\\]
 
-## ISA Activation and Reduction
+Estimated instruction cost:
+
+`max(MIN_II, N) + MIN_II` Vector Engine cycles, where
+
+  * `N` is the number of elements per partition in `data`, and
+
+  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+Parameters:
+    
+
+  * data – the input tile
+
+  * op0 – the math operator used with operand0 (any arithmetic operator in Supported Math Operators for NKI ISA is allowed)
+
+  * operand0 – a scalar constant or a tile of shape `(data.shape[0], 1)`, where data.shape[0] is the partition axis size of the input `data` tile
+
+  * reverse0 – (not supported yet) reverse ordering of inputs to `op0`; if false, `operand0` is the rhs of `op0`; if true, `operand0` is the lhs of `op0`. <– currently not supported yet.
+
+  * reduce_op – the reduce operation to perform on the free dimension of `data <op0> operand0`
+
+  * reduce_res – a tile of shape `(data.shape[0], 1)`, where data.shape[0] is the partition axis size of the input `data` tile. The result of `reduce_op(data <op0> operand0)` is written in-place into the tile.
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Returns:
+    
+
+an output tile of `(data <op0> operand0)` computation
+
+
+---
+
+### nki.isa.tensor_partition_reduce
+
+nki.isa.tensor_partition_reduce(op, data, *, mask=None, dtype=None, **kwargs)
+    
+
+Apply a reduction operation across partitions of an input `data` tile using GpSimd Engine.
+
+Parameters:
+    
+
+  * op – the reduction operator (add, max, bitwise_or, bitwise_and)
+
+  * data – the input tile to be reduced
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+Returns:
+    
+
+output tile with reduced result
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    import numpy as np
+    ...
+    
+    ##################################################################
+    # Example 1: reduce add tile a of shape (128, 32, 4)
+    # in the partition dimension and return
+    # reduction result in tile b of shape (1, 32, 4)
+    ##################################################################
+    a = nl.load(a_tensor[0:128, 0:32, 0:4])  
+    b = nisa.tensor_partition_reduce(np.add, a)
+    nl.store(b_tensor[0:1, 0:32, 0:4], b)
+    
+    ##################################################################
+    # Example 2: reduce add tile a of shape (b, p, f1, ...)
+    # in the partition dimension p and return
+    # reduction result in tile b of shape (b, 1, f1, ...)
+    ##################################################################
+    for i in nl.affine_range(a_tensor.shape[0]):
+      a = nl.load(a_tensor[i])
+      b = nisa.tensor_partition_reduce(np.add, a)
+      nl.store(b_tensor[i], b)
+    
+
+---
 
 ### nki.isa.activation
 
@@ -5881,16 +4473,6 @@ Example:
     nl.store(b_act_tensor, activated_b)
     
 
-### nki.isa.activation
-
-  * Fixed wrong default for `reduce_cmd` in nki.isa.activation. The default was incorrectly set to `ZeroAccumulate` instead of `Idle`, causing the accumulator to be zeroed before every activation call even when no reduction was requested.
-
----
-
-### activation
-
-`activation` | Apply an activation function on every element of the input tile using Scalar Engine.  
-
 ---
 
 ### nki.isa.activation_reduce
@@ -5948,44 +4530,12 @@ Returns:
 
 output tile of the activation instruction; layout: same as input `data` tile
 
-### nki.isa.activation_reduce
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### activation_reduce
-
-`activation_reduce` | Perform the same computation as `nisa.activation` and also a reduction along the free dimension of the `nisa.activation` result using Scalar Engine.  
-
----
-
-### nki.isa.exponential
-
-    * `nki.isa.exponential` — computes element-wise exponential on tensors. See nki.isa.activation.
-
----
-
-### nki.isa.identity
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### nki.isa.silu
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### nki.isa.silu_dx
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
 
 ---
 
 ### nki.isa.reciprocal
 
+# nki.isa.reciprocal
 nki.isa.reciprocal(data, *, dtype=None, mask=None, **kwargs)
     
 
@@ -6023,10 +4573,167 @@ Example:
     
     
 
-## ISA Copy Operations
+---
+
+### nki.isa.bn_stats
+
+nki.isa.bn_stats(data, *, mask=None, dtype=None, **kwargs)
+    
+
+Compute mean- and variance-related statistics for each partition of an input tile `data` in parallel using Vector Engine.
+
+The output tile of the instruction has 6 elements per partition:
+
+  * the `count` of the even elements (of the input tile elements from the same partition)
+
+  * the `mean` of the even elements
+
+  * `variance * count` of the even elements
+
+  * the `count` of the odd elements
+
+  * the `mean` of the odd elements
+
+  * `variance * count` of the odd elements
+
+To get the final mean and variance of the input tile, we need to pass the above `bn_stats` instruction output into the bn_aggr instruction, which will output two elements per partition:
+
+  * mean (of the original input tile elements from the same partition)
+
+  * variance
+
+Due to hardware limitation, the number of elements per partition (i.e., free dimension size) of the input `data` must not exceed 512 (nl.tile_size.bn_stats_fmax). To calculate per-partition mean/variance of a tensor with more than 512 elements in free dimension, we can invoke `bn_stats` instructions on each 512-element tile and use a single `bn_aggr` instruction to aggregate `bn_stats` outputs from all the tiles. Refer to Example 2 for an example implementation.
+
+Vector Engine performs the above statistics calculation in float32 precision. Therefore, the engine automatically casts the input `data` tile to float32 before performing float32 computation and is capable of casting the float32 computation results into another data type specified by the `dtype` field, at no additional performance cost. If `dtype` field is not specified, the instruction will cast the float32 results back to the same data type as the input `data` tile.
+
+Estimated instruction cost:
+
+`max(MIN_II, N)` Vector Engine cycles, where `N` is the number of elements per partition in `data` and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+Parameters:
+    
+
+  * data – the input tile (up to 512 elements per partition)
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+Returns:
+    
+
+an output tile with 6-element statistics per partition
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    from neuronxcc.nki.typing import tensor
+    
+    ##################################################################
+    # Example 1: Calculate the mean and variance for each partition
+    # of tile a with shape (128, 128)
+    ##################################################################
+    a: tensor[128, 128] = nl.load(a_tensor)
+    stats_a: tensor[128, 6] = nisa.bn_stats(a)
+    mean_var_a: tensor[128, 2] = nisa.bn_aggr(stats_a)
+    
+    # Extract mean and variance
+    mean_a = mean_var_a[:, 0]
+    var_a = mean_var_a[:, 1]
+    nl.store(mean_a_tensor, mean_a)
+    nl.store(var_a_tensor, var_a)
+    
+    # ##################################################################
+    # # Example 2: Calculate the mean and variance for each partition of
+    # # tile b with shape [128, 1024]
+    # ##################################################################
+    b: tensor[128, 1024] = nl.load(b_tensor)
+    
+    # Run bn_stats in two tiles because b has 1024 elements per partition,
+    # but bn_stats has a limitation of nl.tile_size.bn_stats_fmax
+    # Initialize a bn_stats output tile with shape of [128, 6*2] to
+    # hold outputs of two bn_stats instructions
+    stats_b = nl.ndarray((128, 6 * 2), dtype=nl.float32)
+    bn_tile = nl.tile_size.bn_stats_fmax
+    ix, iy = nl.mgrid[0:128, 0:bn_tile]
+    iz, iw = nl.mgrid[0:128, 0:6]
+    
+    for i in range(1024 // bn_tile):
+      stats_b[iz, i * 6 + iw] = nisa.bn_stats(b[ix, i * bn_tile + iy], dtype=nl.float32)
+    
+    mean_var_b = nisa.bn_aggr(stats_b)
+    
+    # Extract mean and variance
+    mean_b = mean_var_b[:, 0]
+    var_b = mean_var_b[:, 1]
+    
+    nl.store(mean_b_tensor, mean_b)
+    nl.store(var_b_tensor, var_b)
+    
+
+---
+
+### nki.isa.bn_aggr
+
+nki.isa.bn_aggr(data, *, mask=None, dtype=None, **kwargs)
+    
+
+Aggregate one or multiple `bn_stats` outputs to generate a mean and variance per partition using Vector Engine.
+
+The input `data` tile effectively has an array of `(count, mean, variance*count)` tuples per partition produced by bn_stats instructions. Therefore, the number of elements per partition of `data` must be a modulo of three.
+
+Note, if you need to aggregate multiple `bn_stats` instruction outputs, it is recommended to declare a SBUF tensor and then make each `bn_stats` instruction write its output into the SBUF tensor at different offsets (see example implementation in Example 2 in bn_stats).
+
+Vector Engine performs the statistics aggregation in float32 precision. Therefore, the engine automatically casts the input `data` tile to float32 before performing float32 computation and is capable of casting the float32 computation results into another data type specified by the `dtype` field, at no additional performance cost. If `dtype` field is not specified, the instruction will cast the float32 results back to the same data type as the input `data` tile.
+
+Estimated instruction cost:
+
+`max(MIN_II, 13*(N/3))` Vector Engine cycles, where `N` is the number of elements per partition in `data` and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+Parameters:
+    
+
+  * data – an input tile with results of one or more bn_stats
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+Returns:
+    
+
+an output tile with two elements per partition: a mean followed by a variance
+
+## ISA Copy and Data Movement
+
+### nki.language.copy
+
+nki.language.copy(src, *, mask=None, dtype=None, **kwargs)
+    
+
+Create a copy of the src tile.
+
+Parameters:
+    
+
+  * src – the source of copy, must be a tile in SBUF or PSUM.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+Returns:
+    
+
+a new tile with the same layout as src, this new tile will be in SBUF, but can be also assigned to a PSUM tensor.
+
+---
 
 ### nki.isa.tensor_copy
 
+# nki.isa.tensor_copy
 nki.isa.tensor_copy(src, *, mask=None, dtype=None, engine=engine.unknown, **kwargs)
     
 
@@ -6078,20 +4785,11 @@ Example:
     nl.store(out_tensor, value=x_copy)
     
 
-### nki.isa.tensor_copy
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
----
-
-### tensor_copy
-
-`tensor_copy` | Create a copy of `src` tile within NeuronCore on-chip SRAMs using Vector, Scalar or GpSimd Engine.  
-
 ---
 
 ### nki.isa.tensor_copy_dynamic_src
 
+# nki.isa.tensor_copy_dynamic_src
 nki.isa.tensor_copy_dynamic_src(src, *, mask=None, dtype=None, engine=engine.unknown, **kwargs)
     
 
@@ -6194,16 +4892,6 @@ Example:
     nl.store(out_tensor, value=out_sbuf)
     ...
 
-### nki.isa.tensor_copy_dynamic_src
-
-  * `nki.isa.tensor_copy_dynamic_src`, `tensor_copy_dynamic_dst` engine selection.
-
----
-
-### tensor_copy_dynamic_src
-
-`tensor_copy_dynamic_src` | Create a copy of `src` tile within NeuronCore on-chip SRAMs using Vector or Scalar or GpSimd Engine, with `src` located at a dynamic offset within each partition.  
-
 ---
 
 ### nki.isa.tensor_copy_dynamic_dst
@@ -6241,20 +4929,11 @@ Parameters:
   * engine – (optional) the engine to use for the operation: nki.isa.vector_engine, nki.isa.gpsimd_engine, nki.isa.scalar_engine or nki.isa.unknown_engine (default, let compiler select best engine).
 
 
-### nki.isa.tensor_copy_dynamic_dst
-
-  * `nki.isa.tensor_copy_dynamic_src`, `tensor_copy_dynamic_dst` engine selection.
-
----
-
-### tensor_copy_dynamic_dst
-
-`tensor_copy_dynamic_dst` | Create a copy of `src` tile within NeuronCore on-chip SRAMs using Vector or Scalar or GpSimd Engine, with `dst` located at a dynamic offset within each partition.  
-
 ---
 
 ### nki.isa.tensor_copy_predicated
 
+# nki.isa.tensor_copy_predicated
 nki.isa.tensor_copy_predicated(*, src, dst, predicate, reverse_pred=False, mask=None, dtype=None, **kwargs)
     
 
@@ -6326,95 +5005,182 @@ Example:
     nisa.tensor_copy_predicated(src=src_tile, dst=dst_tile, predicate=pre_tile)
     
 
-### nki.isa.tensor_copy_predicated
-
-  * `nki.isa.tensor_copy_predicated` support for reversing predicate.
-
 ---
 
-### tensor_copy_predicated
+### nki.isa.nc_transpose
 
-`tensor_copy_predicated` | Conditionally copy elements from the `src` tile to the destination tile on SBUF / PSUM based on a `predicate` using Vector Engine.  
-
-## ISA Selection and Masking
-
-### nki.isa.affine_select
-
-nki.isa.affine_select(pred, on_true_tile, on_false_value, *, mask=None, dtype=None, **kwargs)
+# nki.isa.nc_transpose
+nki.isa.nc_transpose(data, *, mask=None, dtype=None, engine=engine.unknown, **kwargs)
     
 
-Select elements between an input tile `on_true_tile` and a scalar value `on_false_value` according to a boolean predicate tile using GpSimd Engine. The predicate tile is calculated on-the-fly in the engine by evaluating an affine expression element-by-element as indicated in `pred`.
+Perform a 2D transpose between the partition axis and the free axis of input `data`, i.e., a PF-transpose, using Tensor or Vector Engine. If the `data` tile has more than one free axes, this API implicitly collapses all free axes into one axis and then performs a 2D PF-transpose.
 
-`pred` must meet the following requirements:
+In NeuronCore, both Tensor and Vector Engine can perform a PF-transpose, but they support different input shapes. Tensor Engine `nc_transpose` can handle an input tile of shape (128, 128) or smaller, while Vector Engine can handle shape (32, 32) or smaller. Therefore, when the input tile shape is (32, 32) or smaller, we have an option to run it on either engine, which is controlled by the `engine` field. If no `engine` is specified, Neuron Compiler will automatically select an engine based on the input shape. Note, similar to other Tensor Engine instructions, the Tensor Engine `nc_transpose` must read the input tile from SBUF and write the transposed result to PSUM. On the other hand, Vector Engine `nc_transpose` can read/write from/to either SBUF or PSUM.
 
->   * It must not depend on any runtime variables that can’t be resolved at compile-time.
-> 
->   * It can’t be multiple masks combined using logical operators such as `&` and `|`.
-> 
-> 
-
-For a complex predicate that doesn’t meet the above requirements, consider using nl.where.
-
-The input tile `on_true_tile`, the calculated boolean predicate tile expressed by `pred`, and the returned output tile of this instruction must have the same shape. If the predicate value of a given position is `True`, the corresponding output element will take the element from `on_true_tile` in the same position. If the predicate value of a given position is `False`, the corresponding output element will take the value of `on_false_value`.
-
-A common use case for `affine_select` is to apply a causal mask on the attention scores for transformer decoder models.
-
-This instruction allows any float or 8-bit/16-bit integer data types for both the input data tile and output tile (see Supported Data Types for more information). The output tile data type is specified using the `dtype` field. If `dtype` is not specified, the output data type will be the same as the input data type of `data`. However, the data type of `on_false_value` must be float32, regardless of the input/output tile data types.
+Note, PF-transpose on Tensor Engine is done by performing a matrix multiplication between `data` as the stationary tensor and an identity matrix as the moving tensor. See architecture guide for more information. On NeuronCore-v2, such matmul-style transpose is not bit-accurate if the input `data` contains NaN/Inf. You may consider replacing NaN/Inf with regular floats (float_max/float_min/zeros) in the input matrix before calling `nc_transpose(engine=nki.isa.constants.engine.tensor)`.
 
 Estimated instruction cost:
 
-`GPSIMD_START + N` GpSimd Engine cycles, where `N` is the number of elements per partition in `on_true_tile` and `GPSIMD_START` is the instruction startup overhead on GpSimdE, roughly 150 engine cycles.
+Cost (Engine Cycles) | Condition  
+---|---  
+`max(MIN_II, N)` | `engine` set to `nki.isa.constants.engine.vector`  
+`max(P, min(64, F))` | `engine` set to `nki.isa.constants.engine.tensor` and assuming many back-to-back `nc_transpose` of the same shape on Tensor Engine  
+  
+where,
+
+  * `N` is the number of elements per partition in `data`.
+
+  * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+  * `P` is partition axis size of `data`.
+
+  * `F` is the number of elements per partition in `data`.
 
 Parameters:
     
 
-  * pred – an affine expression that defines the boolean predicate
-
-  * on_true_tile – an input tile for selection with a `True` predicate value
-
-  * on_false_value – a scalar value for selection with a `False` predicate value
+  * data – the input tile to be transposed
 
   * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
 
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
+  * dtype – if specified and it’s different from the data type of input tile `data`, an additional nki.isa.cast instruction will be inserted to cast the transposed data into the target `dtype` (see Supported Data Types for more information)
+
+  * engine – specify which engine to use for transpose: `nki.isa.tensor_engine` or `nki.isa.vector_engine` ; by default, the best engine will be selected for the given input tile shape
 
 Returns:
     
 
-an output tile with values selected from either `on_true_tile` or `on_false_value` according to the following equation: output[x] = (pred[x] > 0) ? on_true_tile[x] : on_false_value
+a tile with transposed result of input `data` tile
 
 Example:
     
     
     import neuronxcc.nki.isa as nisa
     import neuronxcc.nki.language as nl
+    ...
     
     ##################################################################
-    # Example 1: Take tile a of shape [128, 128] and replace its
-    # upper triangle with nl.fp32.min;
+    # Example 1: transpose tile a of shape (128, 64)
     ##################################################################
-    ix, iy = nl.mgrid[0:128, 0:128]
-    a = nl.load(a_tensor[ix, iy])
+    i_p_a = nl.arange(128)[:, None]
+    i_f_a = nl.arange(64)[None, :]
+    aT = nisa.nc_transpose(a[i_p_a, i_f_a])
     
-    b = nisa.affine_select(pred=(iy <ix), on_true_tile=a[ix, iy], on_false_value=nl.fp32.min)
     
-    nl.store(b_tensor[ix, iy], b)
+    ##################################################################
+    # Example 2: transpose tile b of shape (32, 2) using Vector Engine
+    ##################################################################
+    i_p_b = nl.arange(32)[:, None]
+    i_f_b = nl.arange(2)[None, :]
+    bT = nisa.nc_transpose(b[i_p_b, i_f_b], engine=nisa.vector_engine)
     
-
-### nki.isa.affine_select
-
-    * `nki.isa.affine_select` — instead of `pred`, we now take `pattern` and `cmp_op` params
 
 ---
 
-### affine_select
+### nki.isa.nc_stream_shuffle
 
-`affine_select` | Select elements between an input tile `on_true_tile` and a scalar value `on_false_value` according to a boolean predicate tile using GpSimd Engine.  
+nki.isa.nc_stream_shuffle(src, dst, shuffle_mask, *, dtype=None, mask=None, **kwargs)
+    
 
----
+Apply cross-partition data movement within a quadrant of 32 partitions from source tile `src` to destination tile `dst` using Vector Engine.
+
+Both source and destination tiles can be in either SBUF or PSUM, and passed in by reference as arguments. In-place shuffle is allowed, i.e., `dst` same as `src`. `shuffle_mask` is a 32-element list. Each mask element must be in data type int or affine expression. `shuffle_mask[i]` indicates which input partition the output partition [i] copies from within each 32-partition quadrant. The special value `shuffle_mask[i]=255` means the output tensor in partition [i] will be unmodified. `nc_stream_shuffle` can be applied to multiple of quadrants. In the case with more than one quadrant, the shuffle is applied to each quadrant independently, and the same `shuffle_mask` is used for each quadrant. `mask` applies to `dst`, meaning that locations masked out by `mask` will be unmodified. For more information about the cross-partition data movement, see Cross-partition Data Movement.
+
+This API has 3 constraints on `src` and `dst`:
+
+  1. `dst` must have same data type as `src`.
+
+  2. `dst` must have the same number of elements per partition as `src`.
+
+  3. The access start partition of `src` (`src_start_partition`), does not have to match or be in the same quadrant as that of `dst` (`dst_start_partition`). However, `src_start_partition`/`dst_start_partition` needs to follow some special hardware rules with the number of active partitions `num_active_partitions`. `num_active_partitions = ceil(max(src_num_partitions, dst_num_partitions)/32) * 32`, where `src_num_partitions` and `dst_num_partitions` refer to the number of partitions the `src` and `dst` tensors access respectively. `src_start_partition`/`dst_start_partition` is constrained based on the value of `num_active_partitions`:
+
+>   * If `num_active_partitions` is 96/128, `src_start_partition`/`dst_start_partition` must be 0.
+> 
+>   * If `num_active_partitions` is 64, `src_start_partition`/`dst_start_partition` must be 0/64.
+> 
+>   * If `num_active_partitions` is 32, `src_start_partition`/`dst_start_partition` must be 0/32/64/96.
+> 
+> 
+
+Estimated instruction cost:
+
+`max(MIN_II, N)` Vector Engine cycles, where `N` is the number of elements per partition in `src`, and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+
+Parameters:
+    
+
+  * src – the source tile
+
+  * dst – the destination tile
+
+  * shuffle_mask – a 32-element list that specifies the shuffle source and destination partition
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    from neuronxcc.nki.typing import tensor
+    
+    #####################################################################
+    # Example 1: 
+    # Apply cross-partition data movement to a 32-partition tensor,
+    # in-place shuffling the data in partition[i] to partition[(i+1)%32].
+    #####################################################################
+    
+    ...
+    a: tensor[32, 128] = nl.load(in_tensor)
+    a_mgrid = nl.mgrid[0:32, 0:128]
+    shuffle_mask = [(i - 1) % 32 for i in range(32)]
+    nisa.nc_stream_shuffle(src=a[a_mgrid.p, a_mgrid.x], dst=a[a_mgrid.p, a_mgrid.x], shuffle_mask=shuffle_mask)
+    
+    nl.store(out_tensor, value=a)
+    
+    
+    
+    #####################################################################
+    # Example 2: 
+    # Broadcast data in 1 partition to 32 partitions.
+    #####################################################################
+    
+    ...
+    a: tensor[1, 128] = nl.load(in_tensor)
+    b = nl.ndarray(shape=(32, 128), dtype=np.float32)
+    dst_mgrid = nl.mgrid[0:32, 0:128]
+    src_mgrid = nl.mgrid[0:1, 0:128]
+    shuffle_mask = [0] * 32
+    nisa.nc_stream_shuffle(src=a[0, src_mgrid.x], dst=b[dst_mgrid.p, dst_mgrid.x], shuffle_mask=shuffle_mask)
+    
+    nl.store(out_tensor, value=b)
+    
+    
+    
+    #####################################################################
+    # Example 3: 
+    # In the case where src and dst access more than one quadrant (32 
+    # partitions), the shuffle is applied to each quadrant independently, 
+    # and the same shuffle_mask is used for each quadrant.
+    #####################################################################
+    
+    ...
+    a: tensor[128, 128] = nl.load(in_tensor)
+    b = nl.ndarray(shape=(128, 128), dtype=np.float32)
+    mgrid = nl.mgrid[0:128, 0:128]
+    shuffle_mask = [(i - 1) % 32 for i in range(32)]
+    nisa.nc_stream_shuffle(src=a[mgrid.p, mgrid.x], dst=b[mgrid.p, mgrid.x], shuffle_mask=shuffle_mask)
+    
+    nl.store(out_tensor, value=b)
+    
+
+## ISA Selection, Gather, and Search
 
 ### nki.isa.range_select
 
+# nki.isa.range_select
 nki.isa.range_select(*, on_true_tile, comp_op0, comp_op1, bound0, bound1, reduce_cmd=reduce_cmd.idle, reduce_res=None, reduce_op=<function amax>, range_start=0, on_false_value=<property object>, mask=None, dtype=None, **kwargs)
     
 
@@ -6640,16 +5406,6 @@ Alternatively, `reduce_cmd` can be used to chain multiple calls to the same accu
     nl.store(reduce_result[...], value=reduce_res_sbuf[...])
     
 
-### nki.isa.range_select
-
-  * Fixed incorrect default value for `on_false_value` in `nki.isa.range_select`. The default was `0.0` instead of negative infinity (`-inf`). This caused `range_select` to write zeros for out-of-range elements instead of the expected negative-infinity sentinel, which could produce incorrect results in downstream reductions (e.g., max-pooling or top-k). See nki.isa.range_select.
-
----
-
-### range_select
-
-`range_select` | Select elements from `on_true_tile` based on comparison with bounds using Vector Engine.  
-
 ---
 
 ### nki.isa.select_reduce
@@ -6847,436 +5603,77 @@ Example 3: Selection with reversed predicate
     nl.store(result_tensor, value=dst)
     
 
-### nki.isa.select_reduce
-
-    * `nki.isa.select_reduce` \- selectively copy elements with max reduction
-
 ---
 
-### select_reduce
+### nki.isa.affine_select
 
-`select_reduce` | Selectively copy elements from either `on_true` or `on_false` to the destination tile based on a `predicate` using Vector Engine, with optional reduction (max).  
-
----
-
-### nki.isa.sequence_bounds
-
-nki.isa.sequence_bounds(*, segment_ids, dtype=None)
+# nki.isa.affine_select
+nki.isa.affine_select(pred, on_true_tile, on_false_value, *, mask=None, dtype=None, **kwargs)
     
 
-Compute the sequence bounds for a given set of segment IDs using GpSIMD Engine.
+Select elements between an input tile `on_true_tile` and a scalar value `on_false_value` according to a boolean predicate tile using GpSimd Engine. The predicate tile is calculated on-the-fly in the engine by evaluating an affine expression element-by-element as indicated in `pred`.
 
-Given a tile of segment IDs, this function identifies where each segment begins and ends. For each element, it returns a pair of values: [start_index, end_index] indicating the boundaries of the segment that element belongs to. All segment IDs must be non-negative integers. Padding elements (with segment ID of zero) receive special boundary values: a start index of n and an end index of (-1), where n is the length of `segment_ids`.
+`pred` must meet the following requirements:
 
-The output tile contains two values per input element: the start index (first column) and end index (second column) of each segment. The partition dimension must always be 1. For example, with input shape (1, 512), the output shape becomes (1, 2, 512), where the additional dimension holds the start and end indices for each element.
+>   * It must not depend on any runtime variables that can’t be resolved at compile-time.
+> 
+>   * It can’t be multiple masks combined using logical operators such as `&` and `|`.
+> 
+> 
 
-The input tile (`segment_ids`) must have data type np.float32 or np.int32. The output tile data type is specified using the `dtype` field (must be np.float32 or np.int32). If `dtype` is not specified, the output data type will be the same as the input data type of `segment_ids`.
+For a complex predicate that doesn’t meet the above requirements, consider using nl.where.
 
-NumPy equivalent:
-    
-    
-    def compute_sequence_bounds(sequence):
-      n = len(sequence)
-    
-      min_bounds = np.zeros(n, dtype=sequence.dtype)
-      max_bounds = np.zeros(n, dtype=sequence.dtype)
-    
-      min_bound_pad = n
-      max_bound_pad = -1
-    
-      min_bounds[0] = 0 if sequence[0] != 0 else min_bound_pad
-      for i in range(1, n):
-        if sequence[i] == 0:
-          min_bounds[i] = min_bound_pad
-        elif sequence[i] == sequence[i - 1]:
-          min_bounds[i] = min_bounds[i - 1]
-        else:
-          min_bounds[i] = i
-    
-      max_bounds[-1] = n if sequence[-1] != 0 else max_bound_pad
-      for i in range(n - 2, -1, -1):
-        if sequence[i] == 0:
-          max_bounds[i] = max_bound_pad
-        elif sequence[i] == sequence[i + 1]:
-          max_bounds[i] = max_bounds[i + 1]
-        else:
-          max_bounds[i] = i + 1
-    
-      return np.vstack((min_bounds, max_bounds))
-    
-    b = (
-      np.apply_along_axis(
-        compute_sequence_bounds, axis=1, arr=reshaped_segment_ids
-      )
-      .reshape(m, 2, n)
-      .astype(np.float32)
-    )
-    
+The input tile `on_true_tile`, the calculated boolean predicate tile expressed by `pred`, and the returned output tile of this instruction must have the same shape. If the predicate value of a given position is `True`, the corresponding output element will take the element from `on_true_tile` in the same position. If the predicate value of a given position is `False`, the corresponding output element will take the value of `on_false_value`.
+
+A common use case for `affine_select` is to apply a causal mask on the attention scores for transformer decoder models.
+
+This instruction allows any float or 8-bit/16-bit integer data types for both the input data tile and output tile (see Supported Data Types for more information). The output tile data type is specified using the `dtype` field. If `dtype` is not specified, the output data type will be the same as the input data type of `data`. However, the data type of `on_false_value` must be float32, regardless of the input/output tile data types.
+
+Estimated instruction cost:
+
+`GPSIMD_START + N` GpSimd Engine cycles, where `N` is the number of elements per partition in `on_true_tile` and `GPSIMD_START` is the instruction startup overhead on GpSimdE, roughly 150 engine cycles.
 
 Parameters:
     
 
-  * segment_ids – tile containing the segment IDs. Elements with ID=0 are treated as padding.
+  * pred – an affine expression that defines the boolean predicate
 
-  * dtype – data type of the output (must be np.float32 or np.int32)
+  * on_true_tile – an input tile for selection with a `True` predicate value
+
+  * on_false_value – a scalar value for selection with a `False` predicate value
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tiles, or whichever input type has the highest precision (see NKI Type Promotion for more information);
 
 Returns:
     
 
-tile containing the sequence bounds.
+an output tile with values selected from either `on_true_tile` or `on_false_value` according to the following equation: output[x] = (pred[x] > 0) ? on_true_tile[x] : on_false_value
 
 Example:
     
     
     import neuronxcc.nki.isa as nisa
     import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    
-    ######################################################################
-    # Example 1: Generate tile of boundaries of sequence for each element:
-    ######################################################################
-    # Input example
-    # segment_ids = np.array([[0, 1, 1, 2, 2, 2, 0, 3, 3]], dtype=np.int32)
-    
-    # Expected output for this example:
-    # [[
-    #   [9, 1, 1, 3, 3, 3, 9, 7, 7]       # start index
-    #   [-1, 3, 3, 6, 6, 6, -1, 9, 9]     # end index
-    #   ]]
-    m, n = segment_ids.shape
-    
-    ix, iy, iz = nl.mgrid[0:m, 0:2, 0:n]
-    
-    out_tile = nl.ndarray([m, 2, n], dtype=segment_ids.dtype, buffer=nl.sbuf)
-    seq_tile = nl.load(segment_ids)
-    out_tile[ix, iy, iz] = nisa.sequence_bounds(segment_ids=seq_tile)
-    
-
-### nki.isa.sequence_bounds
-
-    * `nki.isa.sequence_bounds` \- compute sequence bounds of segment IDs
-
----
-
-### sequence_bounds
-
-`sequence_bounds` | Compute the sequence bounds for a given set of segment IDs using GpSIMD Engine.  
-
----
-
-### nki.isa.nonzero_with_count
-
-    * nki.isa.nonzero_with_count — returns nonzero element indices and their count, useful for sparse computation and dynamic masking
-
-## ISA Initialization and Constants
-
-### nki.isa.memset
-
-nki.isa.memset(shape, value, dtype, *, mask=None, engine=engine.unknown, **kwargs)
-    
-
-Initialize a tile filled with a compile-time constant value using Vector or GpSimd Engine. The shape of the tile is specified in the `shape` field and the initialized value in the `value` field. The memset instruction supports all valid NKI dtypes (see Supported Data Types).
-
-Parameters:
-    
-
-  * shape – the shape of the output tile; layout: (partition axis, free axis). Note that memset ignores nl.par_dim() and always treats the first dimension as the partition dimension.
-
-  * value – the constant value to initialize with
-
-  * dtype – data type of the output tile (see Supported Data Types for more information)
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * engine – specify which engine to use for memset: `nki.isa.vector_engine` or `nki.isa.gpsimd_engine` ; `nki.isa.unknown_engine` by default, lets compiler select the best engine for the given input tile shape
-
-Returns:
-    
-
-a tile with shape shape whose elements are initialized to value.
-
-Estimated instruction cost:
-
-Given `N` is the number of elements per partition in the output tile, and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-  * If the initialized value is zero and output data type is bfloat16/float16, `max(MIN_II, N/2)` Vector Engine cycles;
-
-  * Otherwise, `max(MIN_II, N)` Vector Engine cycles
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    ...
     
     ##################################################################
-    # Example 1: Initialize a float32 tile a of shape (128, 128)
-    # with a value of 0.2
+    # Example 1: Take tile a of shape [128, 128] and replace its
+    # upper triangle with nl.fp32.min;
     ##################################################################
-    a = nisa.memset(shape=(128, 128), value=0.2, dtype=nl.float32)
+    ix, iy = nl.mgrid[0:128, 0:128]
+    a = nl.load(a_tensor[ix, iy])
     
-
-### nki.isa.memset
-
-    * `nki.isa.memset` — removed `shape` positional arg , since we have `dst`
-
----
-
-### memset
-
-`memset` | Initialize a tile filled with a compile-time constant value using Vector or GpSimd Engine.  
-
----
-
-### nki.isa.iota
-
-nki.isa.iota(expr, dtype, *, mask=None, **kwargs)
+    b = nisa.affine_select(pred=(iy <ix), on_true_tile=a[ix, iy], on_false_value=nl.fp32.min)
     
-
-Build a constant literal in SBUF using GpSimd Engine, rather than transferring the constant literal values from the host to device.
-
-The iota instruction takes an affine expression of `nki.language.arange()` indices as the input pattern to generate constant index values (see examples below for more explanation). The index values are computed in 32-bit integer math. The GpSimd Engine is capable of casting the integer results into any desirable data type (specified by `dtype`) before writing them back to SBUF, at no additional performance cost.
-
-Estimated instruction cost:
-
-`150 + N` GpSimd Engine cycles, where `N` is the number of elements per partition in the output tile.
-
-Parameters:
-    
-
-  * expr – an input affine expression of `nki.language.arange()`
-
-  * dtype – output data type of the generated constant literal (see Supported Data Types for more information)
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Returns:
-    
-
-an output tile in SBUF
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    
-    ##################################################################
-    # Example 1: Generate tile a of 512 constant values in SBUF partition 0
-    # that start at 0 and increment by 1:
-    ##################################################################
-    # a = [0, 1, ..., 511]
-    expr_a = nl.arange(0, 512)[None, :]
-    a: tensor[1, 512] = nisa.iota(expr_a, dtype=nl.int32)
-    
-    ##################################################################
-    # Example 2: Generate tile b of 128 constant values across SBUF partitions
-    # that start at 0 and increment by 1, with one value per partition:
-    # b = [[0],
-    #      [1],
-    #      ...,
-    #      [127]]
-    ##################################################################
-    expr_b = nl.arange(0, 128)[:, None]
-    b: tensor[128, 1] = nisa.iota(expr_b, dtype=nl.int32)
-    
-    ##################################################################
-    # Example 3: Generate tile c of 512 constant values in SBUF partition 0
-    # that start at 0 and decrement by 1:
-    # c = [0, -1, ..., -511]
-    ##################################################################
-    expr_c = expr_a * -1
-    c: tensor[1, 512] = nisa.iota(expr_c, dtype=nl.int32)
-    
-    ##################################################################
-    # Example 4: Generate tile d of 128 constant values across SBUF
-    # partitions that start at 5 and increment by 2
-    ##################################################################
-    # d = [[5],
-    #      [7],
-    #      ...,
-    #      [259]]
-    expr_d = 5 + expr_b * 2
-    d: tensor[128, 1] = nisa.iota(expr_d, dtype=nl.int32)
-    
-    ##################################################################
-    # Example 5: Generate tile e of shape [128, 512] by
-    # broadcast-add expr_a and expr_b
-    # e = [[0, 1, ..., 511],
-    #      [1, 2, ..., 512],
-    #      ...
-    #      [127, 2, ..., 638]]
-    ##################################################################
-    e: tensor[128, 512] = nisa.iota(expr_a + expr_b, dtype=nl.int32)
-    
-
-### nki.isa.iota
-
-    * `nki.isa.iota` — `expr` replaced with `pattern` and `offset`
-
----
-
-### iota
-
-`iota` | Build a constant literal in SBUF using GpSimd Engine, rather than transferring the constant literal values from the host to device.  
-
----
-
-### nki.isa.register_alloc
-
-    * nki.isa.register_alloc now accepts an optional tensor argument to pre-fill the allocated register with initial values
-
-## ISA Batch Normalization
-
-### nki.isa.bn_stats
-
-nki.isa.bn_stats(data, *, mask=None, dtype=None, **kwargs)
-    
-
-Compute mean- and variance-related statistics for each partition of an input tile `data` in parallel using Vector Engine.
-
-The output tile of the instruction has 6 elements per partition:
-
-  * the `count` of the even elements (of the input tile elements from the same partition)
-
-  * the `mean` of the even elements
-
-  * `variance * count` of the even elements
-
-  * the `count` of the odd elements
-
-  * the `mean` of the odd elements
-
-  * `variance * count` of the odd elements
-
-To get the final mean and variance of the input tile, we need to pass the above `bn_stats` instruction output into the bn_aggr instruction, which will output two elements per partition:
-
-  * mean (of the original input tile elements from the same partition)
-
-  * variance
-
-Due to hardware limitation, the number of elements per partition (i.e., free dimension size) of the input `data` must not exceed 512 (nl.tile_size.bn_stats_fmax). To calculate per-partition mean/variance of a tensor with more than 512 elements in free dimension, we can invoke `bn_stats` instructions on each 512-element tile and use a single `bn_aggr` instruction to aggregate `bn_stats` outputs from all the tiles. Refer to Example 2 for an example implementation.
-
-Vector Engine performs the above statistics calculation in float32 precision. Therefore, the engine automatically casts the input `data` tile to float32 before performing float32 computation and is capable of casting the float32 computation results into another data type specified by the `dtype` field, at no additional performance cost. If `dtype` field is not specified, the instruction will cast the float32 results back to the same data type as the input `data` tile.
-
-Estimated instruction cost:
-
-`max(MIN_II, N)` Vector Engine cycles, where `N` is the number of elements per partition in `data` and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * data – the input tile (up to 512 elements per partition)
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-Returns:
-    
-
-an output tile with 6-element statistics per partition
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    
-    ##################################################################
-    # Example 1: Calculate the mean and variance for each partition
-    # of tile a with shape (128, 128)
-    ##################################################################
-    a: tensor[128, 128] = nl.load(a_tensor)
-    stats_a: tensor[128, 6] = nisa.bn_stats(a)
-    mean_var_a: tensor[128, 2] = nisa.bn_aggr(stats_a)
-    
-    # Extract mean and variance
-    mean_a = mean_var_a[:, 0]
-    var_a = mean_var_a[:, 1]
-    nl.store(mean_a_tensor, mean_a)
-    nl.store(var_a_tensor, var_a)
-    
-    # ##################################################################
-    # # Example 2: Calculate the mean and variance for each partition of
-    # # tile b with shape [128, 1024]
-    # ##################################################################
-    b: tensor[128, 1024] = nl.load(b_tensor)
-    
-    # Run bn_stats in two tiles because b has 1024 elements per partition,
-    # but bn_stats has a limitation of nl.tile_size.bn_stats_fmax
-    # Initialize a bn_stats output tile with shape of [128, 6*2] to
-    # hold outputs of two bn_stats instructions
-    stats_b = nl.ndarray((128, 6 * 2), dtype=nl.float32)
-    bn_tile = nl.tile_size.bn_stats_fmax
-    ix, iy = nl.mgrid[0:128, 0:bn_tile]
-    iz, iw = nl.mgrid[0:128, 0:6]
-    
-    for i in range(1024 // bn_tile):
-      stats_b[iz, i * 6 + iw] = nisa.bn_stats(b[ix, i * bn_tile + iy], dtype=nl.float32)
-    
-    mean_var_b = nisa.bn_aggr(stats_b)
-    
-    # Extract mean and variance
-    mean_b = mean_var_b[:, 0]
-    var_b = mean_var_b[:, 1]
-    
-    nl.store(mean_b_tensor, mean_b)
-    nl.store(var_b_tensor, var_b)
+    nl.store(b_tensor[ix, iy], b)
     
 
 ---
-
-### bn_stats
-
-`bn_stats` | Compute mean- and variance-related statistics for each partition of an input tile `data` in parallel using Vector Engine.  
-
----
-
-### nki.isa.bn_aggr
-
-nki.isa.bn_aggr(data, *, mask=None, dtype=None, **kwargs)
-    
-
-Aggregate one or multiple `bn_stats` outputs to generate a mean and variance per partition using Vector Engine.
-
-The input `data` tile effectively has an array of `(count, mean, variance*count)` tuples per partition produced by bn_stats instructions. Therefore, the number of elements per partition of `data` must be a modulo of three.
-
-Note, if you need to aggregate multiple `bn_stats` instruction outputs, it is recommended to declare a SBUF tensor and then make each `bn_stats` instruction write its output into the SBUF tensor at different offsets (see example implementation in Example 2 in bn_stats).
-
-Vector Engine performs the statistics aggregation in float32 precision. Therefore, the engine automatically casts the input `data` tile to float32 before performing float32 computation and is capable of casting the float32 computation results into another data type specified by the `dtype` field, at no additional performance cost. If `dtype` field is not specified, the instruction will cast the float32 results back to the same data type as the input `data` tile.
-
-Estimated instruction cost:
-
-`max(MIN_II, 13*(N/3))` Vector Engine cycles, where `N` is the number of elements per partition in `data` and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * data – an input tile with results of one or more bn_stats
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-Returns:
-    
-
-an output tile with two elements per partition: a mean followed by a variance
-
----
-
-### bn_aggr
-
-`bn_aggr` | Aggregate one or multiple `bn_stats` outputs to generate a mean and variance per partition using Vector Engine.  
-
-## ISA Gather and Shuffle
 
 ### nki.language.gather_flattened
 
+# nki.language.gather_flattened
 nki.language.gather_flattened(data, indices, *, mask=None, dtype=None, **kwargs)
     
 
@@ -7359,20 +5756,11 @@ Example:
     result = nl.gather_flattened(data=data, indices=indices)
     
 
-### nki.language.gather_flattened
-
-  * `nki.language.gather_flattened` new API
-
----
-
-### gather_flattened
-
-`gather_flattened` | Gather elements from `data` according to the `indices`.  
-
 ---
 
 ### nki.isa.local_gather
 
+# nki.isa.local_gather
 nki.isa.local_gather(src_buffer, index, num_elem_per_idx=1, num_valid_indices=None, *, mask=None)
     
 
@@ -7480,190 +5868,9 @@ Click `here` to download the full NKI code example with equivalent numpy impleme
 
 ---
 
-### local_gather
-
-`local_gather` | Gather SBUF data in `src_buffer` using `index` on GpSimd Engine.  
-
----
-
-### nki.isa.nc_stream_shuffle
-
-nki.isa.nc_stream_shuffle(src, dst, shuffle_mask, *, dtype=None, mask=None, **kwargs)
-    
-
-Apply cross-partition data movement within a quadrant of 32 partitions from source tile `src` to destination tile `dst` using Vector Engine.
-
-Both source and destination tiles can be in either SBUF or PSUM, and passed in by reference as arguments. In-place shuffle is allowed, i.e., `dst` same as `src`. `shuffle_mask` is a 32-element list. Each mask element must be in data type int or affine expression. `shuffle_mask[i]` indicates which input partition the output partition [i] copies from within each 32-partition quadrant. The special value `shuffle_mask[i]=255` means the output tensor in partition [i] will be unmodified. `nc_stream_shuffle` can be applied to multiple of quadrants. In the case with more than one quadrant, the shuffle is applied to each quadrant independently, and the same `shuffle_mask` is used for each quadrant. `mask` applies to `dst`, meaning that locations masked out by `mask` will be unmodified. For more information about the cross-partition data movement, see Cross-partition Data Movement.
-
-This API has 3 constraints on `src` and `dst`:
-
-  1. `dst` must have same data type as `src`.
-
-  2. `dst` must have the same number of elements per partition as `src`.
-
-  3. The access start partition of `src` (`src_start_partition`), does not have to match or be in the same quadrant as that of `dst` (`dst_start_partition`). However, `src_start_partition`/`dst_start_partition` needs to follow some special hardware rules with the number of active partitions `num_active_partitions`. `num_active_partitions = ceil(max(src_num_partitions, dst_num_partitions)/32) * 32`, where `src_num_partitions` and `dst_num_partitions` refer to the number of partitions the `src` and `dst` tensors access respectively. `src_start_partition`/`dst_start_partition` is constrained based on the value of `num_active_partitions`:
-
->   * If `num_active_partitions` is 96/128, `src_start_partition`/`dst_start_partition` must be 0.
-> 
->   * If `num_active_partitions` is 64, `src_start_partition`/`dst_start_partition` must be 0/64.
-> 
->   * If `num_active_partitions` is 32, `src_start_partition`/`dst_start_partition` must be 0/32/64/96.
-> 
-> 
-
-Estimated instruction cost:
-
-`max(MIN_II, N)` Vector Engine cycles, where `N` is the number of elements per partition in `src`, and `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
-
-Parameters:
-    
-
-  * src – the source tile
-
-  * dst – the destination tile
-
-  * shuffle_mask – a 32-element list that specifies the shuffle source and destination partition
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    
-    #####################################################################
-    # Example 1: 
-    # Apply cross-partition data movement to a 32-partition tensor,
-    # in-place shuffling the data in partition[i] to partition[(i+1)%32].
-    #####################################################################
-    
-    ...
-    a: tensor[32, 128] = nl.load(in_tensor)
-    a_mgrid = nl.mgrid[0:32, 0:128]
-    shuffle_mask = [(i - 1) % 32 for i in range(32)]
-    nisa.nc_stream_shuffle(src=a[a_mgrid.p, a_mgrid.x], dst=a[a_mgrid.p, a_mgrid.x], shuffle_mask=shuffle_mask)
-    
-    nl.store(out_tensor, value=a)
-    
-    
-    
-    #####################################################################
-    # Example 2: 
-    # Broadcast data in 1 partition to 32 partitions.
-    #####################################################################
-    
-    ...
-    a: tensor[1, 128] = nl.load(in_tensor)
-    b = nl.ndarray(shape=(32, 128), dtype=np.float32)
-    dst_mgrid = nl.mgrid[0:32, 0:128]
-    src_mgrid = nl.mgrid[0:1, 0:128]
-    shuffle_mask = [0] * 32
-    nisa.nc_stream_shuffle(src=a[0, src_mgrid.x], dst=b[dst_mgrid.p, dst_mgrid.x], shuffle_mask=shuffle_mask)
-    
-    nl.store(out_tensor, value=b)
-    
-    
-    
-    #####################################################################
-    # Example 3: 
-    # In the case where src and dst access more than one quadrant (32 
-    # partitions), the shuffle is applied to each quadrant independently, 
-    # and the same shuffle_mask is used for each quadrant.
-    #####################################################################
-    
-    ...
-    a: tensor[128, 128] = nl.load(in_tensor)
-    b = nl.ndarray(shape=(128, 128), dtype=np.float32)
-    mgrid = nl.mgrid[0:128, 0:128]
-    shuffle_mask = [(i - 1) % 32 for i in range(32)]
-    nisa.nc_stream_shuffle(src=a[mgrid.p, mgrid.x], dst=b[mgrid.p, mgrid.x], shuffle_mask=shuffle_mask)
-    
-    nl.store(out_tensor, value=b)
-    
-
-### nki.isa.nc_stream_shuffle
-
-    * `nki.isa.nc_stream_shuffle` \- `src` and `dst` order changed
-
----
-
-### nc_stream_shuffle
-
-`nc_stream_shuffle` | Apply cross-partition data movement within a quadrant of 32 partitions from source tile `src` to destination tile `dst` using Vector Engine.  
-
-## ISA Search and Replace
-
-### nki.isa.max8
-
-nki.isa.max8(*, src, mask=None, dtype=None, **kwargs)
-    
-
-Find the 8 largest values in each partition of the source tile.
-
-This instruction reads the input elements, converts them to fp32 internally, and outputs the 8 largest values in descending order for each partition. By default, returns the same dtype as the input tensor.
-
-The source tile can be up to 5-dimensional, while the output tile is always 2-dimensional. The number of elements read per partition must be between 8 and 16,384 inclusive. The output will always contain exactly 8 elements per partition. The source and output must have the same partition dimension size:
-
-  * source: [par_dim, …]
-
-  * output: [par_dim, 8]
-
-Estimated instruction cost:
-
-`N` engine cycles, where:
-
-  * `N` is the number of elements per partition in the source tile
-
-Parameters:
-    
-
-  * src – the source tile to find maximum values from
-
-  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
-
-  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
-
-Returns:
-    
-
-a 2D tile containing the 8 largest values per partition in descending order with shape [par_dim, 8]
-
-Example:
-    
-    
-    import neuronxcc.nki.isa as nisa
-    import neuronxcc.nki.language as nl
-    from neuronxcc.nki.typing import tensor
-    
-    ##################################################################
-    # Example 1: Generate tile b of 32 * 128 random floating point values
-    # and get the 8 largest values in each row:
-    ##################################################################
-    expr_a = nl.rand((32, 128))
-    a = nisa.max8(src=expr_a)
-    
-    a_tensor = nl.ndarray([32, 8], dtype=nl.float32, buffer=nl.shared_hbm)
-    nl.store(a_tensor, value=a)
-    
-
-### nki.isa.max8
-
-      * `max8`, `nc_find_index8`, `nc_match_replace8`
-
----
-
-### max8
-
-`max8` | Find the 8 largest values in each partition of the source tile.  
-
----
-
 ### nki.isa.nc_find_index8
 
+# nki.isa.nc_find_index8
 nki.isa.nc_find_index8(*, data, vals, mask=None, dtype=None, **kwargs)
     
 
@@ -7726,20 +5933,11 @@ Example:
     nl.store(indices_tensor, value=indices)
     
 
-### nki.isa.nc_find_index8
-
-      * `max8`, `nc_find_index8`, `nc_match_replace8`
-
----
-
-### nc_find_index8
-
-`nc_find_index8` | Find indices of the 8 given vals in each partition of the data tensor.  
-
 ---
 
 ### nki.isa.nc_match_replace8
 
+# nki.isa.nc_match_replace8
 nki.isa.nc_match_replace8(*, data, vals, imm, dst_idx=None, mask=None, dtype=None, **kwargs)
     
 
@@ -7960,26 +6158,67 @@ Example:
     )
     
 
-### nki.isa.nc_match_replace8
-
-  * `nki.isa.nc_match_replace8` additional param `dst_idx`
-
 ---
 
-### nc_match_replace8
+### nki.isa.max8
 
-`nc_match_replace8` | Replace first occurrence of each value in `vals` with `imm` in `data` using the Vector engine and return the replaced tensor.  
+# nki.isa.max8
+nki.isa.max8(*, src, mask=None, dtype=None, **kwargs)
+    
+
+Find the 8 largest values in each partition of the source tile.
+
+This instruction reads the input elements, converts them to fp32 internally, and outputs the 8 largest values in descending order for each partition. By default, returns the same dtype as the input tensor.
+
+The source tile can be up to 5-dimensional, while the output tile is always 2-dimensional. The number of elements read per partition must be between 8 and 16,384 inclusive. The output will always contain exactly 8 elements per partition. The source and output must have the same partition dimension size:
+
+  * source: [par_dim, …]
+
+  * output: [par_dim, 8]
+
+Estimated instruction cost:
+
+`N` engine cycles, where:
+
+  * `N` is the number of elements per partition in the source tile
+
+Parameters:
+    
+
+  * src – the source tile to find maximum values from
+
+  * mask – (optional) a compile-time constant predicate that controls whether/how this instruction is executed (see NKI API Masking for details)
+
+  * dtype – (optional) data type to cast the output type to (see Supported Data Types for more information); if not specified, it will default to be the same as the data type of the input tile.
+
+Returns:
+    
+
+a 2D tile containing the 8 largest values per partition in descending order with shape [par_dim, 8]
+
+Example:
+    
+    
+    import neuronxcc.nki.isa as nisa
+    import neuronxcc.nki.language as nl
+    from neuronxcc.nki.typing import tensor
+    
+    ##################################################################
+    # Example 1: Generate tile b of 32 * 128 random floating point values
+    # and get the 8 largest values in each row:
+    ##################################################################
+    expr_a = nl.rand((32, 128))
+    a = nisa.max8(src=expr_a)
+    
+    a_tensor = nl.ndarray([32, 8], dtype=nl.float32, buffer=nl.shared_hbm)
+    nl.store(a_tensor, value=a)
+    
 
 ---
-
-### nki.isa.nc_n_gather
-
-    * `nki.isa.nki.isa.nc_n_gather` [used to be `nl.gather_flattened` with free partition limited to 512]
-
-## ISA Random Number Generation
 
 ### nki.isa.dropout
 
+# nki.isa.dropout
 nki.isa.dropout(data, prob, *, mask=None, dtype=None, **kwargs)
     
 
@@ -8044,47 +6283,212 @@ Example:
     nl.store(out_tensor, b)
     
 
-### nki.isa.dropout
+## ISA Reference Tables and Masking
 
-  * fixed simulation for instructions: `nki.language.rand`, `random_seed`, `nki.isa.dropout`
+### Supported Math Operators for NKI ISA
+
+## Supported Math Operators for NKI ISA
+Supported Math Operators by NKI ISA below lists all the mathematical operator primitives supported by NKI. Many nki.isa APIs (instructions) allow programmable operators through the `op` field. The supported operators fall into two categories: bitvec and arithmetic. In general, instructions using bitvec operators expect integer data types and treat input elements as bit patterns. On the other hand, instructions using arithmetic operators accept any valid NKI data types and convert input elements into float32 before performing the operators.
+
+Table 5 Supported Math Operators by NKI ISA# | Operator | `op` | Legal Reduction `op` | Supported Engine  
+---|---|---|---|---  
+Bitvec | Bitwise Not | `nki.language.invert` | N | Vector  
+Bitwise And | `nki.language.bitwise_and` | Y | Vector  
+Bitwise Or | `nki.language.bitwise_or` | Y | Vector  
+Bitwise Xor | `nki.language.bitwise_xor` | Y | Vector  
+Arithmetic Shift Left | `nki.language.left_shift` | N | Vector  
+Arithmetic Shift Right | Not supported | N | Vector  
+Logical Shift Left | `nki.language.left_shift` | N | Vector  
+Logical Shift Right | `nki.language.right_shift` | N | Vector  
+Arithmetic | Add | `nki.language.add` | Y | Vector/GpSIMD/Scalar  
+Subtract | `nki.language.subtract` | Y | Vector  
+Multiply | `nki.language.multiply` | Y | Vector/GpSIMD/Scalar  
+Max | `nki.language.maximum` | Y | Vector  
+Min | `nki.language.minimum` | Y | Vector  
+Is Equal to | `nki.language.equal` | N | Vector  
+Is Not Equal to | `nki.language.not_equal` | N | Vector  
+Is Greater than or Equal to | `nki.language.greater_equal` | N | Vector  
+Is Greater than to | `nki.language.greater` | N | Vector  
+Is Less than or Equal to | `nki.language.less_equal` | N | Vector  
+Is Less than | `nki.language.less` | N | Vector  
+Logical Not | `nki.language.logical_not` | N | Vector  
+Logical And | `nki.language.logical_and` | Y | Vector  
+Logical Or | `nki.language.logical_or` | Y | Vector  
+Logical Xor | `nki.language.logical_xor` | Y | Vector  
+Reverse Square Root | `nki.language.rsqrt` | N | GpSIMD/Scalar  
+Reciprocal | `nki.language.reciprocal` | N | Vector/Scalar  
+Absolute | `nki.language.abs` | N | Vector/Scalar  
+Power | `nki.language.power` | N | GpSIMD  
+  
+Note Add and Multiply are supported on Scalar Engine only from NeuronCore-v3. 32-bit integer Add and Multiply are only supported on GpSIMD Engine.
 
 ---
 
-### nki.isa.rand2
+### Supported Activation Functions for NKI ISA
 
-    * `nki.isa.rand2`
+## Supported Activation Functions for NKI ISA
+Supported Activation Functions by NKI ISA below lists all the activation function supported by the `nki.isa.activation` API. These activation functions are approximated with piece-wise polynomials on Scalar Engine. NOTE: if input values fall outside the supported Valid Input Range listed below, the Scalar Engine will generate invalid output results.
+
+Table 6 Supported Activation Functions by NKI ISA# Function Name | Accepted `op` by Scalar Engine | Valid Input Range  
+---|---|---  
+Identity | `nki.language.copy` or `numpy.copy` | `[-inf, inf]`  
+Square | `nki.language.square` or `numpy.square` | `[-inf, inf]`  
+Sigmoid | `nki.language.sigmoid` | `[-inf, inf]`  
+Relu | `nki.language.relu` | `[-inf, inf]`  
+Gelu | `nki.language.gelu` | `[-inf, inf]`  
+Gelu Derivative | `nki.language.gelu_dx` | `[-inf, inf]`  
+Gelu with Tanh Approximation | `nki.language.gelu_apprx_tanh` | `[-inf, inf]`  
+Gelu with Sigmoid Approximation | `nki.language.gelu_apprx_sigmoid` | `[-inf, inf]`  
+Silu | `nki.language.silu` | `[-inf, inf]`  
+Silu Derivative | `nki.language.silu_dx` | `[-inf, inf]`  
+Tanh | `nki.language.tanh` or `numpy.tanh` | `[-inf, inf]`  
+Softplus | `nki.language.softplus` | `[-inf, inf]`  
+Mish | `nki.language.mish` | `[-inf, inf]`  
+Erf | `nki.language.erf` | `[-inf, inf]`  
+Erf Derivative | `nki.language.erf_dx` | `[-inf, inf]`  
+Exponential | `nki.language.exp` or `numpy.exp` | `[-inf, inf]`  
+Natural Log | `nki.language.log` or `numpy.log` | `[2^-64, 2^64]`  
+Sine | `nki.language.sin` or `numpy.sin` | `[-PI, PI]`  
+Arctan | `nki.language.arctan` or `numpy.arctan` | `[-PI/2, PI/2]`  
+Square Root | `nki.language.sqrt` or `numpy.sqrt` | `[2^-116, 2^118]`  
+Reverse Square Root | `nki.language.rsqrt` | `[2^-87, 2^97]`  
+Reciprocal | `nki.language.reciprocal` or `numpy.reciprocal` | `±[2^-42, 2^42]`  
+Sign | `nki.language.sign` or `numpy.sign` | `[-inf, inf]`  
+Absolute | `nki.language.abs` or `numpy.abs` | `[-inf, inf]`  
 
 ---
 
-### nki.isa.rand_set_state
+### NKI API Masking
 
-    * `nki.isa.rand_set_state`
+## NKI API Masking
+All nki.language and nki.isa APIs accept an optional input field, `mask`. The `mask` field is an execution predicate known at compile-time, which informs the compiler to skip generating the instruction or generate the instruction with a smaller input tile shape. Masking is handled completely by Neuron compiler and hence does not incur any performance overhead in the generated instructions.
+
+The `mask` can be created using comparison expressions (e.g., `a < b`) or multiple comparison expressions concatenated with `&` (e.g., `(a < b) & (c > d)`). The left- or right-hand side expression of each comparator must be an affine expression of `nki.language.arange()`, `nki.language.affine_range()` or `nki.language.program_id()` . Each comparison expression should indicate which range of indices along one of the input tile axes should be valid for the computation. For example, assume we have an input tile `in_tile` of shape `(128, 512)`, and we would like to perform a square operation on this tile for elements in `[0:64, 0:256]`, we can invoke the `nki.language.square()` API using the following:
+    
+    
+    import neuronxcc.nki.language as nl
+    
+    ...
+    i_p = nl.arange(128)[:, None]
+    i_f = nl.arange(512)[None, :]
+    
+    out_tile = nl.square(in_tile, mask=((i_p<64) & (i_f<256)))
+    
+
+The above example will be lowered into a hardware ISA instruction that only processes 64x256 elements by Neuron Compiler.
+
+The above `mask` definition works for most APIs where there is only one input tile or both input tiles share the same axes. One exception is the `nki.language.matmul` and similarly `nki.isa.nc_matmul` API, where the two input tiles `lhs` and `rhs` contain three unique axes:
+
+  1. The contraction axis: both `lhs` and `rhs` partition axis (`lhs_rhs_p`)
+
+  2. The first axis of matmul output: `lhs` free axis (`lhs_f`)
+
+  3. The second axis of matmul output: `rhs` free axis (`rhs_f`)
+
+As an example, let’s assume we have `lhs` tile of shape `(sz_p, sz_m)` and `rhs` tile of shape `(sz_p, sz_n)`, and we call `nki.language.matmul` to calculate an output tile of shape `(sz_m, sz_n)`:
+    
+    
+    import neuronxcc.nki.language as nl
+    
+    i_p = nl.arange(sz_p)[:, None]
+    
+    i_lhs_f = nl.arange(sz_m)[None, :]
+    i_rhs_f = nl.arange(sz_n)[None, :] # same as `i_rhs_f = i_lhs_f`
+    
+    result = nl.matmul(lhs[i_p, i_lhs_f], rhs[i_p, i_rhs_f], transpose_x=True)
+    
+
+Since both `i_lhs_f` and `i_rhs_f` are identical to the Neuron Compiler, the Neuron Compiler cannot distinguish the two input axes if they were to be passed into the `mask` field directly.
+
+Therefore, we introduce “operand masking” syntax for matmult APIs to let users to precisely define the masking on the inputs to the matmult APIs (currently only matmult APIs support operand masking, subject to changes in future releases). Let’s assume we need to constraint `sz_m <= 64` and `sz_n <= 256`:
+    
+    
+    import neuronxcc.nki.language as nl
+    
+    i_p = nl.arange(sz_p)[:, None]
+    
+    i_lhs_f = nl.arange(sz_m)[None, :]
+    i_rhs_f = nl.arange(sz_n)[None, :] # same as `i_rhs_f = i_lhs_f`
+    
+    i_lhs_f_virtual = nl.arange(sz_m)[None, :, None]
+    
+    result = nl.matmul(lhs_T[i_lhs_f <= 64], rhs[i_rhs_f <= 256], transpose_x=True)
+    
+
+There are two notable use cases for masking:
+
+  1. When the tiling factor doesn’t divide the tensor dimension sizes
+
+  2. Skip ineffectual instructions that compute known output values
+
+We will present an example of the first use case below. Let’s assume we would like to evaluate the exponential function on an input tensor of shape `[sz_p, sz_f]` from HBM. Since the input to `nki.language.load/nki.language.store/nki.language.exp` expects a tile with a partition axis size not exceeding `nki.language.tile_size.pmax == 128`, we should loop over the input tensor using a tile size of `[nki.language.tile_size.pmax, sz_f]`.
+
+However, `sz_p` is not guaranteed to be an integer multiple of `nki.language.tile_size.pmax`. In this case, one option is to write a loop with trip count of `sz_p // nki.language.tile_size.pmax` followed by a single invocation of `nki.language.exp` with an input tile of shape `[sz_p % nki.language.tile_size.pmax, sz_f]`. This effectively “unrolls” the last instance of tile computation, which could lead to messy code in a complex kernel. Using masking here will allow us to avoid such unrolling, as illustrated in the example below:
+    
+    
+    import neuronxcc.nki.language as nl
+    from torch_neuronx import nki_jit
+    
+    @nki_jit
+    def tensor_exp_kernel_(in_tensor, out_tensor):
+    
+    sz_p, sz_f = in_tensor.shape
+    
+    i_f = nl.arange(sz_f)[None, :]
+    
+    trip_count = math.ceil(sz_p/nl.tile_size.pmax)
+    
+    for p in nl.affine_range(trip_count):
+        # Generate tensor indices for the input/output tensors
+        # pad index to pmax, for simplicity
+        i_p = p * nl.tile_size.pmax + nl.arange(nl.tile_size.pmax)[:, None]
+    
+        # Load input data from external memory to on-chip memory
+        # only read up to sz_p
+        in_tile = nl.load(in_tensor[i_p, i_f], mask=(i_p < sz_p))
+    
+        # perform the computation
+        out_tile = nl.exp(in_tile, mask=(i_p < sz_p))
+    
+        # store the results back to external memory
+        # only write up to sz_p
+        nl.store(out_tensor[i_p, i_f], value=out_tile, mask=(i_p<sz_p))
+    
+
+## Engine and Hardware Configuration
+
+### NKI Engine Selection for Operators Supported on Multiple Engines
+
+## NKI Engine Selection for Operators Supported on Multiple Engines
+There is a tradeoff between precision and speed on different engines for operators with multiple engine options. Users can select which engine to map to based on their needs. We take reciprocal and reverse square root as two examples and explain the tradeoff below.
+
+  1. Reciprocal can run on Scalar Engine or Vector Engine:
+
+> Reciprocal can run on Vector Engine with `nki.isa.reciprocal` or on Scalar Engine with `nki.isa.activation(nl.reciprocal)`. Vector Engine performs reciprocal at a higher precision compared to Scalar Engine; however, the computation throughput of reciprocal on Vector Engine is about 8x lower than Scalar Engine for large input tiles. For input tiles with a small number of elements per partition (less than 64, processed one per cycle), instruction initiation interval (roughly 64 cycles) dominates performance so Scalar Engine and Vector Engine have comparable performance. In this case, we suggest using Vector Engine to achieve better precision.
+> 
+> Estimated cycles on different engines:
+> 
+> Cost (Engine Cycles) | Condition  
+> ---|---  
+> `max(MIN_II, N)` | mapped to Scalar Engine `nki.isa.scalar_engine`  
+> `max(MIN_II, 8*N)` | mapped to Vector Engine `nki.isa.vector_engine`  
+>   
+> where,
+> 
+>   * `N` is the number of elements per partition in the input tile.
+> 
+>   * `MIN_II` is the minimum instruction initiation interval for small input tiles. `MIN_II` is roughly 64 engine cycles.
+> 
+> 
+
+> 
+> Note `nki.isa.activation(op=nl.reciprocal)` doesn’t support setting bias on NeuronCore-v2.
+
+  2. Reverse square root can run on GpSIMD Engine or Scalar Engine:
+
+> Reverse square root can run on GpSIMD Engine with `nki.isa.tensor_scalar(op0=nl.rsqrt, operand0=0.0)` or on Scalar Engine with `nki.isa.activation(nl.rsqrt)`. GpSIMD Engine performs reverse square root at a higher precision compared to Scalar Engine; however, the computation throughput of reverse square root on GpSIMD Engine is 4x lower than Scalar Engine.
 
 ---
-
-### nki.isa.rand_get_state
-
-    * `nki.isa.rand_get_state`
-
----
-
-### nki.isa.set_rng_seed
-
-    * `nki.isa.set_rng_seed`
-
----
-
-### nki.isa.rng
-
-    * `nki.isa.rng`
-
-## ISA Quantization
-
-### nki.isa.quantize_mx
-
-    * `nki.isa.nki.isa.quantize_mx`
-
-## ISA Engine and Version Info
 
 ### nki.isa.engine
 
@@ -8102,16 +6506,6 @@ Attributes
 `gpsimd` | GpSIMD Engine  
 `sync` | Sync Engine  
 `unknown` | Unknown Engine  
-
-### nki.isa.engine
-
-    * `nki.isa.engine` enum
-
----
-
-### engine
-
-`engine` | Neuron Device engines  
 
 ---
 
@@ -8133,12 +6527,6 @@ Attributes
 
 ---
 
-### reduce_cmd
-
-`reduce_cmd` | Engine Register Reduce commands  
-
----
-
 ### nki.isa.dge_mode
 
 class nki.isa.dge_mode(value)
@@ -8156,59 +6544,56 @@ Attributes
 
 ---
 
-### dge_mode
-
-`dge_mode` | Neuron Descriptor Generation Engine Mode  
-
----
-
-### nki.isa.nc_version
-
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
-
-### nki.isa.nc_version
-
-class nki.isa.nc_version(value)
-    
-
-NeuronCore version
-
-__init__()#
-    
-
-Attributes
-
-`gen2` | Trn1/Inf2 target  
----|---  
-`gen3` | Trn2 target  
-  
-
----
-
-### nc_version
-
-`nc_version` | NeuronCore version  
-
----
-
 ### nki.isa.get_nc_version
 
-    * `nki.isa`: new APIs (`activation_reduce`, `tensor_partition_reduce`, `scalar_tensor_tensor`, `tensor_scalar_reduce`, `tensor_copy`, `tensor_copy_dynamic_src`, `dma_copy`), new activation functions(`identity`, `silu`, `silu_dx`), and target query APIs (`nc_version`, `get_nc_version`).
+# nki.isa.get_nc_version
+nki.isa.get_nc_version()
+    
+
+Returns the `nc_version` of the current target context.
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`
+
+## Compiler Directives and Decorators
+
+### nki.compiler.enable_stack_allocator
+
+nki.compiler.enable_stack_allocator(func=None, log_level=50)
+    
+
+Use stack allocator to allocate the psum and sbuf tensors in the kernel.
+
+Must use together with skip_middle_end_transformations.
+    
+    
+    from neuronxcc import nki
+    
+    @nki.compiler.enable_stack_allocator
+    @nki.compiler.skip_middle_end_transformations
+    @nki.jit
+    def kernel(...):
+      ...
+    
 
 ---
 
-### get_nc_version
+### nki.compiler.force_auto_alloc
 
-`get_nc_version` | Returns the `nc_version` of the current target context.  
+nki.compiler.force_auto_alloc(func=None)
+    
 
-## Debugging
+Force automatic allocation to be turned on in the kernel.
 
-### nki.language.device_print
+This will ignore any direct allocation inside the kernel
 
-    * `nki.language.device_print`
 
 ---
 
-### device_print
+### nki.compiler.skip_middle_end_transformations
 
-`device_print` | Print a message with a String `prefix` followed by the value of a tile `x`.  
+nki.compiler.skip_middle_end_transformations(func=None)
+    
+
+Skip all middle end transformations on the kernel
+
+This document is relevant for: `Inf2`, `Trn1`, `Trn2`

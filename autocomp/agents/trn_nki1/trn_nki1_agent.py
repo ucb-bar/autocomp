@@ -111,29 +111,8 @@ class TrnNki1LLMAgent(LLMAgent):
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
 
-        # Problem-specific rules
-        if prob.prob_type == "trn-e2e" and (prob.prob_id == 0 or prob.prob_id == 1):
-            # Llama-3.2-1B MLP prefill, batch = 1
-            rules.append("You are optimizing for constant shapes: x.shape = (1, 64, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 2 or prob.prob_id == 3):
-            # Llama-3.2-1B MLP decode, batch = 1
-            rules.append("You are optimizing for constant shapes: x.shape = (1, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 4 or prob.prob_id == 5):
-            # Llama-3.2-1B attention, batch = 1
-            rules.append("You are optimizing for constant shapes: Q.shape = (1, 16, 1, 64), K.shape = (1, 4, 1, 64), V.shape = (1, 4, 1, 64), past_key_value[0].shape = (1, 4, 512, 64), past_key_value[1].shape = (1, 4, 512, 64), attention_mask.shape = (1, 1, 1, 512). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 6 or prob.prob_id == 7):
-            # Llama-3.2-1B logits, batch = 1
-            rules.append("You are optimizing for constant shapes: hidden_states.shape = (1, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 8 or prob.prob_id == 9):
-            # Llama-3.2-1B attention, batch = 32
-            rules.append("You are optimizing for constant shapes: Q.shape = (32, 16, 1, 64), K.shape = (32, 4, 1, 64), V.shape = (32, 4, 1, 64), past_key_value[0].shape = (32, 4, 512, 64), past_key_value[1].shape = (32, 4, 512, 64), attention_mask.shape = (32, 16, 1, 512). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 10 or prob.prob_id == 11):
-            # Llama-3.2-1B MLP decode, batch = 32
-            rules.append("You are optimizing for constant shapes: x.shape = (32, 1, 2048), up_proj_weight.shape = (2048, 4096), gate_proj_weight.shape = (2048, 4096), down_proj_weight.shape = (4096, 2048). Make sure to take advantage of these shapes.")
-        elif prob.prob_type == "trn-e2e" and (prob.prob_id == 12 or prob.prob_id == 13):
-            # Llama-3.2-1B logits, batch = 32
-            rules.append("You are optimizing for constant shapes: hidden_states.shape = (32, 1, 2048), lm_head_weight.shape = (2048, 64128). Make sure to take advantage of these shapes.")
-        # rules.append("IMPORTANT: Minimize the amount of non-NKI code.")
+        if prob and prob.context:
+            rules.append(prob.context)
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i+1}. {rule}\n"
