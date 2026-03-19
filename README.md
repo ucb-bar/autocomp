@@ -112,7 +112,8 @@ API keys can be configured via environment variables or in `autocomp/common/keys
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic`
 | Together | `TOGETHER_API_KEY` | `together`
 | AWS Bedrock | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | `aws`
-| Google Cloud | `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT` | `gcp`
+| Google Cloud (Vertex AI) | `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT` | `gcp`
+| Google AI Studio | `GOOGLE_API_KEY` | `gcp`
 
 **Example `autocomp/common/keys.py`:**
 
@@ -124,15 +125,18 @@ AWS_ACCESS_KEY_ID = "AKIA..."
 AWS_SECRET_ACCESS_KEY = "..."
 GOOGLE_CLOUD_LOCATION = "us-central1"
 GOOGLE_CLOUD_PROJECT = "my-project"
+GOOGLE_API_KEY = "AIza..."
 ```
 
 Keys can be omitted if not needed. On startup, Autocomp logs which keys are available.
 
 #### Gemini Setup
 
-To use Gemini via Google Cloud, install the Google Cloud CLI as described at https://docs.cloud.google.com/sdk/docs/install-sdk#linux.
+**Option 1: Google Cloud (Vertex AI).** Install the Google Cloud CLI as described at https://docs.cloud.google.com/sdk/docs/install-sdk#linux. Run `gcloud auth application-default login` and set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
 
-Run `gcloud auth application-default login` to enable the Google Cloud SDK.
+**Option 2: Google AI Studio (easiest).** Get an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set `GOOGLE_API_KEY`.
+
+If both Vertex AI credentials and `GOOGLE_API_KEY` are set, Vertex AI is used.
 
 #### AWS Bedrock
 

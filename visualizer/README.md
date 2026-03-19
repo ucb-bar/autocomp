@@ -30,9 +30,9 @@ If you've already ingested data, use **"Autocomp: Open Traces"** and select the 
 
 Click the **"Summarize Plans with AI"** button in the run detail view to generate short summaries for each optimization plan. You'll be prompted for an LLM model in `provider::model` format:
 
-- `openai::gpt-4o-mini`
-- `anthropic::claude-sonnet-4-20250514`
-- `aws::us.anthropic.claude-sonnet-4-20250514-v1:0`
+- `openai::gpt-5.4-mini`
+- `aws::us.anthropic.claude-haiku-4-5-20251001-v1:0`
+- `gcp::gemini-3-flash-preview`
 
 This requires the `autocomp` Python package and appropriate API credentials.
 

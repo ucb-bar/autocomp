@@ -42,6 +42,7 @@ aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
 aws_region = _get_key("AWS_REGION", default="us-west-2")
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
 google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
+google_api_key = _get_key("GOOGLE_API_KEY", default=None)
 vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
 
 # Log key availability
@@ -53,6 +54,7 @@ _key_status = {
     "AWS_SECRET_ACCESS_KEY": aws_secret_key is not None,
     "GOOGLE_CLOUD_PROJECT": google_cloud_project is not None,
     "GOOGLE_CLOUD_LOCATION": google_cloud_location is not None,
+    "GOOGLE_API_KEY": google_api_key is not None,
 }
 _available = [k for k, v in _key_status.items() if v]
 _unavailable = [k for k, v in _key_status.items() if not v]
@@ -667,7 +669,11 @@ class LLMClient():
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
-            self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+            if google_api_key and not google_cloud_project:
+                self.client = genai.Client(api_key=google_api_key)
+            else:
+                self.client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+            self.async_client = self.client
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):

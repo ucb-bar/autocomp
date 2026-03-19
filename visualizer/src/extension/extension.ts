@@ -48,18 +48,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (!outputUris || outputUris.length === 0) return;
       const outputDir = outputUris[0].fsPath;
 
-      const ingestPy = findIngestScript(context);
-      if (!ingestPy) {
-        vscode.window.showErrorMessage("Could not find ingest.py");
-        return;
-      }
-
       const dataDir = path.join(outputDir, ".visualizer-data");
       fs.mkdirSync(dataDir, { recursive: true });
 
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "Ingesting traces..." },
-        () => runIngest(ingestPy, outputDir, dataDir),
+        () => runIngest(outputDir, dataDir),
       );
 
       if (!fs.existsSync(path.join(dataDir, "runs.json"))) {
@@ -71,45 +65,26 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-function findIngestScript(context: vscode.ExtensionContext): string | null {
-  const bundled = path.join(context.extensionPath, "ingest.py");
-  if (fs.existsSync(bundled)) return bundled;
-
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (workspaceFolders) {
-    for (const folder of workspaceFolders) {
-      const candidate = path.join(folder.uri.fsPath, "visualizer", "ingest.py");
-      if (fs.existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-function runIngest(script: string, outputDir: string, dataDir: string): Promise<void> {
+function runIngest(outputDir: string, dataDir: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [script, outputDir, "--out", dataDir, "--no-summarize"], {
-      cwd: path.dirname(script),
-    });
+    const proc = spawn("python3", ["-m", "autocomp.visualizer.ingest", outputDir, "--out", dataDir, "--no-summarize"]);
     let stderr = "";
     proc.stderr.on("data", (d) => { stderr += d.toString(); });
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`ingest.py exited with code ${code}: ${stderr}`));
+      else reject(new Error(`ingest exited with code ${code}: ${stderr}`));
     });
     proc.on("error", reject);
   });
 }
 
 function runSummarize(
-  script: string,
   runFile: string,
   model: string,
   progress: vscode.Progress<{ message?: string; increment?: number }>,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [script, "summarize-run", runFile, "--model", model], {
-      cwd: path.dirname(script),
-    });
+    const proc = spawn("python3", ["-m", "autocomp.visualizer.ingest", "summarize-run", runFile, "--model", model]);
     let stderr = "";
     let stdoutBuf = "";
     proc.stdout.on("data", (d: Buffer) => {
@@ -159,7 +134,20 @@ function openPanel(context: vscode.ExtensionContext, dataDir: string) {
       if (msg.type === "ready") {
         const runsJson = path.join(dataDir, "runs.json");
         try {
-          const data = JSON.parse(fs.readFileSync(runsJson, "utf-8"));
+          const raw = JSON.parse(fs.readFileSync(runsJson, "utf-8"));
+          const EXPECTED_SCHEMA = 1;
+          let data: unknown[];
+          if (Array.isArray(raw)) {
+            data = raw;
+          } else {
+            if (raw.schema_version > EXPECTED_SCHEMA) {
+              vscode.window.showWarningMessage(
+                `runs.json schema v${raw.schema_version} is newer than expected (v${EXPECTED_SCHEMA}). ` +
+                "Consider updating the Autocomp Visualizer extension.",
+              );
+            }
+            data = raw.runs;
+          }
           panel.webview.postMessage({ type: "runs", data });
         } catch {
           vscode.window.showErrorMessage("Failed to read runs.json");
@@ -187,16 +175,10 @@ function openPanel(context: vscode.ExtensionContext, dataDir: string) {
           `${msg.parentLabel} ↔ ${msg.candidateLabel}`,
         );
       } else if (msg.type === "summarizePlans") {
-        const ingestPy = findIngestScript(context);
-        if (!ingestPy) {
-          vscode.window.showErrorMessage("Could not find ingest.py");
-          panel.webview.postMessage({ type: "summarizeResult", error: "ingest.py not found" });
-          return;
-        }
         (async () => {
           const model = await vscode.window.showInputBox({
             prompt: "LLM model for plan summarization. Format: provider::model",
-            placeHolder: "openai::gpt-4o-mini, anthropic::claude-sonnet-4-20250514, aws::us.anthropic.claude-sonnet-4-20250514-v1:0",
+            placeHolder: "openai::gpt-5.4-mini, aws::us.anthropic.claude-haiku-4-5-20251001-v1:0, gcp::gemini-3-flash-preview",
             value: lastModel,
           });
           if (!model) {
@@ -208,7 +190,7 @@ function openPanel(context: vscode.ExtensionContext, dataDir: string) {
           try {
             await vscode.window.withProgress(
               { location: vscode.ProgressLocation.Notification, title: "Summarizing plans...", cancellable: false },
-              (progress) => runSummarize(ingestPy, runFile, model, progress),
+              (progress) => runSummarize(runFile, model, progress),
             );
             const data = JSON.parse(fs.readFileSync(runFile, "utf-8"));
             panel.webview.postMessage({ type: "runData", data });

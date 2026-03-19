@@ -29,12 +29,12 @@ class CodeCandidate:
     """
     Represents a single version of the code with an associated optimization plan.
     """
-    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, hw_feedback: list[str]=None,
+    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, translation_score: float=None, hw_feedback: list[str]=None,
                  plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
-        self.translation_score: float | None = None
+        self.translation_score = translation_score
         if not code:
             self.implemented = False  # Whether the code has been implemented
             self.code = None
@@ -60,7 +60,7 @@ class CodeCandidate:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
         escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\ntranslation_score={self.translation_score},\nhw_feedback={repr(self.hw_feedback)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
         return repr_str
 
     def update_hw_feedback(self, hw_feedback: list[str]) -> None:
