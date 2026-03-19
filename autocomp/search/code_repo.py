@@ -29,12 +29,12 @@ class CodeCandidate:
     """
     Represents a single version of the code with an associated optimization plan.
     """
-    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, hw_feedback: list[str]=None,
+    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, translation_score: float=None, hw_feedback: list[str]=None,
                  plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
         self.parent = parent # Pointer to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
-        self.translation_score: float | None = None
+        self.translation_score = translation_score
         if not code:
             self.implemented = False  # Whether the code has been implemented
             self.code = None
