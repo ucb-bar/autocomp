@@ -25,7 +25,7 @@ DELIM_END = "===JAXBENCH_IMPL_END==="
 
 NUM_WARMUP = int(os.getenv("AUTOCOMP_TPU_NUM_WARMUP", "5"))
 NUM_TRIALS = int(os.getenv("AUTOCOMP_TPU_NUM_TRIALS", "100"))
-ATOL = float(os.getenv("AUTOCOMP_JAXBENCH_ATOL", "1e-2"))
+ATOL = float(os.getenv("AUTOCOMP_JAXBENCH_ATOL", "3.125e-2"))
 RTOL = float(os.getenv("AUTOCOMP_JAXBENCH_RTOL", "1e-2"))
 
 

@@ -689,11 +689,13 @@ class LLMClient():
             )
         elif self.provider == "aws":
             # Generic Bedrock models (Llama, Mistral, Nova, etc.) via Converse API
+            from botocore.config import Config as BotoConfig
             self._bedrock_client = boto3.client(
                 "bedrock-runtime",
                 region_name=aws_region,
                 aws_access_key_id=aws_access_key,
                 aws_secret_access_key=aws_secret_key,
+                config=BotoConfig(read_timeout=120),
             )
             self.provider = "aws-bedrock"
         elif self.provider == "together":
@@ -723,7 +725,7 @@ class LLMClient():
         Uses a single long-lived loop so async clients can reuse connections."""
         return self._loop.run_until_complete(coro)
 
-    def _bedrock_converse(self, prompt: str, temperature=None, max_tokens=4096) -> str:
+    def _bedrock_converse(self, prompt: str, temperature=None, max_tokens=16384) -> str:
         """Call Bedrock Converse API. Works for any Bedrock model (Llama, Mistral, Nova, etc.)."""
         inference_config = {"maxTokens": max_tokens}
         if temperature is not None:
@@ -733,7 +735,13 @@ class LLMClient():
             messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig=inference_config,
         )
-        return response["output"]["message"]["content"][0]["text"]
+        content_blocks = response["output"]["message"]["content"]
+        for block in content_blocks:
+            if "text" in block:
+                return block["text"]
+        logger.warning("Bedrock response has no 'text' block: block_types=%s, stopReason=%s",
+                       [list(b.keys()) for b in content_blocks], response.get("stopReason"))
+        return ""
 
     def web_search(self, query: str) -> str:
         if can_web_search_openai(self.model):
@@ -796,7 +804,11 @@ class LLMClient():
                 semaphore = asyncio.Semaphore(9)
                 async def _call(p):
                     async with semaphore:
-                        return await asyncio.to_thread(self._bedrock_converse, p, temperature)
+                        try:
+                            return await asyncio.to_thread(self._bedrock_converse, p, temperature)
+                        except Exception as e:
+                            logger.warning("Bedrock converse error: %s", e)
+                            return ""
                 tasks = []
                 for prompt in prompts_lst:
                     for _ in range(num_samples):

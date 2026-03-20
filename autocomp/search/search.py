@@ -808,13 +808,13 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "gcp::gemini-3-flash-preview"] # Models for planning    
+    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-5", "aws::minimax.minimax-m2.5", "gcp::gemini-3-flash-preview"] # Models for planning    
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 6
+    iterations = 5
     prob_type = "jaxbench-priority" # see README.md or sols directory for available problems
-    prob_id = "mla_attention"
+    prob_id = "sparse_moe"
 
     # Reimplement failed implementations
     # Only works for agents for which it is implemented (trn, built agents)
@@ -831,7 +831,7 @@ def main():
 
     # Translation parameters
     translate_iters = 5
-    translate_perf_threshold = 10
+    translate_perf_threshold = 15
     translate_drop_original = True
     translate_score = True
 
