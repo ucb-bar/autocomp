@@ -720,8 +720,8 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "gcp::gemini-3.1-pro-preview"]  # Models for planning
-    # models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
+    # models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-4.7", "aws::deepseek.v3.2", "gcp::gemini-3.1-pro-preview"]  # Models for planning
+    models = ["openai::gpt-5.2"] #["vllm::Qwen/Qwen3-8B"] 
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
@@ -844,9 +844,9 @@ def main():
     # Initialize eval backend and agent ensembles
     eval_backend, agent, code_agent = create_backend_and_agents(backend_name, agent_name, hw_config, prob, models, code_models, menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa)
 
-    # if backend_name == "tpu" and hasattr(eval_backend, "start_tpu_vm"):
-    #     logger.info("Starting TPU VM before search...")
-    #     eval_backend.start_tpu_vm()
+    if backend_name == "tpu" and hasattr(eval_backend, "start_tpu_vm"):
+        logger.info("Starting TPU VM before search...")
+        eval_backend.start_tpu_vm()
 
     if search_strategy == "exhaustive":
         optimizer = ExhaustiveSearchStrategy(output_dir, eval_backend, agent, initial_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold)

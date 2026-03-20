@@ -28,6 +28,22 @@ def _tpu_vm_exists(tpu_name: str, zone: str, project: str) -> bool:
 	return proc.returncode == 0
 
 
+def _tpu_vm_state(tpu_name: str, zone: str, project: str) -> str | None:
+	#returns if tpu vm is running
+	gcloud = _gcloud_bin()
+	if shutil.which(gcloud) is None:
+		return None
+	cmd = [
+		gcloud, "compute", "tpus", "tpu-vm", "describe", tpu_name,
+		"--zone", zone, "--project", project,
+		"--format", "value(state)",
+	]
+	proc = subprocess.run(cmd, capture_output=True, text=True)
+	if proc.returncode != 0:
+		return None
+	return (proc.stdout or "").strip() or None
+
+
 def _ensure_tpu_vm_running(
 	tpu_name: str,
 	zone: str,
@@ -183,6 +199,10 @@ class TpuHardwareBackend(EvalBackend):
 		return cmd
 
 	def start_tpu_vm(self) -> None:
+		state = _tpu_vm_state(self.tpu_name, self.tpu_zone, self.tpu_project)
+		if state == "READY":
+			logger.info("TPU VM '%s' is already running", self.tpu_name)
+			return
 		gcloud = _gcloud_bin()
 		if shutil.which(gcloud) is None:
 			raise FileNotFoundError("gcloud not found on PATH; cannot start TPU VM.")
