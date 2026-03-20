@@ -606,6 +606,7 @@ for _idx, _b64 in enumerate(CANDIDATE_SOURCES):
 		remote_cmd = self._remote_run_python_to_files_command(
 			remote_name, remote_dir, skip_setup=self._jax_setup_done,
 		)
+		print(remote_cmd)
 		try:
 			run_proc = self._run_ssh(remote_cmd)
 		except subprocess.TimeoutExpired:

@@ -34,18 +34,17 @@ def _print_hw_feedback(*, M: int, K: int, N: int, dtype, latency_ms: float) -> N
 
 
 def _run_autocomp_harness():
-    M = 1024
-    K = 1024
-    N = 1024
-    num_trials = int(os.getenv("AUTOCOMP_TPU_NUM_TRIALS", "10"))
-    num_warmup = int(os.getenv("AUTOCOMP_TPU_NUM_WARMUP", "3"))
-    dtype_str = os.getenv("AUTOCOMP_TPU_DTYPE", "float32")
-    dtype = getattr(jnp, dtype_str, jnp.float32)
+    M = 4096
+    K = 4096
+    N = 4096
+    num_trials = 10
+    num_warmup = 3
+    dtype = jnp.float32
 
     x = jax.random.normal(jax.random.PRNGKey(0), (M, K), dtype=dtype)
     y = jax.random.normal(jax.random.PRNGKey(1), (K, N), dtype=dtype)
 
-    print(f"Running TPU test() ({M}x{K}x{N}, dtype={dtype_str}, "
+    print(f"Running TPU test() ({M}x{K}x{N}, dtype={dtype}, "
           f"warmup={num_warmup}, trials={num_trials})...")
 
     # Warmup: compile + stabilize.
