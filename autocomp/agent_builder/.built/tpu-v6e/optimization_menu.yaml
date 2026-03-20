@@ -13,7 +13,7 @@ optimizations:
 - strategy: eliminate redundant computation
 - strategy: simplify or remove unnecessary code
 - strategy: try new parameter values
-- strategy: rewrite the algorithm to reduce total work or intermediate tensor sizes
+- strategy: rewrite the algorithm to reduce total work
 - strategy: Place control-flow scalars and block indices in SMEM via `pltpu.SMEM` for fast scalar access
 - strategy: Use `pltpu.emit_pipeline` for nested pipelines within a single kernel
 - strategy: Align block shapes so last two dimensions are multiples of 8 and 128 respectively

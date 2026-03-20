@@ -722,7 +722,7 @@ JSON array:"""
             "eliminate redundant computation",
             "simplify or remove unnecessary code",
             "try new parameter values",
-            "rewrite the algorithm to reduce total work or intermediate tensor sizes",
+            "rewrite the algorithm to reduce total work",
         ]
 
         if not items:
