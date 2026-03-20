@@ -14,6 +14,7 @@ from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
 from autocomp.agents.saturn.saturn_agent import SaturnLLMAgent
+from autocomp.agents.xnnpack.xnnpack_agent import XnnpackLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -21,6 +22,7 @@ from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
 from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.backend.saturn.saturn_eval import SaturnEvalBackend
+from autocomp.backend.xnnpack.xnnpack_eval import XnnpackEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, SaturnHardwareConfig
@@ -48,6 +50,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         eval_backend = TrnEvalBackend()
     elif backend_name == "saturn":
         eval_backend = SaturnEvalBackend()
+    elif backend_name == "xnnpack":
+        eval_backend = XnnpackEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
     
@@ -64,6 +68,9 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     elif agent_name == "saturn":
         agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in models])
         code_agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
+    elif agent_name == "xnnpack":
+        agent = LLMEnsemble([XnnpackLLMAgent(m, config=hw_config) for m in models])
+        code_agent = LLMEnsemble([XnnpackLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
     else:
         raise ValueError(f"Unknown agent name: {agent_name}")
     
@@ -108,6 +115,13 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
         with open(matches[0]) as f:
             return f.read()
     elif backend_name == "saturn":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.c"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.c in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    elif backend_name == "xnnpack":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.c"))
         if not matches:
@@ -689,9 +703,9 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "saturn"  # Options: "gemmini", "trn", "kernelbench", "gpumode", "saturn"
-    agent_name = "saturn"  # Options: "gemmini", "trn", "cuda", "saturn"
-    simulator = "spike" # "firesim" or "spike" if backend_name == "gemmini" or backend_name == "saturn"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
+    backend_name = "xnnpack"  # Options: "gemmini", "trn", "kernelbench", "gpumode", "saturn", "xnnpack"
+    agent_name = "xnnpack"  # Options: "gemmini", "trn", "cuda", "saturn", "xnnpack"
+    simulator = "firesim" # "firesim" or "spike" if backend_name == "gemmini" or backend_name == "saturn"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
     hw_config = SaturnHardwareConfig(vlen=512, dlen=256)
     # Examples:
@@ -703,13 +717,13 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["gcp::gemini-3-pro-preview", "gcp::gemini-3-flash-preview"] # Models for planning
+    models = ["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview"] # Models for planning
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
     iterations = 8
-    prob_type = "f32" # see README.md or sols directory for available problems
-    prob_id = 1
+    prob_type = "xnnpack-f32" # see README.md or sols directory for available problems
+    prob_id = 2
 
     # Reimplement failed candidates
     # Only works for trn
