@@ -23,3 +23,16 @@ git clone https://github.com/ucb-bar/autocomp
 cd autocomp
 pip install -e .
 ```
+
+## Available Problems
+
+Trainium has the following problem types (`prob_type` in `search.py`):
+
+| `prob_type` | Description |
+|---|---|
+| `trn-tutorial` | Tutorial NKI kernels from the nki-samples repo |
+| `trn-advanced` | Advanced NKI kernels from the nki-samples repo |
+
+### Adding a New Problem
+
+To add a new Trainium problem, place the initial (unoptimized) solution file in `sols/{prob_type}/` following the naming convention `{prob_id}_{name}_ref.py`. The test harness goes in `tests/{prob_type}/{prob_id}_{name}_test.py` with a `// SUBSTITUTE HERE` marker where generated code should be inserted.

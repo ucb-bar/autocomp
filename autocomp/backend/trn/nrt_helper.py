@@ -78,8 +78,12 @@ _NRT_FRAMEWORK_TYPE_NO_FW = 1
 _NRT_TENSOR_PLACEMENT_DEVICE = 0
 _NRT_TENSOR_USAGE_INPUT = 0
 
-# Map NRT dtype enum to numpy dtypes
+# Map nrt_dtype_t enum (from nrt.h) to numpy dtypes
 def _build_dtype_map():
+    m = _parse_nrt_dtype_header()
+    if m is not None:
+        return m
+    # Fallback: older Neuron SDK versions used sequential decimal enum values
     m = {
         1: np.float32,
         2: np.float16,
@@ -98,6 +102,68 @@ def _build_dtype_map():
     except Exception:
         m[3] = np.uint16
     return m
+
+
+def _parse_nrt_dtype_header():
+    """Parse nrt_dtype_t enum values from the installed nrt.h header."""
+    import re
+    _NRT_H_PATHS = [
+        "/opt/aws/neuron/include/nrt/nrt.h",
+        "/usr/include/nrt/nrt.h",
+    ]
+    _DTYPE_TO_NUMPY = {
+        "FLOAT16": np.float16,
+        "FLOAT32": np.float32,
+        "FP32R": np.float32,
+        "UINT8": np.uint8,
+        "UINT16": np.uint16,
+        "UINT32": np.uint32,
+        "UINT64": np.uint64,
+        "INT8": np.int8,
+        "INT16": np.int16,
+        "INT32": np.int32,
+        "INT64": np.int64,
+    }
+    for path in _NRT_H_PATHS:
+        try:
+            with open(path) as f:
+                text = f.read()
+        except FileNotFoundError:
+            continue
+
+        match = re.search(r"typedef enum nrt_dtype\s*\{(.+?)\}\s*nrt_dtype_t;", text, re.DOTALL)
+        if not match:
+            continue
+
+        m = {}
+        for name, val in re.findall(r"NRT_DTYPE_(\w+)\s*=\s*(0x[0-9a-fA-F]+|\d+)", match.group(1)):
+            int_val = int(val, 0)
+            if name in ("UNKNOWN", "INVALID"):
+                continue
+            np_dtype = _DTYPE_TO_NUMPY.get(name)
+            if np_dtype is not None:
+                m[int_val] = np_dtype
+
+        if not m:
+            continue
+
+        # Handle bfloat16 specially
+        bf16_match = re.search(r"NRT_DTYPE_BFLOAT16\s*=\s*(0x[0-9a-fA-F]+|\d+)", match.group(1))
+        if bf16_match:
+            bf16_val = int(bf16_match.group(1), 0)
+            try:
+                import neuronxcc.nki.language as nl
+                m[bf16_val] = nl.bfloat16
+            except Exception:
+                m[bf16_val] = np.uint16
+
+        # Handle FP8 variants as uint8
+        for fp8_match in re.finditer(r"NRT_DTYPE_(FP8_\w+)\s*=\s*(0x[0-9a-fA-F]+|\d+)", match.group(1)):
+            m[int(fp8_match.group(2), 0)] = np.uint8
+
+        return m
+
+    return None
 
 _NRT_DTYPE_MAP = _build_dtype_map()
 
