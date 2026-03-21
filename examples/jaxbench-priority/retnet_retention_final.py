@@ -32,9 +32,15 @@ def workload(query, key, value):
     """
     Multi-scale retention optimized for TPU v6e-1.
 
-    Optimization: Precompute S_n = (K_n * c_n)^T @ V_n for each key/value block n,
-    then reuse this (D x D) matrix for all query blocks m > n, avoiding redundant
-    K-V matmul recomputation.
+    Exact optimization:
+      * Precompute K_scaled[n] = K_n * c_n once per KV block.
+      * Precompute S_n = K_scaled[n]^T @ V_n once per KV block.
+      * Reuse K_scaled[n] for exact lower-block normalization:
+            sum(abs((Q * r) @ K_scaled[n]^T), axis=1)
+        instead of re-scaling K on every lower-triangular iteration.
+
+    This preserves the original semantics while removing redundant
+    per-lower-block K scaling work.
     """
     B, H, S, D = query.shape
     assert key.shape == (B, H, S, D)
@@ -45,7 +51,8 @@ def workload(query, key, value):
 
     assert S % BLOCK_M == 0, f"S={S} must be divisible by BLOCK_M={BLOCK_M}"
     assert S % BLOCK_N == 0, f"S={S} must be divisible by BLOCK_N={BLOCK_N}"
-    assert BLOCK_M == BLOCK_N, "This optimized causal-skip version assumes square blocks."
+    assert BLOCK_M == BLOCK_N, "This version assumes square causal blocks."
+    assert D % 128 == 0, f"D={D} must satisfy TPU block constraints."
 
     num_m = S // BLOCK_M
     num_n = S // BLOCK_N
@@ -57,137 +64,118 @@ def workload(query, key, value):
     qk_dims = (((1,), (1,)), ((), ()))
     # (BM, BN) @ (BN, D) -> (BM, D)
     ov_dims = (((1,), (0,)), ((), ()))
-    # (D, BN) @ (BN, D) -> (D, D) for S_n precomputation
+    # (D, BN) @ (BN, D) -> (D, D)
     kv_dims = (((1,), (0,)), ((), ()))
 
-    def retention_kernel(q_ref, k_ref, v_ref, out_ref, S_precomputed_ref, qk_scratch_ref):
-        # Per-program refs have shape (S, D) for inputs/output
-        # S_precomputed_ref: (num_n, D, D) for precomputed K^T @ V blocks
-        # qk_scratch_ref: (BLOCK_M, BLOCK_N) for diagonal block computation
+    def retention_kernel(
+        q_ref,
+        k_ref,
+        v_ref,
+        out_ref,
+        k_scaled_blocks_ref,
+        S_precomputed_ref,
+        qk_scratch_ref,
+    ):
+        # One program handles one (batch, head) slice; refs are shaped (S, D).
         h_idx = pl.program_id(1)
         h_f32 = h_idx.astype(jnp.float32)
 
         gamma = jnp.float32(1.0) - jnp.exp2(jnp.float32(-5.0) - h_f32)
         log_gamma = jnp.log(gamma)
 
-        # Pass 1: Precompute S_n = (K_n * c_n[:, None])^T @ V_n for each block n
+        # Static causal mask for the diagonal block.
+        local_idx = jnp.arange(BLOCK_M, dtype=jnp.int32)
+        causal_mask = (local_idx[:, None] >= local_idx[None, :]).astype(jnp.float32)
+
+        # ------------------------------------------------------------------
+        # Pass 1: precompute per-block scaled K and S_n = K_scaled^T @ V
+        # ------------------------------------------------------------------
         for nj in range(num_n):
             n0 = nj * BLOCK_N
-            n1 = (nj + 1) * BLOCK_N
+            n1 = n0 + BLOCK_N
 
             k_tile = k_ref[n0:n1, :].astype(jnp.float32)  # (BLOCK_N, D)
             v_tile = v_ref[n0:n1, :].astype(jnp.float32)  # (BLOCK_N, D)
 
-            # Column decay: c_j = exp(-log_gamma * j)
             c_idx = (n0 + jnp.arange(BLOCK_N)).astype(jnp.float32)
             c_vec = jnp.exp(-log_gamma * c_idx)  # (BLOCK_N,)
 
-            # Scale K by column decay
             k_scaled = k_tile * c_vec[:, None]  # (BLOCK_N, D)
+            k_scaled_blocks_ref[nj, :, :] = k_scaled
 
-            # Compute S_n = K_scaled^T @ V = (D, BLOCK_N) @ (BLOCK_N, D) -> (D, D)
             S_n = jax.lax.dot_general(
                 jnp.transpose(k_scaled),  # (D, BLOCK_N)
-                v_tile,  # (BLOCK_N, D)
+                v_tile,                   # (BLOCK_N, D)
                 kv_dims,
                 preferred_element_type=jnp.float32,
             )
             S_precomputed_ref[nj, :, :] = S_n
 
-        # Pass 2: Compute output for each query block
+        # ------------------------------------------------------------------
+        # Pass 2: compute output block by block
+        # ------------------------------------------------------------------
         for mi in range(num_m):
             m0 = mi * BLOCK_M
-            m1 = (mi + 1) * BLOCK_M
+            m1 = m0 + BLOCK_M
 
-            # Load query tile
             q_tile = q_ref[m0:m1, :].astype(jnp.float32)  # (BLOCK_M, D)
 
-            # Row decay: r_i = exp(log_gamma * i)
             r_idx = (m0 + jnp.arange(BLOCK_M)).astype(jnp.float32)
             r_vec = jnp.exp(log_gamma * r_idx)  # (BLOCK_M,)
 
-            # Scale Q by row decay
             q_scaled = q_tile * r_vec[:, None]  # (BLOCK_M, D)
 
-            # Accumulator for output
             acc = jnp.zeros((BLOCK_M, D), dtype=jnp.float32)
-            
-            # Accumulator for normalization (sum of absolute weights)
             norm_acc = jnp.zeros((BLOCK_M, 1), dtype=jnp.float32)
 
-            # Process strictly lower-triangular blocks (nj < mi) using precomputed S_n
-            for nj in range(num_m):
-                # Only process if nj < mi
-                is_lower = nj < mi
-                
-                if is_lower:
-                    n0 = nj * BLOCK_N
-                    
-                    # Load precomputed S_n
-                    S_n = S_precomputed_ref[nj, :, :]  # (D, D)
-                    
-                    # Compute contribution: Q_scaled @ S_n
-                    # This gives us the unnormalized weighted sum for this block
-                    contrib = jax.lax.dot_general(
-                        q_scaled,  # (BLOCK_M, D)
-                        S_n,  # (D, D)
-                        qS_dims,
-                        preferred_element_type=jnp.float32,
-                    )  # (BLOCK_M, D)
-                    
-                    acc = acc + contrib
-                    
-                    # For normalization, we need sum of |weights| = sum of |Q @ K^T * decay|
-                    # Compute Q @ K^T * decay for this block to get absolute weight sum
-                    k_tile = k_ref[n0:n0 + BLOCK_N, :].astype(jnp.float32)
-                    c_idx = (n0 + jnp.arange(BLOCK_N)).astype(jnp.float32)
-                    c_vec = jnp.exp(-log_gamma * c_idx)
-                    
-                    qk_tile = jax.lax.dot_general(
-                        q_tile,
-                        k_tile,
-                        qk_dims,
-                        preferred_element_type=jnp.float32,
-                    )
-                    decay_tile = r_vec[:, None] * c_vec[None, :]
-                    weights = qk_tile * decay_tile
-                    norm_acc = norm_acc + jnp.sum(jnp.abs(weights), axis=1, keepdims=True)
+            # Strictly lower-triangular blocks use precomputed S_n and K_scaled_n.
+            for nj in range(mi):
+                S_n = S_precomputed_ref[nj, :, :]          # (D, D)
+                k_scaled = k_scaled_blocks_ref[nj, :, :]   # (BLOCK_N, D)
 
-            # Process diagonal block (nj == mi) with causal mask
-            n0 = mi * BLOCK_N
-            n1 = (mi + 1) * BLOCK_N
+                contrib = jax.lax.dot_general(
+                    q_scaled,  # (BLOCK_M, D)
+                    S_n,       # (D, D)
+                    qS_dims,
+                    preferred_element_type=jnp.float32,
+                )
+                acc = acc + contrib
 
-            k_tile = k_ref[n0:n1, :].astype(jnp.float32)
-            v_tile = v_ref[n0:n1, :].astype(jnp.float32)
+                qk_scratch_ref[:, :] = jax.lax.dot_general(
+                    q_scaled,  # (BLOCK_M, D)
+                    k_scaled,  # (BLOCK_N, D), transposed via contraction on axis 1
+                    qk_dims,
+                    preferred_element_type=jnp.float32,
+                )
+                qk_tile = qk_scratch_ref[:, :]
+                norm_acc = norm_acc + jnp.sum(
+                    jnp.abs(qk_tile), axis=1, keepdims=True
+                )
 
-            c_idx = (n0 + jnp.arange(BLOCK_N)).astype(jnp.float32)
-            c_vec = jnp.exp(-log_gamma * c_idx)
+            # Diagonal block: exact causal computation.
+            k_scaled_diag = k_scaled_blocks_ref[mi, :, :]      # (BLOCK_N, D)
+            v_tile = v_ref[m0:m1, :].astype(jnp.float32)       # (BLOCK_N, D)
 
-            qk_tile = jax.lax.dot_general(
-                q_tile,
-                k_tile,
+            qk_scratch_ref[:, :] = jax.lax.dot_general(
+                q_scaled,
+                k_scaled_diag,
                 qk_dims,
                 preferred_element_type=jnp.float32,
             )
-            decay_tile = r_vec[:, None] * c_vec[None, :]
+            qk_diag = qk_scratch_ref[:, :] * causal_mask
 
-            # Causal mask for diagonal block
-            mask = (r_idx[:, None] >= c_idx[None, :]).astype(jnp.float32)
-            qk_masked = qk_tile * decay_tile * mask
+            norm_acc = norm_acc + jnp.sum(
+                jnp.abs(qk_diag), axis=1, keepdims=True
+            )
 
-            # Add to normalization
-            norm_acc = norm_acc + jnp.sum(jnp.abs(qk_masked), axis=1, keepdims=True)
-
-            # Compute diagonal contribution
             diag_contrib = jax.lax.dot_general(
-                qk_masked.astype(v_ref.dtype),
+                qk_diag.astype(jnp.float32),
                 v_tile,
                 ov_dims,
                 preferred_element_type=jnp.float32,
             )
             acc = acc + diag_contrib
 
-            # Normalize
             norm_tile = jnp.maximum(norm_acc, jnp.float32(1.0))
             out_ref[m0:m1, :] = acc / norm_tile
 
@@ -213,8 +201,9 @@ def workload(query, key, value):
             index_map=lambda b, h: (b, h, 0, 0),
         ),
         scratch_shapes=[
-            pltpu.VMEM((num_n, D, D), jnp.float32),  # S_precomputed: precomputed K^T @ V blocks
-            pltpu.VMEM((BLOCK_M, BLOCK_N), jnp.float32),  # qk_scratch for diagonal
+            pltpu.VMEM((num_n, BLOCK_N, D), jnp.float32),  # precomputed K_scaled blocks
+            pltpu.VMEM((num_n, D, D), jnp.float32),        # precomputed S_n blocks
+            pltpu.VMEM((BLOCK_M, BLOCK_N), jnp.float32),   # reusable QK scratch
         ],
     )
 
@@ -225,7 +214,7 @@ def workload(query, key, value):
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-        name="retnet_v6e_precomputed_S",
+        name="retnet_v6e_precomputed_kscaled_and_S",
     )(query, key, value)
 
     return out_f32.astype(query.dtype)

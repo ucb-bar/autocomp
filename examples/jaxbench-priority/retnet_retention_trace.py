@@ -1,4 +1,4 @@
-CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
+CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
 plan=None,
 code='''import jax
 
@@ -72,6 +72,7 @@ def workload(query, key, value):
     return output
 ''',
 score=0.52,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='None',
 code_gen_model='None',
@@ -469,6 +470,7 @@ def workload(query, key, value):
     return output
 ''',
 score=1.532,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gpt-5.4',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -786,6 +788,7 @@ def workload(query, key, value):
     return output
 ''',
 score=1.835,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gpt-5.4',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -1332,6 +1335,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=3.637,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='zai.glm-4.7',
 code_gen_model='gpt-5.4',
@@ -1643,6 +1647,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=1.515,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='deepseek.v3.2',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -1954,6 +1959,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=0.394,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gemini-3-flash-preview',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -1962,12 +1968,12 @@ stderr=''),
 plan='''To optimize the retention kernel for TPU v6e, we apply **Strategy 1: cache reused data in local memory instead of reloading from main memory**.
 
 ### Analysis of Inefficiency
-The original kernel used a grid of `(B, H, S // BLOCK_M)`. For every query block of size `BLOCK_M`, the kernel iterated through the entire Key and Value sequences. Consequently, the compiler staged the full Key and Value arrays (size $S \times D$) from HBM into VMEM for **each** query block. With $S=2048$ and $BLOCK\_M=512$, the Key and Value sequences were re-read from HBM 4 times per head. 
+The original kernel used a grid of `(B, H, S // BLOCK_M)`. For every query block of size `BLOCK_M`, the kernel iterated through the entire Key and Value sequences. Consequently, the compiler staged the full Key and Value arrays (size $S 	imes D$) from HBM into VMEM for **each** query block. With $S=2048$ and $BLOCK\_M=512$, the Key and Value sequences were re-read from HBM 4 times per head. 
 
 ### Optimization Plan
-We change the execution grid to `(B, H)`, so each grid invocation handles the entire sequence for a single head. This allows us to load the $2048 \times 256$ Key and Value sequences into VMEM **exactly once** per head. Inside the kernel, we loop over query blocks $mi$. Each query block reuses the Key and Value data already residing in VMEM, reducing total HBM memory traffic for K/V by 4x.
+We change the execution grid to `(B, H)`, so each grid invocation handles the entire sequence for a single head. This allows us to load the $2048 	imes 256$ Key and Value sequences into VMEM **exactly once** per head. Inside the kernel, we loop over query blocks $mi$. Each query block reuses the Key and Value data already residing in VMEM, reducing total HBM memory traffic for K/V by 4x.
 
-The total VMEM footprint for $Q, K, V, Out$ (each $1$ MiB in bf16) plus a $512 \times 2048$ scratch buffer ($4$ MiB in f32) is approximately $12$ MiB (including double buffering), which fits within the $16$ MiB limit of the v6e TensorCore.
+The total VMEM footprint for $Q, K, V, Out$ (each $1$ MiB in bf16) plus a $512 	imes 2048$ scratch buffer ($4$ MiB in f32) is approximately $12$ MiB (including double buffering), which fits within the $16$ MiB limit of the v6e TensorCore.
 
 ```python
 import jax
@@ -2255,6 +2261,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=0.313,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gemini-3-flash-preview',
 code_gen_model='gpt-5.4',
@@ -2262,7 +2269,7 @@ stdout='Latency: 0.313 ms\n{"correct": true, "latency": 0.313, "error": "", "all
 stderr=''),
 plan='''The multi-scale retention operator (RetNet) involves a position-dependent decay factor $\gamma^{i-j}$. In the original kernel, this decay tile is computed using `jnp.exp(log_gamma * jnp.maximum(rows - cols, 0.0))`, which requires an expensive 2D exponential operation of size `BLOCK_M * BLOCK_N` (262,144 elements) for every block in every head. This results in millions of transcendental function calls per head.
 
-We can optimize this by factoring the decay term: $\gamma^{i-j} = \gamma^i \cdot \gamma^{-j}$. By computing two 1D vectors—a "row decay" vector $r_i = \exp(\text{log\_gamma} \cdot i)$ and a "column decay" vector $c_j = \exp(-\text{log\_gamma} \cdot j)$—we can recover the decay tile via an outer product: $r_i \cdot c_j$. This reduces the number of expensive `exp` calls from $O(S^2)$ to $O(S)$ per head, which is a $400\times$ reduction for $S=2048$. The causal mask is applied after the outer product to ensure $j \le i$.
+We can optimize this by factoring the decay term: $\gamma^{i-j} = \gamma^i \cdot \gamma^{-j}$. By computing two 1D vectors—a "row decay" vector $r_i = \exp(	ext{log\_gamma} \cdot i)$ and a "column decay" vector $c_j = \exp(-	ext{log\_gamma} \cdot j)$—we can recover the decay tile via an outer product: $r_i \cdot c_j$. This reduces the number of expensive `exp` calls from $O(S^2)$ to $O(S)$ per head, which is a $400	imes$ reduction for $S=2048$. The causal mask is applied after the outer product to ensure $j \le i$.
 
 ### Optimized Workload Implementation
 
@@ -2540,6 +2547,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=0.284,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gemini-3-flash-preview',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -2754,6 +2762,7 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=0.246,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='gpt-5.4',
@@ -3056,8 +3065,287 @@ def workload(query, key, value):
     return out_f32.astype(query.dtype)
 ''',
 score=0.218,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 stdout='Latency: 0.218 ms\n{"correct": true, "latency": 0.218, "error": "", "all_times_ms": [0.207, 0.207, 0.207, 0.207, 0.207, 0.208, 0.208, 0.208, 0.208, 0.21, 0.21, 0.211, 0.211, 0.211, 0.211, 0.212, 0.212, 0.212, 0.213, 0.213, 0.213, 0.213, 0.213, 0.213, 0.213, 0.213, 0.214, 0.214, 0.214, 0.214, 0.214, 0.214, 0.215, 0.215, 0.215, 0.216, 0.216, 0.216, 0.216, 0.216, 0.217, 0.217, 0.217, 0.217, 0.217, 0.217, 0.217, 0.218, 0.218, 0.218, 0.218, 0.219, 0.219, 0.22, 0.22, 0.221, 0.222, 0.223, 0.223, 0.223, 0.224, 0.224, 0.225, 0.225, 0.225, 0.225, 0.226, 0.226, 0.226, 0.227, 0.227, 0.227, 0.227, 0.227, 0.227, 0.227, 0.228, 0.228, 0.228, 0.228, 0.229, 0.229, 0.229, 0.229, 0.229, 0.23, 0.23, 0.231, 0.231, 0.231, 0.232, 0.233, 0.233, 0.235, 0.235, 0.237, 0.239, 0.251, 0.255, 0.381], "max_diff": 0.015625}',
+stderr=''),
+plan='''Looking at this code, I need to analyze the inefficiencies and select the best strategy to improve performance.
+
+## Analysis of Current Code
+
+The kernel implements multi-scale retention with a two-pass approach:
+1. **Pass 1**: Precomputes `S_n = K_n^T @ V_n` for each block (num_n iterations)
+2. **Pass 2**: For each query block, processes all lower-triangular blocks plus the diagonal block
+
+Key observations:
+- The code uses sequential Python `for` loops that will be unrolled at compile time
+- The scratch buffer `S_precomputed_ref` has shape `(num_n, D, D)` = `(4, 256, 256)` in f32 = 4 * 256 * 256 * 4 = 1 MiB
+- The `qk_scratch_ref` has shape `(BLOCK_M, BLOCK_N)` = `(512, 512)` in f32 = 1 MiB
+- `BLOCK_M = BLOCK_N = 512`, `D = 256`, `num_m = num_n = 4`
+
+**Critical Issue**: In Pass 2, for the normalization calculation in lower-triangular blocks, the code redundantly reloads K and recomputes Q@K^T for every lower block, negating much of the benefit of precomputing S_n. This is algorithmically wasteful.
+
+## Strategy Selection: Strategy 2 - Rewrite the algorithm to reduce total work
+
+The current normalization approach defeats the purpose of the S_n precomputation. For each query block, it:
+1. Uses precomputed S_n for the O contribution (good)
+2. But then recomputes Q@K^T just to get normalization weights (wasteful!)
+
+**The Fix**: The normalization in retention is typically computed as `sum(|D_ij|)` where D_ij is the decay matrix. Since the decay pattern is deterministic (based on positions), we can:
+1. Precompute normalization factors alongside S_n, or
+2. Compute normalization analytically from the decay structure without needing Q@K^T
+
+Actually, looking more carefully, the original retention paper uses `max(sum(|weights|), 1)` for stability. The weights are `Q @ K^T * decay`. We can precompute `sum(|K^T * c|)` per block and use it with Q.
+
+A cleaner fix: Precompute a normalization helper `N_n = sum(|K_n * c_n|, axis=0)` (shape (D,)), then for lower blocks, compute `sum(|Q_scaled @ N_n^T|)` instead of full Q@K^T.
+
+But even simpler - we can precompute `K_abs_sum = sum(|K_n * c_n|, axis=0)` and use `|Q_scaled| @ K_abs_sum` for approximating the norm contribution, avoiding the expensive Q@K^T entirely for lower blocks.
+
+## Plan
+
+**Strategy 2: Rewrite the algorithm to reduce total work**
+
+1. **Remove redundant K reload and Q@K^T computation in lower-triangular processing**: The current code reloads K and computes a full `(BLOCK_M, BLOCK_N)` matmul just for normalization in each lower block. This is O(num_m * num_n * BLOCK_M * BLOCK_N * D) extra work.
+
+2. **Precompute normalization helpers in Pass 1**: During S_n computation, also compute and store:
+   - `k_abs_c_sum[nj, :]` = `sum(|K_n * c_n|, axis=0)` with shape `(D,)` per block
+   
+3. **Use cheap norm approximation in Pass 2**: For lower-triangular blocks, compute:
+   - `norm_contrib = sum(|Q_scaled| @ k_abs_c_sum[nj, :])` which is O(BLOCK_M * D) instead of O(BLOCK_M * BLOCK_N * D)
+
+4. **Keep diagonal block computation unchanged**: The diagonal needs the full Q@K^T for the causal mask anyway, so normalization comes "for free" there.
+
+This reduces the work in Pass 2\'s lower-triangular processing from O(num_m² * BLOCK_M * BLOCK_N * D) matmuls to O(num_m² * BLOCK_M * D) vector operations - a significant reduction when BLOCK_N is large (512).
+
+The scratch buffer change: Add `pltpu.VMEM((num_n, D), jnp.float32)` for the precomputed K normalization sums (4 * 256 * 4 = 4 KiB - negligible).''',
+code='''
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "retnet_6_7b_retention",
+    "model": "RetNet-6.7B",
+    "operator": "multi_scale_retention",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 16,
+    "head_dim": 256,
+    "d_model": 4096,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value)."""
+    key = jax.random.PRNGKey(42)
+    keys = jax.random.split(key, 3)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    return query, key_t, value
+
+
+def workload(query, key, value):
+    """
+    Multi-scale retention optimized for TPU v6e-1.
+
+    Exact optimization:
+      * Precompute K_scaled[n] = K_n * c_n once per KV block.
+      * Precompute S_n = K_scaled[n]^T @ V_n once per KV block.
+      * Reuse K_scaled[n] for exact lower-block normalization:
+            sum(abs((Q * r) @ K_scaled[n]^T), axis=1)
+        instead of re-scaling K on every lower-triangular iteration.
+
+    This preserves the original semantics while removing redundant
+    per-lower-block K scaling work.
+    """
+    B, H, S, D = query.shape
+    assert key.shape == (B, H, S, D)
+    assert value.shape == (B, H, S, D)
+
+    BLOCK_M = 512
+    BLOCK_N = 512
+
+    assert S % BLOCK_M == 0, f"S={S} must be divisible by BLOCK_M={BLOCK_M}"
+    assert S % BLOCK_N == 0, f"S={S} must be divisible by BLOCK_N={BLOCK_N}"
+    assert BLOCK_M == BLOCK_N, "This version assumes square causal blocks."
+    assert D % 128 == 0, f"D={D} must satisfy TPU block constraints."
+
+    num_m = S // BLOCK_M
+    num_n = S // BLOCK_N
+    assert num_m == num_n
+
+    # (BM, D) @ (D, D) -> (BM, D)
+    qS_dims = (((1,), (0,)), ((), ()))
+    # (BM, D) @ (BN, D)^T -> (BM, BN)
+    qk_dims = (((1,), (1,)), ((), ()))
+    # (BM, BN) @ (BN, D) -> (BM, D)
+    ov_dims = (((1,), (0,)), ((), ()))
+    # (D, BN) @ (BN, D) -> (D, D)
+    kv_dims = (((1,), (0,)), ((), ()))
+
+    def retention_kernel(
+        q_ref,
+        k_ref,
+        v_ref,
+        out_ref,
+        k_scaled_blocks_ref,
+        S_precomputed_ref,
+        qk_scratch_ref,
+    ):
+        # One program handles one (batch, head) slice; refs are shaped (S, D).
+        h_idx = pl.program_id(1)
+        h_f32 = h_idx.astype(jnp.float32)
+
+        gamma = jnp.float32(1.0) - jnp.exp2(jnp.float32(-5.0) - h_f32)
+        log_gamma = jnp.log(gamma)
+
+        # Static causal mask for the diagonal block.
+        local_idx = jnp.arange(BLOCK_M, dtype=jnp.int32)
+        causal_mask = (local_idx[:, None] >= local_idx[None, :]).astype(jnp.float32)
+
+        # ------------------------------------------------------------------
+        # Pass 1: precompute per-block scaled K and S_n = K_scaled^T @ V
+        # ------------------------------------------------------------------
+        for nj in range(num_n):
+            n0 = nj * BLOCK_N
+            n1 = n0 + BLOCK_N
+
+            k_tile = k_ref[n0:n1, :].astype(jnp.float32)  # (BLOCK_N, D)
+            v_tile = v_ref[n0:n1, :].astype(jnp.float32)  # (BLOCK_N, D)
+
+            c_idx = (n0 + jnp.arange(BLOCK_N)).astype(jnp.float32)
+            c_vec = jnp.exp(-log_gamma * c_idx)  # (BLOCK_N,)
+
+            k_scaled = k_tile * c_vec[:, None]  # (BLOCK_N, D)
+            k_scaled_blocks_ref[nj, :, :] = k_scaled
+
+            S_n = jax.lax.dot_general(
+                jnp.transpose(k_scaled),  # (D, BLOCK_N)
+                v_tile,                   # (BLOCK_N, D)
+                kv_dims,
+                preferred_element_type=jnp.float32,
+            )
+            S_precomputed_ref[nj, :, :] = S_n
+
+        # ------------------------------------------------------------------
+        # Pass 2: compute output block by block
+        # ------------------------------------------------------------------
+        for mi in range(num_m):
+            m0 = mi * BLOCK_M
+            m1 = m0 + BLOCK_M
+
+            q_tile = q_ref[m0:m1, :].astype(jnp.float32)  # (BLOCK_M, D)
+
+            r_idx = (m0 + jnp.arange(BLOCK_M)).astype(jnp.float32)
+            r_vec = jnp.exp(log_gamma * r_idx)  # (BLOCK_M,)
+
+            q_scaled = q_tile * r_vec[:, None]  # (BLOCK_M, D)
+
+            acc = jnp.zeros((BLOCK_M, D), dtype=jnp.float32)
+            norm_acc = jnp.zeros((BLOCK_M, 1), dtype=jnp.float32)
+
+            # Strictly lower-triangular blocks use precomputed S_n and K_scaled_n.
+            for nj in range(mi):
+                S_n = S_precomputed_ref[nj, :, :]          # (D, D)
+                k_scaled = k_scaled_blocks_ref[nj, :, :]   # (BLOCK_N, D)
+
+                contrib = jax.lax.dot_general(
+                    q_scaled,  # (BLOCK_M, D)
+                    S_n,       # (D, D)
+                    qS_dims,
+                    preferred_element_type=jnp.float32,
+                )
+                acc = acc + contrib
+
+                qk_scratch_ref[:, :] = jax.lax.dot_general(
+                    q_scaled,  # (BLOCK_M, D)
+                    k_scaled,  # (BLOCK_N, D), transposed via contraction on axis 1
+                    qk_dims,
+                    preferred_element_type=jnp.float32,
+                )
+                qk_tile = qk_scratch_ref[:, :]
+                norm_acc = norm_acc + jnp.sum(
+                    jnp.abs(qk_tile), axis=1, keepdims=True
+                )
+
+            # Diagonal block: exact causal computation.
+            k_scaled_diag = k_scaled_blocks_ref[mi, :, :]      # (BLOCK_N, D)
+            v_tile = v_ref[m0:m1, :].astype(jnp.float32)       # (BLOCK_N, D)
+
+            qk_scratch_ref[:, :] = jax.lax.dot_general(
+                q_scaled,
+                k_scaled_diag,
+                qk_dims,
+                preferred_element_type=jnp.float32,
+            )
+            qk_diag = qk_scratch_ref[:, :] * causal_mask
+
+            norm_acc = norm_acc + jnp.sum(
+                jnp.abs(qk_diag), axis=1, keepdims=True
+            )
+
+            diag_contrib = jax.lax.dot_general(
+                qk_diag.astype(jnp.float32),
+                v_tile,
+                ov_dims,
+                preferred_element_type=jnp.float32,
+            )
+            acc = acc + diag_contrib
+
+            norm_tile = jnp.maximum(norm_acc, jnp.float32(1.0))
+            out_ref[m0:m1, :] = acc / norm_tile
+
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        grid=(B, H),
+        in_specs=[
+            pl.BlockSpec(
+                block_shape=(None, None, S, D),
+                index_map=lambda b, h: (b, h, 0, 0),
+            ),
+            pl.BlockSpec(
+                block_shape=(None, None, S, D),
+                index_map=lambda b, h: (b, h, 0, 0),
+            ),
+            pl.BlockSpec(
+                block_shape=(None, None, S, D),
+                index_map=lambda b, h: (b, h, 0, 0),
+            ),
+        ],
+        out_specs=pl.BlockSpec(
+            block_shape=(None, None, S, D),
+            index_map=lambda b, h: (b, h, 0, 0),
+        ),
+        scratch_shapes=[
+            pltpu.VMEM((num_n, BLOCK_N, D), jnp.float32),  # precomputed K_scaled blocks
+            pltpu.VMEM((num_n, D, D), jnp.float32),        # precomputed S_n blocks
+            pltpu.VMEM((BLOCK_M, BLOCK_N), jnp.float32),   # reusable QK scratch
+        ],
+    )
+
+    out_f32 = pl.pallas_call(
+        retention_kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, S, D), jnp.float32),
+        grid_spec=grid_spec,
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=("parallel", "parallel"),
+        ),
+        name="retnet_v6e_precomputed_kscaled_and_S",
+    )(query, key, value)
+
+    return out_f32.astype(query.dtype)
+''',
+score=0.199,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='gpt-5.4',
+stdout='Latency: 0.199 ms\n{"correct": true, "latency": 0.199, "error": "", "all_times_ms": [0.193, 0.194, 0.194, 0.194, 0.194, 0.194, 0.194, 0.194, 0.194, 0.194, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.195, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.196, 0.197, 0.197, 0.197, 0.197, 0.197, 0.197, 0.197, 0.197, 0.197, 0.198, 0.198, 0.199, 0.199, 0.199, 0.199, 0.199, 0.199, 0.199, 0.2, 0.2, 0.2, 0.2, 0.2, 0.201, 0.201, 0.201, 0.201, 0.201, 0.201, 0.201, 0.201, 0.202, 0.202, 0.203, 0.203, 0.203, 0.203, 0.203, 0.203, 0.203, 0.203, 0.203, 0.203, 0.204, 0.204, 0.204, 0.204, 0.204, 0.204, 0.205, 0.205, 0.206, 0.206, 0.206, 0.206, 0.206, 0.206, 0.207, 0.207, 0.207, 0.208, 0.21, 0.21, 0.211, 0.225], "max_diff": 0.03125, "max_rel_diff": 0.010803}',
 stderr='')

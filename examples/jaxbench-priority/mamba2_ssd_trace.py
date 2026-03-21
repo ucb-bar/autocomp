@@ -1,4 +1,4 @@
-CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
+CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
 plan=None,
 code='''import jax
 
@@ -74,6 +74,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=1.587,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='None',
 code_gen_model='None',
@@ -344,6 +345,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=5.905,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='zai.glm-4.7',
 code_gen_model='gpt-5.4',
@@ -852,6 +854,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=8.773,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gpt-5.4',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -1237,6 +1240,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=9.543,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='deepseek.v3.2',
 code_gen_model='gpt-5.4',
@@ -1852,6 +1856,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=7.8,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='zai.glm-4.7',
 code_gen_model='gpt-5.4',
@@ -2017,13 +2022,14 @@ def _store():
 The current code computes:
 
 \[
-\text{output}[r] = \sum_c \left(\frac{\text{decayed}[r,c]}{\text{den}[r]}\right) V[c]
+	ext{output}[r] = \sum_c \left(rac{	ext{decayed}[r,c]}{	ext{den}[r]}
+ight) V[c]
 \]
 
 Since `den[r]` depends only on the row, this is algebraically:
 
 \[
-\text{output}[r] = \frac{\sum_c \text{decayed}[r,c] V[c]}{\text{den}[r]}
+	ext{output}[r] = rac{\sum_c 	ext{decayed}[r,c] V[c]}{	ext{den}[r]}
 \]
 
 So accumulating the numerator in VMEM and dividing once at the end is equivalent up to normal floating-point reordering error, which is within the requested tolerance.
@@ -2232,6 +2238,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=0.899,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gpt-5.4',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -2655,6 +2662,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=0.755,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='gpt-5.4',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -2913,6 +2921,7 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=0.648,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='gpt-5.4',
@@ -3198,8 +3207,1427 @@ def workload(query, key, value, A_log):
     return output
 ''',
 score=0.542,
+translation_score=None,
 hw_feedback=[],
 plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 stdout='Latency: 0.542 ms\n{"correct": true, "latency": 0.542, "error": "", "all_times_ms": [0.53, 0.532, 0.533, 0.534, 0.534, 0.534, 0.534, 0.534, 0.535, 0.535, 0.535, 0.535, 0.535, 0.535, 0.535, 0.536, 0.536, 0.536, 0.536, 0.537, 0.537, 0.538, 0.538, 0.538, 0.538, 0.538, 0.538, 0.538, 0.538, 0.538, 0.539, 0.539, 0.539, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.541, 0.541, 0.541, 0.541, 0.541, 0.541, 0.542, 0.542, 0.542, 0.542, 0.542, 0.542, 0.542, 0.542, 0.542, 0.542, 0.543, 0.543, 0.543, 0.543, 0.543, 0.543, 0.543, 0.543, 0.543, 0.543, 0.544, 0.544, 0.544, 0.544, 0.544, 0.545, 0.545, 0.545, 0.545, 0.546, 0.547, 0.547, 0.548, 0.548, 0.548, 0.549, 0.549, 0.55, 0.55, 0.55, 0.55, 0.551, 0.551, 0.551, 0.552, 0.552, 0.553, 0.557, 0.558, 0.558, 0.573], "max_diff": 0.03125, "max_rel_diff": 0.003998}',
+stderr=''),
+plan='''
+
+Looking at this SSD kernel code, I can identify a major inefficiency: **the query block and row_prefix are being reloaded from HBM for every triangular tile iteration**, even though they remain constant for a given row block as we iterate over column blocks.
+
+Currently, the grid has `n_tri_tiles = n_row_tiles * (n_row_tiles + 1) // 2` iterations, where each iteration loads ALL inputs freshly. For a given `row_blk`, as we process `col_blk = 0, 1, ..., row_blk`, the query and row_prefix data is identical but gets reloaded each time.
+
+Let me apply **Strategy 13**: Change ownership so one program owns a `row_blk` and loops over `col_blk <= row_blk` internally, keeping `q`, `row_prefix`, `row_sum`, and `out_acc` resident while only streaming `k/v/col_prefix`.
+
+Here\'s the optimized plan:
+
+1. **Change grid from triangular to row-based**: `(B, H // bh, n_row_tiles)` instead of `(B, H // bh, n_tri_tiles)`
+2. **Keep q and row_prefix in registers/VMEM**: Load once per row_blk, reuse for all col_blk iterations
+3. **Add inner loop in kernel**: Iterate `col_blk` from 0 to `row_blk` inside the kernel
+4. **Stream k, v, col_prefix**: These change each iteration and must be reloaded
+5. **Remove triangular index computation**: Now we have direct `row_blk` from program_id
+6. **Simplify control flow**: Remove `pl.when` guards for triangular checks since the inner loop naturally handles valid pairs
+
+The key insight is that the current implementation wastes HBM bandwidth reloading the same query and prefix data row_blk times. By restructuring to load once per row block and iterate internally, we achieve better memory efficiency.
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "mamba2_2_7b_ssd",
+    "model": "Mamba-2-2.7B",
+    "operator": "state_space_duality",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 64,
+    "head_dim": 64,
+    "d_state": 128,
+    "d_model": 2560,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value, A_log)."""
+    rng = jax.random.PRNGKey(42)
+    keys = jax.random.split(rng, 5)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    A_log = jax.random.normal(keys[3], (B, H, S), dtype=jnp.float32) * 0.5 - 4.0
+    return query, key_t, value, A_log
+
+
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    """
+    Optimized SSD kernel: each program processes one row_blk and iterates over col_blk internally.
+    Keeps q, row_prefix, row_sum, out_acc resident while streaming k/v/col_prefix.
+    Uses transposed layout (B, H, D, S) for better memory alignment on TPU.
+    """
+    B, H, S, D = query.shape
+
+    if H % bh != 0:
+        raise ValueError(f"H={H} must be divisible by bh={bh}.")
+    if S % bm != 0 or S % bn != 0:
+        raise ValueError(f"S={S} must be divisible by bm={bm} and bn={bn}.")
+    if bm != bn:
+        raise ValueError("This SSD kernel requires bm == bn.")
+
+    n_row_tiles = S // bm
+    n_col_tiles = S // bn
+    if n_row_tiles != n_col_tiles:
+        raise ValueError("This SSD kernel requires S//bm == S//bn.")
+
+    # Transpose inputs from (B, H, S, D) to (B, H, D, S) for better alignment
+    query_t = jnp.transpose(query, (0, 1, 3, 2))  # (B, H, D, S)
+    key_t = jnp.transpose(key, (0, 1, 3, 2))      # (B, H, D, S)
+    value_t = jnp.transpose(value, (0, 1, 3, 2))  # (B, H, D, S)
+
+    def kernel(
+        q_ref,           # (bh, D, bm)
+        k_ref,           # (bh, D, bn)
+        v_ref,           # (bh, D, bn)
+        row_prefix_ref,  # (bh, bm)
+        col_prefix_ref,  # (bh, bn)
+        o_ref,           # (bh, D, bm)
+        row_sum_acc_ref, # scratch: (bh, bm)
+        out_acc_ref,     # scratch: (bh, D, bm)
+    ):
+        # Row block is now directly from program_id - no triangular computation needed
+        row_blk = pl.program_id(2)
+        
+        # Initialize accumulators for this row block
+        row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+        out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+
+        # Load query and row_prefix ONCE and keep resident for all col_blk iterations
+        # These don\'t change as we iterate over col_blk
+        q = q_ref[...].astype(jnp.float32)  # (bh, D, bm)
+        row_prefix = row_prefix_ref[...].astype(jnp.float32)  # (bh, bm)
+
+        # Inner loop: iterate over col_blk = 0 to row_blk
+        # We use a Python loop - Pallas will manage the iteration efficiently
+        for col_blk in range(row_blk + 1):
+            # Load k, v, col_prefix for current col_blk
+            # These change each iteration, so must be reloaded
+            k = k_ref[...].astype(jnp.float32)  # (bh, D, bn)
+            v = v_ref[...].astype(jnp.float32)  # (bh, D, bn)
+            col_prefix = col_prefix_ref[...].astype(jnp.float32)  # (bh, bn)
+
+            # Compute score: q^T @ k -> (bh, bm, bn)
+            # q is (bh, D, bm), k is (bh, D, bn)
+            # contract over D (axis 1), batch over h (axis 0)
+            score_tile = jax.lax.dot_general(
+                q,
+                k,
+                dimension_numbers=(((1,), (1,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, bm, bn)
+
+            diff = row_prefix[:, :, None] - col_prefix[:, None, :]  # (bh, bm, bn)
+            
+            # Check if this is the diagonal block
+            is_diag = (col_blk == row_blk)
+            
+            if is_diag:
+                # Diagonal block: apply causal mask
+                local_rows = jnp.arange(bm, dtype=jnp.int32)
+                local_cols = jnp.arange(bn, dtype=jnp.int32)
+                causal_mask = local_rows[:, None] >= local_cols[None, :]
+                
+                decayed_scores = jnp.where(
+                    causal_mask[None, :, :],
+                    score_tile * jnp.exp(diff),
+                    jnp.zeros_like(score_tile),
+                )
+            else:
+                # Lower triangular block: all pairs valid
+                decayed_scores = score_tile * jnp.exp(diff)
+
+            # Accumulate row sums
+            partial_row_sum = jnp.sum(decayed_scores, axis=-1)  # (bh, bm)
+            row_sum_acc_ref[...] = row_sum_acc_ref[...] + partial_row_sum
+
+            # Compute partial_out and accumulate
+            # partial_out[h, d, m] = sum_n decayed_scores[h, m, n] * v[h, d, n]
+            partial_out = jax.lax.dot_general(
+                v,
+                decayed_scores,
+                dimension_numbers=(((2,), (2,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, D, bm)
+            out_acc_ref[...] = out_acc_ref[...] + partial_out
+
+        # Normalize and store output
+        row_sum = row_sum_acc_ref[...]
+        safe_sum = jnp.where(jnp.abs(row_sum) < 1e-6, 1.0, row_sum)
+        den = jnp.maximum(jnp.abs(safe_sum), 1.0)
+        # out_acc_ref: (bh, D, bm), den: (bh, bm)
+        normalized = out_acc_ref[...] / den[:, None, :]
+        o_ref[...] = normalized.astype(query.dtype)
+
+    # Output shape in transposed layout
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        grid=(B, H // bh, n_row_tiles),  # Changed from n_tri_tiles to n_row_tiles
+        in_specs=[
+            # q_ref: (bh, D, bm) from query_t (B, H, D, S)
+            # Loaded once per row_blk, stays resident for all col_blk iterations
+            pl.BlockSpec(
+                block_shape=(None, bh, D, bm),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+            ),
+            # k_ref: (bh, D, bn) - streamed for each col_blk
+            # We need a sub-grid for col_blk, but BlockSpec doesn\'t support dynamic iteration
+            # So we use a trick: make k_ref dimension larger and index into it
+            # Actually, we need to pass col_blk somehow - let\'s handle this differently
+            # The issue is BlockSpec is static - we need the kernel to iterate over col_blk
+            # For now, we\'ll use the fact that the kernel receives the full block and we
+            # need to slice appropriately. But wait - the kernel receives a single block
+            # defined by BlockSpec, so we need a different approach...
+            
+            # Actually, looking at the original code more carefully:
+            # The index_map for k/v uses _triangular_row_col(tri)[1] = col_blk
+            # This means each program loads a different col_blk
+            # 
+            # In the new design, each program processes ALL col_blk for a given row_blk
+            # So the BlockSpec for k/v should load ALL columns? That\'s too much data.
+            #
+            # Let me reconsider... We need to iterate over col_blk INSIDE the kernel
+            # But we still need to load different k/v blocks for each col_blk
+            #
+            # The solution: use a 1D block for k/v (load all columns at once)
+            # and slice inside the kernel. But this wastes memory bandwidth.
+            #
+            # Alternative: Keep the grid as (B, H//bh, n_row_tiles) but have the kernel
+            # do the inner iteration. For each col_blk iteration, we need to load
+            # the appropriate k/v/col_prefix slice. We can do this by:
+            # 1. Loading the full k/v for the row (all columns) - expensive
+            # 2. Using async copies inside the loop - complex
+            # 3. Accepting that we reload k/v each time - still better than original
+            #    because q/row_prefix are not reloaded
+            #
+            # Actually, the best approach is to keep grid=(B, H//bh, n_row_tiles) and
+            # have the kernel iterate. For k/v loading, we can use the fact that
+            # we have multiple buffer slots and can prefetch. But that\'s complex.
+            #
+            # Let me rethink: the key optimization is NOT reloading q and row_prefix.
+            # We can still use the triangular grid but fix the index_map to avoid
+            # recomputing triangular indices.
+            #
+            # Wait - the issue is that with grid=(B, H//bh, n_row_tiles),
+            # we need to load different k/v blocks inside the loop.
+            # The cleanest way is to use the original grid structure but:
+            # 1. Keep q and row_prefix in accumulators (already inVMEM from previous iteration)
+            # 2. Only reload k, v, col_prefix
+            #
+            # But this requires the compiler to recognize that q/row_prefix don\'t change...
+            #
+            # Let me try a different approach: Keep the triangular grid but
+            # use a smem buffer to cache q and row_prefix across iterations.
+        ],
+        out_specs=...,
+        ...
+    )(query_t, key_t, value_t, log_a_cumsum, log_a_cumsum)
+```
+
+Wait, I need to reconsider. The challenge with the proposed approach is that `pallas_call` with `BlockSpec` defines a static data movement pattern - each program gets fixed slices. To have a program iterate over multiple column blocks while keeping query resident requires a different approach.
+
+Let me use a hybrid approach: keep the triangular grid but use SMEM to cache query and row_prefix, and rely on the compiler\'s double-buffering to avoid reloading them when possible. Actually, a cleaner solution is to restructure the grid to iterate over row blocks only, and use explicit indexing in the kernel to load different k/v slices. Let me revise:
+
+The cleanest optimization that preserves the pallas model is:
+1. Use grid = (B, H//bh, n_row_tiles) 
+2. For k/v, use a larger block that spans all columns, and slice inside
+3.OR keep triangular grid but note that consecutive iterations with same row_blk will benefit from VMEM caching
+
+Actually, looking back at the reference patterns, the real win is to change the granularity. Let me implement a version that uses the row-based grid and loads k/v for each col_blk inside the kernel using a sub-block approach:
+
+```python
+# Revised kernel with row-based grid and inner col_blk loop
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    B, H, S, D = query.shape
+    # ... validation ...
+    
+    n_row_tiles = S // bm
+    
+    # Transpose
+    query_t = jnp.transpose(query, (0, 1, 3, 2))
+    key_t = jnp.transpose(key, (0, 1, 3, 2))
+    value_t = jnp.transpose(value, (0, 1, 3, 2))
+
+    # Kernel with inner loop over col_blk
+    def kernel(
+        q_ref, k_ref, v_ref, row_prefix_ref, col_prefix_ref, o_ref,
+        row_sum_acc_ref, out_acc_ref
+    ):
+        row_blk = pl.program_id(2)
+        
+        # Initialize
+        ...
+        
+        # Load q ONCE
+        q = q_ref[...].astype(jnp.float32)
+        row_prefix = row_prefix_ref[...].astype(jnp.float32)
+        
+        # For k, v, col_prefix - we need to iterate over col_blk
+        # The trick: we load blocks from k_ref which has shape (bh, D, S)
+        # and slice for each col_blk
+        # But k_ref as passed has shape (bh, D, bn) from BlockSpec...
+        
+        # Actually, we CANNOT change the block shape dynamically inside kernel
+        # The BlockSpec determines what data is loaded into the Ref
+        
+        # So the only viable approach with pallas model is:
+        # Keep triangular grid, but recognize that q/row_prefix stay in VMEM
+        # across iterations with same row_blk due to consecutive access pattern
+        
+    # Let\'s implement THIS version - it\'s semantically equivalent but
+    # we note the optimization opportunity for the compiler
+    
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        grid=(B, H // bh, n_row_tiles * (n_row_tiles + 1) // 2),
+        in_specs=[
+            pl.BlockSpec(
+                block_shape=(None, bh, D, bm),
+                index_map=lambda b, hg, tri: (b, hg, 0, _triangular_row_col(tri)[0]),
+            ),
+            ...
+        ],
+        ...
+    )
+```
+
+The issue is fundamental: with `BlockSpec`, each program gets a predetermined slice. To have one program iterate over multiple slices requires either (a) loading all data at once (wasteful) or (b) nested pipeline (complex).
+
+Let me take a different, simpler optimization: **Strategy 12** - Keep tensors in transposed layout end-to-end. Currently the code transposes at start and end. If the producer (caller) already provides transposed data and consumer expects transposed, we save 3 transposes + 1 reshape. But we can\'t change the API.
+
+Let me focus on a different, high-impact optimization: **Strategy 1 + 13 combined** - Use SMEM to cache indices and eliminate triangular computation, plus restructure to avoid redundant loads.
+
+Actually, the simplest effective optimization is to **combine Strategy 13 with proper memory management**: Change to row-based grid and manually load k/v slices using pl.load with dynamic slicing inside the kernel:
+
+```python
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    ...
+    n_row_tiles = S // bm
+    
+    query_t = jnp.transpose(query, (0, 1, 3, 2))
+    key_t = jnp.transpose(key, (0, 1, 3, 2))
+    value_t = jnp.transpose(value, (0, 1, 3, 2))
+
+    def kernel(
+        q_ref,           # (bh, D, bm)
+        k_full_ref,      # (bh, D, S) - full sequence for this head group
+        v_full_ref,      # (bh, D, S)
+        row_prefix_ref,  # (bh, bm)
+        col_prefix_full_ref,  # (bh, S)
+        o_ref,           # (bh, D, bm)
+        row_sum_acc_ref, # scratch: (bh, bm)
+        out_acc_ref,     # scratch: (bh, D, bm)
+    ):
+        row_blk = pl.program_id(2)
+        
+        # Initialize
+        row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+        out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+        
+        # Load q and row_prefix ONCE
+        q = q_ref[...].astype(jnp.float32)
+        row_prefix = row_prefix_ref[...].astype(jnp.float32)
+        
+        # Load full k, v, col_prefix once
+        k_full = k_full_ref[...].astype(jnp.float32)  # (bh, D, S)
+        v_full = v_full_ref[...].astype(jnp.float32)
+        col_prefix_full = col_prefix_full_ref[...].astype(jnp.float32)  # (bh, S)
+        
+        # Iterate over col_blk
+        for col_blk in range(row_blk + 1):
+            col_start = col_blk * bn
+            
+            # Slice k, v, col_prefix for this col_blk
+            k = pl.load(k_full_ref, (slice(None), slice(col_start, col_start + bn))).astype(jnp.float32)
+            v = pl.load(v_full_ref, (slice(None), slice(col_start, col_start + bn))).astype(jnp.float32)
+            col_prefix = pl.load(col_prefix_full_ref, (slice(None), slice(col_start, col_start + bn))).astype(jnp.float32)
+            
+            # Compute...
+            ...
+    
+    # Grid is now (B, H//bh, n_row_tiles) - much simpler!
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        grid=(B, H // bh, n_row_tiles),
+        in_specs=[
+            # q: single block per row
+            pl.BlockSpec(
+                block_shape=(None, bh, D, bm),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+            ),
+            # k: full sequence for this head group - loaded once per row_blk
+            pl.BlockSpec(
+                block_shape=(None, bh, D, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, 0),
+            ),
+            # v: full sequence
+            pl.BlockSpec(
+                block_shape=(None, bh, D, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, 0),
+            ),
+            # row_prefix: single block
+            pl.BlockSpec(
+                block_shape=(None, bh, bm),
+                index_map=lambda b, hg, row_blk: (b, hg, row_blk),
+            ),
+            # col_prefix_full: full sequence
+            pl.BlockSpec(
+                block_shape=(None, bh, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0),
+            ),
+        ],
+        out_specs=pl.BlockSpec(
+            block_shape=(None, bh, D, bm),
+            index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+        ),
+        scratch_shapes=[
+            pltpu.VMEM((bh, bm), jnp.float32),
+            pltpu.VMEM((bh, D, bm), jnp.float32),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.ARBITRARY,
+            ),
+        ),
+    )(query_t, key_t, value_t, log_a_cumsum, log_a_cumsum)
+    
+    output = jnp.transpose(out_t, (0, 1, 3, 2))
+    return output
+```
+
+This is significantly better:
+1. Grid reduced from n_tri_tiles (~2M) to n_row_tiles (~8)
+2. q and row_prefix loaded ONCE per row block
+3. k, v, col_prefix loaded once per row block, then sliced inside kernel
+4. No triangular index computation
+5. Inner loop is simple and compiler-friendly
+
+The tradeoff is we load more data initially (full S instead of bn per tile), but we avoid the massive overhead of the original triangular grid with its repeated loads.
+
+Wait, there\'s still an issue: the inner loop uses `pl.load` for slicing, but this may not be the most efficient. Let me adjust to use array slicing with Refs which is more idiomatic:
+
+Actually, looking at the ref patterns, I should use `ref.at[slice]` for slicing refs. But the block is already loaded into the ref, so I can just use array indexing on the loaded data.
+
+This is the right approach. Let me finalize the code:
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "mamba2_2_7b_ssd",
+    "model": "Mamba-2-2.7B",
+    "operator": "state_space_duality",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 64,
+    "head_dim": 64,
+    "d_state": 128,
+    "d_model": 2560,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value, A_log)."""
+    rng = jax.random.PRNGKey(42)
+    keys = jax.random.split(rng, 5)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    A_log = jax.random.normal(keys[3], (B, H, S), dtype=jnp.float32) * 0.5 - 4.0
+    return query, key_t, value, A_log
+
+
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    """
+    Optimized SSD kernel: each program owns one row_blk and loops over col_blk internally.
+    
+    Key optimizations over triangular grid:
+    1. Grid reduced from n_tri_tiles to n_row_tiles (8x fewer programs)
+    2. Query and row_prefix loaded ONCE per row block, kept resident across col_blk iterations
+    3. k, v, col_prefix loaded once per row block, sliced inside kernel
+    4. No triangular index computation needed
+    5. Simple inner loop without branch misprediction
+    
+    Uses transposed layout (B, H, D, S) for TPU alignment.
+    """
+    B, H, S, D = query.shape
+
+    if H % bh != 0:
+        raise ValueError(f"H={H} must be divisible by bh={bh}.")
+    if S % bm != 0 or S % bn != 0:
+        raise ValueError(f"S={S} must be divisible by bm={bm} and bn={bn}.")
+    if bm != bn:
+        raise ValueError("This SSD kernel requires bm == bn.")
+
+    n_row_tiles = S // bm
+    n_col_tiles = S // bn
+    if n_row_tiles != n_col_tiles:
+        raise ValueError("This SSD kernel requires S//bm == S//bn.")
+
+    # Transpose inputs from (B, H, S, D) to (B, H, D, S) for better alignment
+    query_t = jnp.transpose(query, (0, 1, 3, 2))  # (B, H, D, S)
+    key_t = jnp.transpose(key, (0, 1, 3, 2))      # (B, H, D, S)
+    value_t = jnp.transpose(value, (0, 1, 3, 2))  # (B, H, D, S)
+
+    def kernel(
+        q_ref,               # (bh, D, bm) - query block for this row
+        k_full_ref,          # (bh, D, S) - full key sequence for this head group
+        v_full_ref,          # (bh, D, S) - full value sequence for this head group
+        row_prefix_ref,      # (bh, bm) - prefix sum for this row block
+        col_prefix_full_ref, # (bh, S) - full prefix sum sequence
+        o_ref,               # (bh, D, bm) - output block
+        row_sum_acc_ref,     # scratch: (bh, bm) - row sum accumulator
+        out_acc_ref,         # scratch: (bh, D, bm) - output accumulator
+    ):
+        row_blk = pl.program_id(2)
+        
+        # Initialize accumulators for this row block
+        row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+        out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+
+        # Load query and row_prefix ONCE - they stay constant across all col_blk iterations
+        q = q_ref[...].astype(jnp.float32)  # (bh, D, bm)
+        row_prefix = row_prefix_ref[...].astype(jnp.float32)  # (bh, bm)
+
+        # Load full k, v, col_prefix once per row block
+        k_full = k_full_ref[...].astype(jnp.float32)  # (bh, D, S)
+        v_full = v_full_ref[...].astype(jnp.float32)  # (bh, D, S)
+        col_prefix_full = col_prefix_full_ref[...].astype(jnp.float32)  # (bh, S)
+
+        # Inner loop: iterate over col_blk = 0 to row_blk
+        # For each iteration, slice k, v, col_prefix appropriately
+        for col_blk in range(row_blk + 1):
+            col_start = col_blk * bn
+            
+            # Slice k, v, col_prefix for this column block
+            # Using array indexing on the loaded data (no DMA needed, just register remapping)
+            k = k_full[:, :, col_start:col_start + bn]  # (bh, D, bn)
+            v = v_full[:, :, col_start:col_start + bn]  # (bh, D, bn)
+            col_prefix = col_prefix_full[:, col_start:col_start + bn]  # (bh, bn)
+
+            # Compute score: q^T @ k -> (bh, bm, bn)
+            # Contract over D (axis 1), batch over h (axis 0)
+            score_tile = jax.lax.dot_general(
+                q,
+                k,
+                dimension_numbers=(((1,), (1,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, bm, bn)
+
+            diff = row_prefix[:, :, None] - col_prefix[:, None, :]  # (bh, bm, bn)
+            
+            # Determine if this is diagonal block (requires causal mask)
+            is_diag = (col_blk == row_blk)
+            
+            if is_diag:
+                # Diagonal block: apply causal mask
+                # Create causal mask: rows >= cols within block
+                local_rows = jnp.arange(bm, dtype=jnp.int32)
+                local_cols = jnp.arange(bn, dtype=jnp.int32)
+                # Broadcast to (bm, bn)
+                causal_mask = local_rows[:, None] >= local_cols[None, :]
+                
+                decayed_scores = jnp.where(
+                    causal_mask[None, :, :],
+                    score_tile * jnp.exp(diff),
+                    jnp.zeros_like(score_tile),
+                )
+            else:
+                # Lower triangular block: all (m, n) pairs are valid
+                decayed_scores = score_tile * jnp.exp(diff)
+
+            # Accumulate row sums for normalization
+            partial_row_sum = jnp.sum(decayed_scores, axis=-1)  # (bh, bm)
+            row_sum_acc_ref[...] = row_sum_acc_ref[...] + partial_row_sum
+
+            # Compute partial output and accumulate
+            # partial_out[h, d, m] = sum_n decayed_scores[h, m, n] * v[h, d, n]
+            partial_out = jax.lax.dot_general(
+                v,
+                decayed_scores,
+                dimension_numbers=(((2,), (2,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, D, bm)
+            out_acc_ref[...] = out_acc_ref[...] + partial_out
+
+        # Normalize by row sums and store output
+        row_sum = row_sum_acc_ref[...]
+        # Avoid division by zero
+        safe_sum = jnp.where(jnp.abs(row_sum) < 1e-6, 1.0, row_sum)
+        den = jnp.maximum(jnp.abs(safe_sum), 1.0)  # (bh, bm)
+        # Broadcast den across D dimension: den[:, None, :] for (bh, D, bm)
+        normalized = out_acc_ref[...] / den[:, None, :]
+        o_ref[...] = normalized.astype(query.dtype)
+
+    # Output in transposed layout (B, H, D, S)
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        # Changed from triangular grid (n_row_tiles * (n_row_tiles + 1) // 2)
+        # to row-based grid (n_row_tiles) - ~8x fewer program invocations
+        grid=(B, H // bh, n_row_tiles),
+        in_specs=[
+            # q_ref: (bh, D, bm) - single query block per row_blk
+            # Loaded once, stays resident for all col_blk iterations
+            pl.BlockSpec(
+                block_shape=(None, bh, D, bm),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+            ),
+            # k_full_ref: (bh, D, S) - full key sequence for this head group
+            # Loaded once per row_blk, sliced inside kernel for each col_blk
+            pl.BlockSpec(
+                block_shape=(None, bh, D, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, 0),
+            ),
+            # v_full_ref: (bh, D, S) - full value sequence
+            pl.BlockSpec(
+                block_shape=(None, bh, D, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0, 0),
+            ),
+            # row_prefix_ref: (bh, bm) - prefix sum for this row block
+            pl.BlockSpec(
+                block_shape=(None, bh, bm),
+                index_map=lambda b, hg, row_blk: (b, hg, row_blk),
+            ),
+            # col_prefix_full_ref: (bh, S) - full prefix sum sequence
+            pl.BlockSpec(
+                block_shape=(None, bh, S),
+                index_map=lambda b, hg, row_blk: (b, hg, 0),
+            ),
+        ],
+        out_specs=pl.BlockSpec(
+            block_shape=(None, bh, D, bm),
+            index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+        ),
+        scratch_shapes=[
+            pltpu.VMEM((bh, bm), jnp.float32),
+            pltpu.VMEM((bh, D, bm), jnp.float32),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.ARBITRARY,
+            ),
+        ),
+    )(query_t, key_t, value_t, log_a_cumsum, log_a_cumsum)
+
+    # Transpose output back from (B, H, D, S) to (B, H, S, D)
+    output = jnp.transpose(out_t, (0, 1, 3, 2))
+    return output
+
+
+@jax.jit
+def workload(query, key, value, A_log):
+    """Mamba-2 SSD using optimized row-based kernel."""
+    a = jax.nn.sigmoid(A_log.astype(jnp.float32))
+    log_a = jnp.log(a + 1e-8)
+    log_a_cumsum = jnp.cumsum(log_a, axis=-1)
+
+    output = _ssd_fused_pallas(
+        query,
+        key,
+        value,
+        log_a_cumsum,
+        bh=8,
+        bm=256,
+        bn=256,
+    )
+    return output
+```
+
+This implementation:
+
+1. **Reduces grid size**: From `n_row_tiles * (n_row_tiles + 1) // 2` (~2M for S=2048, bm=256) to `n_row_tiles` (~8). This dramatically reduces pipeline overhead.
+
+2. **Eliminates redundant loads**: Query and row_prefix are loaded ONCE per row block instead of once per triangular tile. Since each row block previously loaded the same query ~row_blk times, this is a ~4x reduction in query HBM traffic for typical row_blk values.
+
+3. **Simplifies indexing**: No need to compute triangular indices; row_blk comes directly from program_id.
+
+4. **Better memory access pattern**: Loading full k/v sequences once and slicing in registers avoids the scattered access pattern of the triangular grid.
+
+The key semantic difference: the original had ~2M program invocations with minimal per-invocation work (just one tile multiply). The new version has ~8 invocations with substantial per-invocation work (looping over col_blk). This moves toward compute-bound operation and away from the memory-bound pipeline overhead regime.''',
+code='''
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "mamba2_2_7b_ssd",
+    "model": "Mamba-2-2.7B",
+    "operator": "state_space_duality",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 64,
+    "head_dim": 64,
+    "d_state": 128,
+    "d_model": 2560,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value, A_log)."""
+    rng = jax.random.PRNGKey(42)
+    keys = jax.random.split(rng, 5)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    A_log = jax.random.normal(keys[3], (B, H, S), dtype=jnp.float32) * 0.5 - 4.0
+    return query, key_t, value, A_log
+
+
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    """
+    Row-owned SSD kernel for TPU v6e.
+
+    Each program owns one output row block and loops over all valid column blocks
+    internally. This keeps q and row_prefix resident while streaming/slicing K/V
+    and prefix data from a head-group-wide VMEM tile.
+
+    Input / output API matches the original function.
+    """
+    B, H, S, D = query.shape
+
+    if H % bh != 0:
+        raise ValueError(f"H={H} must be divisible by bh={bh}.")
+    if S % bm != 0 or S % bn != 0:
+        raise ValueError(f"S={S} must be divisible by bm={bm} and bn={bn}.")
+    if bm != bn:
+        raise ValueError("This SSD kernel requires bm == bn.")
+    if (S // bm) != (S // bn):
+        raise ValueError("This SSD kernel requires S//bm == S//bn.")
+
+    n_row_tiles = S // bm
+    n_col_tiles = S // bn
+
+    # TPU-friendly layout: (B, H, D, S)
+    query_t = jnp.transpose(query, (0, 1, 3, 2))
+    key_t = jnp.transpose(key, (0, 1, 3, 2))
+    value_t = jnp.transpose(value, (0, 1, 3, 2))
+
+    q_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, bm),
+        index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+    # Load full sequence for K/V once per head-group slice; row_blk is ignored in index_map.
+    # With sequential row_blk traversal, repeated identical slices can stay resident.
+    kv_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg, row_blk: (b, hg, 0, 0),
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+    row_prefix_spec = pl.BlockSpec(
+        block_shape=(None, bh, bm),
+        index_map=lambda b, hg, row_blk: (b, hg, row_blk),
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+    col_prefix_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, S),
+        index_map=lambda b, hg, row_blk: (b, hg, 0),
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+    out_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, bm),
+        index_map=lambda b, hg, row_blk: (b, hg, 0, row_blk),
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+
+    def kernel(
+        q_ref,               # (bh, D, bm)
+        k_full_ref,          # (bh, D, S)
+        v_full_ref,          # (bh, D, S)
+        row_prefix_ref,      # (bh, bm)
+        col_prefix_full_ref, # (bh, S)
+        o_ref,               # (bh, D, bm)
+        row_sum_acc_ref,     # scratch: (bh, bm) f32
+        out_acc_ref,         # scratch: (bh, D, bm) f32
+    ):
+        row_blk = pl.program_id(2)
+
+        row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+        out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+
+        # Load once per owned row block.
+        q = q_ref[...].astype(jnp.float32)                 # (bh, D, bm)
+        row_prefix = row_prefix_ref[...].astype(jnp.float32)  # (bh, bm)
+
+        local_rows = jnp.arange(bm, dtype=jnp.int32)
+        local_cols = jnp.arange(bn, dtype=jnp.int32)
+        causal_mask = local_rows[:, None] >= local_cols[None, :]  # (bm, bn)
+
+        # Small static trip count; TPU will unroll this.
+        for col_blk in range(n_col_tiles):
+
+            @pl.when(row_blk >= col_blk)
+            def _do_col():
+                col_start = col_blk * bn
+                col_stop = col_start + bn
+
+                # Slice from VMEM-resident full-sequence refs.
+                k = k_full_ref[:, :, col_start:col_stop].astype(jnp.float32)          # (bh, D, bn)
+                v = v_full_ref[:, :, col_start:col_stop].astype(jnp.float32)          # (bh, D, bn)
+                col_prefix = col_prefix_full_ref[:, col_start:col_stop].astype(jnp.float32)  # (bh, bn)
+
+                # score[h, m, n] = sum_d q[h, d, m] * k[h, d, n]
+                score_tile = jax.lax.dot_general(
+                    q,
+                    k,
+                    dimension_numbers=(((1,), (1,)), ((0,), (0,))),
+                    preferred_element_type=jnp.float32,
+                )  # (bh, bm, bn)
+
+                diff = row_prefix[:, :, None] - col_prefix[:, None, :]  # (bh, bm, bn)
+                base_scores = score_tile * jnp.exp(diff)
+
+                is_diag = row_blk == jnp.asarray(col_blk, dtype=jnp.int32)
+                decayed_scores = jnp.where(
+                    is_diag,
+                    jnp.where(causal_mask[None, :, :], base_scores, jnp.zeros_like(base_scores)),
+                    base_scores,
+                )
+
+                partial_row_sum = jnp.sum(decayed_scores, axis=-1)  # (bh, bm)
+                row_sum_acc_ref[...] = row_sum_acc_ref[...] + partial_row_sum
+
+                # partial_out[h, d, m] = sum_n v[h, d, n] * decayed_scores[h, m, n]
+                partial_out = jax.lax.dot_general(
+                    v,
+                    decayed_scores,
+                    dimension_numbers=(((2,), (2,)), ((0,), (0,))),
+                    preferred_element_type=jnp.float32,
+                )  # (bh, D, bm)
+                out_acc_ref[...] = out_acc_ref[...] + partial_out
+
+        row_sum = row_sum_acc_ref[...]
+        safe_sum = jnp.where(jnp.abs(row_sum) < 1e-6, 1.0, row_sum)
+        den = jnp.maximum(jnp.abs(safe_sum), 1.0)  # (bh, bm)
+
+        normalized = out_acc_ref[...] / den[:, None, :]
+        o_ref[...] = normalized.astype(query.dtype)
+
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        grid=(B, H // bh, n_row_tiles),
+        in_specs=[
+            q_spec,
+            kv_full_spec,
+            kv_full_spec,
+            row_prefix_spec,
+            col_prefix_full_spec,
+        ],
+        out_specs=out_spec,
+        scratch_shapes=[
+            pltpu.VMEM((bh, bm), jnp.float32),
+            pltpu.VMEM((bh, D, bm), jnp.float32),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.ARBITRARY,
+            ),
+        ),
+    )(query_t, key_t, value_t, log_a_cumsum, log_a_cumsum)
+
+    return jnp.transpose(out_t, (0, 1, 3, 2))
+
+
+@jax.jit
+def workload(query, key, value, A_log):
+    """Mamba-2 SSD using a row-owned fused TPU Pallas kernel."""
+    a = jax.nn.sigmoid(A_log.astype(jnp.float32))
+    log_a = jnp.log(a + 1e-8)
+    log_a_cumsum = jnp.cumsum(log_a, axis=-1)
+
+    output = _ssd_fused_pallas(
+        query,
+        key,
+        value,
+        log_a_cumsum,
+        bh=8,
+        bm=256,
+        bn=256,
+    )
+    return output
+''',
+score=0.558,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='minimax.minimax-m2.5',
+code_gen_model='gpt-5.4',
+stdout='Latency: 0.558 ms\n{"correct": true, "latency": 0.558, "error": "", "all_times_ms": [0.551, 0.551, 0.553, 0.553, 0.553, 0.553, 0.554, 0.554, 0.554, 0.554, 0.554, 0.554, 0.554, 0.554, 0.555, 0.555, 0.555, 0.555, 0.555, 0.555, 0.555, 0.555, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.557, 0.558, 0.558, 0.558, 0.558, 0.558, 0.558, 0.558, 0.558, 0.558, 0.558, 0.559, 0.559, 0.559, 0.559, 0.559, 0.559, 0.559, 0.56, 0.56, 0.56, 0.56, 0.56, 0.56, 0.56, 0.56, 0.56, 0.561, 0.561, 0.561, 0.561, 0.561, 0.561, 0.561, 0.561, 0.562, 0.564, 0.565, 0.565, 0.565, 0.565, 0.565, 0.565, 0.567, 0.567, 0.57, 0.571, 0.576, 0.576, 0.579, 0.594], "max_diff": 0.03125, "max_rel_diff": 0.003998}',
+stderr=''),
+plan='''## Analysis of Current Code
+
+Looking at the current implementation, I can identify several key characteristics:
+
+1. **Grid structure**: `(B, H // bh, n_row_tiles)` where each program owns one row block
+2. **Memory access pattern**: K/V/prefix are loaded with full-sequence BlockSpecs `(bh, D, S)` per head-group
+3. **Inner loop**: Iterates over `col_blk` from 0 to `n_col_tiles`
+
+The current design relies on the Pallas runtime to recognize that consecutive `row_blk` programs access the same K/V/prefix data and keep it resident. However, this cross-program reuse is not guaranteed and depends on scheduler behavior.
+
+## Selected Strategy: Strategy 8
+
+**"Change ownership from \'one program per row tile\' to \'one program per (batch, head-group)\' and loop over row tiles inside that program, so full-sequence K/V/prefix data stays live in VMEM across all rows instead of depending on cross-program reuse."**
+
+## Plan
+
+### Rationale
+The current code has `n_row_tiles` (2048/256 = 8) programs per (batch, head-group) pair. Each program loads the full K/V/prefix data for its head-group. While the BlockSpec uses `buffer_count=1` and the index_map ignores `row_blk`, the actual reuse depends on the runtime scheduler keeping data resident across consecutive grid invocations.
+
+By restructuring to have **one program per (batch, head-group)** that loops over all row tiles internally, we guarantee that:
+1. K/V/prefix data is loaded once and stays in VMEM for all row iterations
+2. Query blocks and output blocks are streamed in/out per row iteration
+3. No dependence on cross-program memory reuse heuristics
+
+### Implementation Changes
+
+1. **Change grid from `(B, H//bh, n_row_tiles)` to `(B, H//bh)`** - remove the row_blk dimension from grid
+
+2. **Modify BlockSpecs**:
+   - Q and output: Load/store entire sequence `(bh, D, S)` once, slice internally per row
+   - K/V/prefix: Keep as full-sequence loads `(bh, D, S)` and `(bh, S)`
+   - Row prefix: Load entire `(bh, S)` instead of `(bh, bm)` per row block
+
+3. **Add outer loop over row tiles inside kernel**:
+   - Loop `for row_blk in range(n_row_tiles):` 
+   - Slice Q from `q_full_ref[:, :, row_blk*bm:(row_blk+1)*bm]`
+   - Slice row_prefix from `row_prefix_full_ref[:, row_blk*bm:(row_blk+1)*bm]`
+   - Write output to `o_full_ref[:, :, row_blk*bm:(row_blk+1)*bm]`
+
+4. **Adjust scratch shapes**:
+   - Keep `row_sum_acc_ref` as `(bh, bm)` - reset per row iteration
+   - Keep `out_acc_ref` as `(bh, D, bm)` - reset per row iteration
+
+5. **Update dimension_semantics**:
+   - Change to `("parallel", "parallel")` for the two remaining grid dimensions
+
+### Memory Budget Verification
+For `bh=8, D=64, S=2048, bm=bn=256`:
+- Q full: `(8, 64, 2048) * 2B = 2MB` bf16
+- K full: `(8, 64, 2048) * 2B = 2MB` bf16  
+- V full: `(8, 64, 2048) * 2B = 2MB` bf16
+- Output full: `(8, 64, 2048) * 2B = 2MB` bf16
+- Row prefix full: `(8, 2048) * 4B = 64KB` f32
+- Col prefix full: `(8, 2048) * 4B = 64KB` f32
+- Scratch row_sum: `(8, 256) * 4B = 8KB` f32
+- Scratch out_acc: `(8, 64, 256) * 4B = 512KB` f32
+
+Total: ~8.6MB, well within 16MB VMEM limit.
+
+### Benefits
+- Eliminates uncertainty about cross-program K/V reuse
+- Reduces HBM bandwidth by guaranteeing single load of K/V per (batch, head-group)
+- Simpler memory access pattern for the compiler to optimize
+- Row iterations within a single program are guaranteed sequential''',
+code='''
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "mamba2_2_7b_ssd",
+    "model": "Mamba-2-2.7B",
+    "operator": "state_space_duality",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 64,
+    "head_dim": 64,
+    "d_state": 128,
+    "d_model": 2560,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value, A_log)."""
+    rng = jax.random.PRNGKey(42)
+    keys = jax.random.split(rng, 5)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    A_log = jax.random.normal(keys[3], (B, H, S), dtype=jnp.float32) * 0.5 - 4.0
+    return query, key_t, value, A_log
+
+
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    """
+    Row-owned SSD kernel for TPU v6e.
+
+    Restructured so that each program owns one (batch, head-group) and loops
+    over all row tiles internally. This guarantees K/V/prefix data stays
+    resident in VMEM across all row iterations without depending on
+    cross-program reuse heuristics.
+    """
+    B, H, S, D = query.shape
+
+    if H % bh != 0:
+        raise ValueError(f"H={H} must be divisible by bh={bh}.")
+    if S % bm != 0 or S % bn != 0:
+        raise ValueError(f"S={S} must be divisible by bm={bm} and bn={bn}.")
+    if bm != bn:
+        raise ValueError("This SSD kernel requires bm == bn.")
+
+    n_row_tiles = S // bm
+    n_col_tiles = S // bn
+
+    # TPU-friendly layout: (B, H, D, S)
+    query_t = jnp.transpose(query, (0, 1, 3, 2))
+    key_t = jnp.transpose(key, (0, 1, 3, 2))
+    value_t = jnp.transpose(value, (0, 1, 3, 2))
+
+    # Each program loads full sequence data for its (batch, head-group)
+    # Grid is now (B, H // bh) - one program per (batch, head-group)
+    q_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    k_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    v_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    prefix_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, S),
+        index_map=lambda b, hg: (b, hg, 0),
+    )
+    out_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+
+    def kernel(
+        q_full_ref,          # (bh, D, S)
+        k_full_ref,          # (bh, D, S)
+        v_full_ref,          # (bh, D, S)
+        prefix_full_ref,     # (bh, S)
+        o_full_ref,          # (bh, D, S)
+        row_sum_acc_ref,     # scratch: (bh, bm) f32
+        out_acc_ref,         # scratch: (bh, D, bm) f32
+    ):
+        # Precompute causal mask for diagonal blocks
+        local_rows = jnp.arange(bm, dtype=jnp.int32)
+        local_cols = jnp.arange(bn, dtype=jnp.int32)
+        causal_mask = local_rows[:, None] >= local_cols[None, :]  # (bm, bn)
+
+        # Loop over row tiles - this keeps K/V/prefix resident in VMEM
+        for row_blk in range(n_row_tiles):
+            row_start = row_blk * bm
+            row_stop = row_start + bm
+
+            # Reset accumulators for this row tile
+            row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+            out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+
+            # Load Q for this row block
+            q = q_full_ref[:, :, row_start:row_stop].astype(jnp.float32)  # (bh, D, bm)
+            row_prefix = prefix_full_ref[:, row_start:row_stop].astype(jnp.float32)  # (bh, bm)
+
+            # Loop over column tiles
+            for col_blk in range(n_col_tiles):
+                # Only process lower triangular blocks (causal)
+                @pl.when(row_blk >= col_blk)
+                def _do_col():
+                    col_start = col_blk * bn
+                    col_stop = col_start + bn
+
+                    # Slice K/V/prefix from VMEM-resident full-sequence refs
+                    k = k_full_ref[:, :, col_start:col_stop].astype(jnp.float32)  # (bh, D, bn)
+                    v = v_full_ref[:, :, col_start:col_stop].astype(jnp.float32)  # (bh, D, bn)
+                    col_prefix = prefix_full_ref[:, col_start:col_stop].astype(jnp.float32)  # (bh, bn)
+
+                    # score[h, m, n] = sum_d q[h, d, m] * k[h, d, n]
+                    score_tile = jax.lax.dot_general(
+                        q,
+                        k,
+                        dimension_numbers=(((1,), (1,)), ((0,), (0,))),
+                        preferred_element_type=jnp.float32,
+                    )  # (bh, bm, bn)
+
+                    # Compute decay: exp(row_prefix - col_prefix)
+                    diff = row_prefix[:, :, None] - col_prefix[:, None, :]  # (bh, bm, bn)
+                    base_scores = score_tile * jnp.exp(diff)
+
+                    # Apply causal mask for diagonal blocks
+                    is_diag = row_blk == col_blk
+                    decayed_scores = jnp.where(
+                        is_diag,
+                        jnp.where(causal_mask[None, :, :], base_scores, jnp.zeros_like(base_scores)),
+                        base_scores,
+                    )
+
+                    # Accumulate row sum
+                    partial_row_sum = jnp.sum(decayed_scores, axis=-1)  # (bh, bm)
+                    row_sum_acc_ref[...] = row_sum_acc_ref[...] + partial_row_sum
+
+                    # partial_out[h, d, m] = sum_n v[h, d, n] * decayed_scores[h, m, n]
+                    partial_out = jax.lax.dot_general(
+                        v,
+                        decayed_scores,
+                        dimension_numbers=(((2,), (2,)), ((0,), (0,))),
+                        preferred_element_type=jnp.float32,
+                    )  # (bh, D, bm)
+                    out_acc_ref[...] = out_acc_ref[...] + partial_out
+
+            # Normalize and write output for this row tile
+            row_sum = row_sum_acc_ref[...]
+            safe_sum = jnp.where(jnp.abs(row_sum) < 1e-6, 1.0, row_sum)
+            den = jnp.maximum(jnp.abs(safe_sum), 1.0)  # (bh, bm)
+
+            normalized = out_acc_ref[...] / den[:, None, :]
+            o_full_ref[:, :, row_start:row_stop] = normalized.astype(query.dtype)
+
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), query.dtype),
+        grid=(B, H // bh),
+        in_specs=[
+            q_full_spec,
+            k_full_spec,
+            v_full_spec,
+            prefix_full_spec,
+        ],
+        out_specs=out_full_spec,
+        scratch_shapes=[
+            pltpu.VMEM((bh, bm), jnp.float32),
+            pltpu.VMEM((bh, D, bm), jnp.float32),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.PARALLEL,
+            ),
+        ),
+    )(query_t, key_t, value_t, log_a_cumsum)
+
+    return jnp.transpose(out_t, (0, 1, 3, 2))
+
+
+@jax.jit
+def workload(query, key, value, A_log):
+    """Mamba-2 SSD using a row-owned fused TPU Pallas kernel."""
+    a = jax.nn.sigmoid(A_log.astype(jnp.float32))
+    log_a = jnp.log(a + 1e-8)
+    log_a_cumsum = jnp.cumsum(log_a, axis=-1)
+
+    output = _ssd_fused_pallas(
+        query,
+        key,
+        value,
+        log_a_cumsum,
+        bh=8,
+        bm=256,
+        bn=256,
+    )
+    return output
+''',
+score=0.379,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout='Latency: 0.379 ms\n{"correct": true, "latency": 0.379, "error": "", "all_times_ms": [0.373, 0.373, 0.374, 0.374, 0.374, 0.374, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.375, 0.376, 0.376, 0.376, 0.376, 0.376, 0.376, 0.376, 0.376, 0.376, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.377, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.378, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.379, 0.38, 0.38, 0.38, 0.38, 0.38, 0.38, 0.38, 0.38, 0.381, 0.381, 0.381, 0.381, 0.381, 0.381, 0.381, 0.382, 0.382, 0.382, 0.383, 0.383, 0.383, 0.383, 0.383, 0.384, 0.384, 0.384, 0.384, 0.385, 0.385, 0.386, 0.387, 0.388, 0.389, 0.391, 0.392, 0.393, 0.397, 0.405, 0.406], "max_diff": 0.03125, "max_rel_diff": 0.003998}',
+stderr=''),
+plan='''## Analysis of Inefficiencies
+
+Looking at the code, I can identify several performance bottlenecks:
+
+1. **Strategy 10 (Split diagonal from off-diagonal tiles)** is highly relevant here. The current code uses `pl.when(row_blk >= col_blk)` and then inside that, applies a conditional causal mask: `jnp.where(is_diag, jnp.where(causal_mask[None, :, :], base_scores, jnp.zeros_like(base_scores)), base_scores)`. This means:
+   - Every off-diagonal (strictly lower triangular) tile still evaluates the `is_diag` condition and the nested `jnp.where`
+   - The causal mask computation and application happens even when it\'s not needed for off-diagonal blocks
+   - This adds unnecessary branching and computation overhead
+
+2. The kernel structure already has good properties (row-owned design, VMEM scratch for f32 accumulation), but the mixed handling of diagonal vs off-diagonal tiles is inefficient.
+
+## Plan: Apply Strategy 10 - Split Diagonal from Off-Diagonal Tiles
+
+### What to Change
+
+I will restructure the inner column loop to explicitly separate the processing of:
+1. **Strictly-lower triangular blocks** (`col_blk < row_blk`): These need no causal masking - all elements are valid
+2. **Diagonal blocks** (`col_blk == row_blk`): These need the causal mask applied
+
+### Specific Changes
+
+1. **Replace the single column loop** that uses `pl.when(row_blk >= col_blk)` with conditional `jnp.where` inside, with **two separate processing paths**:
+
+2. **First path - Off-diagonal blocks** (`col_blk` from 0 to `row_blk - 1`):
+   - Remove the `is_diag` check and the `jnp.where(causal_mask...)` entirely
+   - Compute `base_scores = score_tile * jnp.exp(diff)` directly without any masking
+   - This eliminates the conditional overhead for the majority of blocks in lower rows
+
+3. **Second path - Diagonal block** (only when `col_blk == row_blk`):
+   - Apply the causal mask directly: `decayed_scores = jnp.where(causal_mask[None, :, :], base_scores, jnp.zeros_like(base_scores))`
+   - No need for the `is_diag` check since we know this is the diagonal
+
+4. **Implementation approach**:
+   - Use a Python `for` loop (which gets unrolled) for off-diagonal blocks from `0` to `row_blk`
+   - Since `row_blk` is a runtime value in the outer Python loop over `n_row_tiles`, we can structure this as:
+     - Process off-diagonal blocks: `for col_blk in range(row_blk):` - no masking needed
+     - Process diagonal block separately: `col_blk = row_blk` - apply causal mask
+
+### Benefits
+
+1. **Off-diagonal blocks** (which are the majority for lower rows) completely skip:
+   - The `is_diag` comparison
+   - The outer `jnp.where` evaluation
+   - The causal mask lookup/application
+   
+2. **Diagonal blocks** have cleaner code with direct mask application
+
+3. This optimization is especially impactful because:
+   - For a sequence with `n_row_tiles` row tiles, there are `n_row_tiles * (n_row_tiles + 1) / 2` total blocks processed
+   - Only `n_row_tiles` of these are diagonal blocks
+   - For `n_row_tiles = 8` (with S=2048, bm=256), that\'s 36 total blocks but only 8 are diagonal
+   - ~78% of blocks benefit from the simplified off-diagonal path''',
+code='''
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "mamba2_2_7b_ssd",
+    "model": "Mamba-2-2.7B",
+    "operator": "state_space_duality",
+    "batch": 1,
+    "seq_len": 2048,
+    "num_heads": 64,
+    "head_dim": 64,
+    "d_state": 128,
+    "d_model": 2560,
+}
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (query, key, value, A_log)."""
+    rng = jax.random.PRNGKey(42)
+    keys = jax.random.split(rng, 5)
+    B, S = CONFIG["batch"], CONFIG["seq_len"]
+    H, D = CONFIG["num_heads"], CONFIG["head_dim"]
+
+    query = jax.random.normal(keys[0], (B, H, S, D), dtype=dtype)
+    key_t = jax.random.normal(keys[1], (B, H, S, D), dtype=dtype)
+    value = jax.random.normal(keys[2], (B, H, S, D), dtype=dtype)
+    A_log = jax.random.normal(keys[3], (B, H, S), dtype=jnp.float32) * 0.5 - 4.0
+    return query, key_t, value, A_log
+
+
+def _ssd_fused_pallas(query, key, value, log_a_cumsum, *, bh=8, bm=256, bn=256):
+    """
+    Row-owned SSD kernel for TPU v6e.
+
+    This version explicitly splits strictly-lower-triangular tiles from diagonal
+    tiles. Off-diagonal tiles avoid the causal-mask path entirely, while the
+    diagonal tile applies the mask directly.
+    """
+    B, H, S, D = query.shape
+    out_dtype = query.dtype
+
+    if H % bh != 0:
+        raise ValueError(f"H={H} must be divisible by bh={bh}.")
+    if S % bm != 0 or S % bn != 0:
+        raise ValueError(f"S={S} must be divisible by bm={bm} and bn={bn}.")
+    if bm != bn:
+        raise ValueError("This SSD kernel requires bm == bn.")
+
+    n_row_tiles = S // bm
+    n_col_tiles = S // bn
+    if n_row_tiles != n_col_tiles:
+        raise ValueError("This SSD kernel assumes bm == bn, so row/col tile counts must match.")
+
+    # TPU-friendly layout: (B, H, D, S)
+    query_t = jnp.transpose(query, (0, 1, 3, 2))
+    key_t = jnp.transpose(key, (0, 1, 3, 2))
+    value_t = jnp.transpose(value, (0, 1, 3, 2))
+
+    q_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    k_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    v_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+    prefix_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, S),
+        index_map=lambda b, hg: (b, hg, 0),
+    )
+    out_full_spec = pl.BlockSpec(
+        block_shape=(None, bh, D, S),
+        index_map=lambda b, hg: (b, hg, 0, 0),
+    )
+
+    def kernel(
+        q_full_ref,       # (bh, D, S)
+        k_full_ref,       # (bh, D, S)
+        v_full_ref,       # (bh, D, S)
+        prefix_full_ref,  # (bh, S)
+        o_full_ref,       # (bh, D, S)
+        row_sum_acc_ref,  # scratch: (bh, bm) f32
+        out_acc_ref,      # scratch: (bh, D, bm) f32
+    ):
+        local_rows = jnp.arange(bm, dtype=jnp.int32)
+        local_cols = jnp.arange(bn, dtype=jnp.int32)
+        causal_mask = local_rows[:, None] >= local_cols[None, :]  # (bm, bn)
+
+        def accumulate_block(q_block, row_prefix, col_blk, apply_causal_mask):
+            col_start = col_blk * bn
+            col_stop = col_start + bn
+
+            k_block = k_full_ref[:, :, col_start:col_stop].astype(jnp.float32)      # (bh, D, bn)
+            v_block = v_full_ref[:, :, col_start:col_stop].astype(jnp.float32)      # (bh, D, bn)
+            col_prefix = prefix_full_ref[:, col_start:col_stop].astype(jnp.float32) # (bh, bn)
+
+            score_tile = jax.lax.dot_general(
+                q_block,
+                k_block,
+                dimension_numbers=(((1,), (1,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, bm, bn)
+
+            diff = row_prefix[:, :, None] - col_prefix[:, None, :]  # (bh, bm, bn)
+            base_scores = score_tile * jnp.exp(diff)
+
+            if apply_causal_mask:
+                decayed_scores = jnp.where(
+                    causal_mask[None, :, :],
+                    base_scores,
+                    jnp.zeros_like(base_scores),
+                )
+            else:
+                decayed_scores = base_scores
+
+            partial_row_sum = jnp.sum(decayed_scores, axis=-1)  # (bh, bm)
+            row_sum_acc_ref[...] = row_sum_acc_ref[...] + partial_row_sum
+
+            partial_out = jax.lax.dot_general(
+                v_block,
+                decayed_scores,
+                dimension_numbers=(((2,), (2,)), ((0,), (0,))),
+                preferred_element_type=jnp.float32,
+            )  # (bh, D, bm)
+            out_acc_ref[...] = out_acc_ref[...] + partial_out
+
+        for row_blk in range(n_row_tiles):
+            row_start = row_blk * bm
+            row_stop = row_start + bm
+
+            row_sum_acc_ref[...] = jnp.zeros(row_sum_acc_ref.shape, jnp.float32)
+            out_acc_ref[...] = jnp.zeros(out_acc_ref.shape, jnp.float32)
+
+            q_block = q_full_ref[:, :, row_start:row_stop].astype(jnp.float32)      # (bh, D, bm)
+            row_prefix = prefix_full_ref[:, row_start:row_stop].astype(jnp.float32) # (bh, bm)
+
+            # Strictly lower-triangular blocks: no causal mask needed.
+            for col_blk in range(row_blk):
+                accumulate_block(q_block, row_prefix, col_blk, False)
+
+            # Diagonal block: causal mask required.
+            accumulate_block(q_block, row_prefix, row_blk, True)
+
+            row_sum = row_sum_acc_ref[...]
+            safe_sum = jnp.where(jnp.abs(row_sum) < 1e-6, 1.0, row_sum)
+            den = jnp.maximum(jnp.abs(safe_sum), 1.0)  # (bh, bm)
+
+            normalized = out_acc_ref[...] / den[:, None, :]
+            o_full_ref[:, :, row_start:row_stop] = normalized.astype(out_dtype)
+
+    out_t = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((B, H, D, S), out_dtype),
+        grid=(B, H // bh),
+        in_specs=[
+            q_full_spec,
+            k_full_spec,
+            v_full_spec,
+            prefix_full_spec,
+        ],
+        out_specs=out_full_spec,
+        scratch_shapes=[
+            pltpu.VMEM((bh, bm), jnp.float32),
+            pltpu.VMEM((bh, D, bm), jnp.float32),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=(
+                pltpu.GridDimensionSemantics.PARALLEL,
+                pltpu.GridDimensionSemantics.PARALLEL,
+            ),
+        ),
+    )(query_t, key_t, value_t, log_a_cumsum)
+
+    return jnp.transpose(out_t, (0, 1, 3, 2))
+
+
+@jax.jit
+def workload(query, key, value, A_log):
+    """Mamba-2 SSD using a row-owned fused TPU Pallas kernel."""
+    a = jax.nn.sigmoid(A_log.astype(jnp.float32))
+    log_a = jnp.log(a + 1e-8)
+    log_a_cumsum = jnp.cumsum(log_a, axis=-1)
+
+    output = _ssd_fused_pallas(
+        query,
+        key,
+        value,
+        log_a_cumsum,
+        bh=8,
+        bm=256,
+        bn=256,
+    )
+    return output
+''',
+score=0.363,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='gpt-5.4',
+stdout='Latency: 0.363 ms\n{"correct": true, "latency": 0.363, "error": "", "all_times_ms": [0.356, 0.356, 0.357, 0.357, 0.357, 0.357, 0.357, 0.357, 0.357, 0.357, 0.358, 0.358, 0.358, 0.359, 0.359, 0.359, 0.359, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.361, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.362, 0.363, 0.363, 0.363, 0.363, 0.363, 0.363, 0.363, 0.363, 0.364, 0.364, 0.364, 0.364, 0.364, 0.364, 0.364, 0.364, 0.364, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.365, 0.366, 0.366, 0.366, 0.366, 0.366, 0.366, 0.366, 0.367, 0.367, 0.367, 0.368, 0.368, 0.368, 0.369, 0.369, 0.369, 0.37, 0.371, 0.372, 0.373, 0.374, 0.38, 0.393, 0.393], "max_diff": 0.03125, "max_rel_diff": 0.003998}',
 stderr='')
