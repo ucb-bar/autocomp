@@ -814,7 +814,7 @@ def main():
     search_strategy = "beam"
     iterations = 5
     prob_type = "jaxbench-priority" # see README.md or sols directory for available problems
-    prob_id = "sparse_moe"
+    prob_id = "mamba2_ssd"
 
     # Reimplement failed implementations
     # Only works for agents for which it is implemented (trn, built agents)
