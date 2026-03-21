@@ -269,6 +269,7 @@ class LLMAgent:
             num_samples=samples_per_prompt,
             temperature=temperature
         )
+        logger.info("%s: finished generating %d plans for %d candidates.", self.llm_client.model, len(prompts_lst) * samples_per_prompt, len(candidate_lst))
         # Need to sort the responses back into a flattened list for each parent candidate
         full_responses = [[] for _ in range(len(candidate_lst))]
         for r_i, per_prompt_responses in enumerate(extended_responses):
@@ -356,6 +357,7 @@ class LLMAgent:
             temperature=temperature,
             reasoning_effort="medium"
         )
+        logger.info("%s: finished generating %d code implementations for %d candidates.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):
@@ -481,6 +483,7 @@ class LLMAgent:
             num_samples=num_samples,
             temperature=1,
         )
+        logger.info("%s: finished generated %d reimplemented code implementations for %d failed candidates.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):

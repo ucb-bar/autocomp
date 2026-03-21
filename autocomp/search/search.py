@@ -808,7 +808,7 @@ def main():
     search_strategy = "beam"
     iterations = 3
     prob_type = "trn-tutorial" # see README.md or sols directory for available problems
-    prob_id = 1
+    prob_id = 2
 
     # Reimplement failed implementations
     # Only works for agents for which it is implemented (trn, built agents)

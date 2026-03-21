@@ -721,6 +721,8 @@ JSON array:"""
             "hoist redundant operations out of loops",
             "eliminate redundant computation",
             "simplify or remove unnecessary code",
+            "try new parameter values",
+            "rewrite the algorithm to reduce total work",
         ]
 
         if not items:
