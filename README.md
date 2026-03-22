@@ -42,7 +42,7 @@ Autocomp can currently optimize code for the following hardware targets:
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
 - CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
 
-> **Note:** Built agents are the recommended path for most hardware targets (e.g., `built:trn-nki1` for Trainium, `built:tpu-v6e` for TPU). These are created by the Agent Builder and stored in `autocomp/agent_builder/.built/` by default. Set `agent_name = "built:<name>"` in `search.py` to use them. Legacy handcrafted agents in `autocomp/agents/` are still available for some targets.
+> **Note:** Built agents are the recommended path for new hardware targets (e.g., `built:trn-nki1` for Trainium, `built:tpu-v6e` for TPU). These are created by the Agent Builder and stored in `autocomp/agent_builder/.built/` by default. Set `agent_name = "built:<name>"` in `search.py` to use them. Legacy handcrafted agents in `autocomp/agents/` are still available for some targets.
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
