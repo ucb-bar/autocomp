@@ -165,3 +165,10 @@ cython_debug/
 #.idea/
 
 .sources/
+
+# Runtime artifacts
+output/
+wandb/
+config/
+tmp*/
+temp*/

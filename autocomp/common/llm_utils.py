@@ -715,6 +715,8 @@ class LLMClient():
                 api_key=openai_api_key,
                 base_url=openai_api_base,
             )
+        elif self.provider == "dummy":
+            pass
         else:
             raise ValueError(f"Invalid provider: {self.provider} for model: {self.model}")
 
@@ -789,6 +791,8 @@ class LLMClient():
             return results
     
     def chat_async(self, prompts_lst: list[str], num_samples=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
+        if self.provider == "dummy":
+            return [["dummy response"] * num_samples for _ in prompts_lst]
         if self.provider == "aws-bedrock":
             # Generic Bedrock models use boto3 Converse API (synchronous),
             # wrapped with asyncio.to_thread for concurrency.
@@ -830,6 +834,8 @@ class LLMClient():
             return responses
 
     def chat(self, prompt: str, num_samples=10, temperature=None):
+        if self.provider == "dummy":
+            return ["dummy response"] * num_samples
         responses = []
         if isinstance(self.client, Together):
             # Together uses chat completions API with messages format
