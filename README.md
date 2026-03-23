@@ -36,13 +36,13 @@ Autocomp decomposes the optimization problem into a beam search, where each iter
 ## Hardware Target Setup
 
 Autocomp can currently optimize code for the following hardware targets:
-- AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md))
+- AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) — uses a [built agent](autocomp/agent_builder/README.md) (`built:trn-nki1`)
 - Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) — uses a [built agent](autocomp/agent_builder/README.md) (`built:tpu-v6e`)
 - Gemmini ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md))
 - CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
 - CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
 
-> **Note:** Not all hardware targets have a handcrafted agent in `autocomp/agents/`. Some targets (like TPU) use agents created by the Agent Builder, stored in `autocomp/agent_builder/.built/`. These work the same way — just set `agent_name = "built:<name>"` in `search.py`.
+> **Note:** Built agents are the recommended path for new hardware targets (e.g., `built:trn-nki1` for Trainium, `built:tpu-v6e` for TPU). These are created by the Agent Builder and stored in `autocomp/agent_builder/.built/` by default. Set `agent_name = "built:<name>"` in `search.py` to use them. Legacy handcrafted agents in `autocomp/agents/` are still available for some targets.
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
@@ -159,7 +159,7 @@ By default the `us-west-2` region is used. Set the `AWS_REGION` environment vari
 
 Notable parameters:
 - `backend_name`: The hardware target to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
-- `agent_name`: The LLM agent type to use. For new hardware targets, use a built agent: `"built:<name>"` (e.g., `"built:tpu-v6e"` for TPU). See the [Agent Builder docs](autocomp/agent_builder/README.md). Handcrafted agents are also available for existing targets (`trn`, `gemmini`, `cuda`).
+- `agent_name`: The LLM agent type to use. For most targets, use a built agent: `"built:<name>"` (e.g., `"built:trn-nki1"` for Trainium, `"built:tpu-v6e"` for TPU). See the [Agent Builder docs](autocomp/agent_builder/README.md). Legacy handcrafted agents are also available for some targets (`trn`, `gemmini`, `cuda`).
 - `hw_config`: A hardware configuration object describing the target hardware. Examples:
   - `TrnHardwareConfig("trn1.2xlarge")`
   - `TpuHardwareConfig("v6e-1")`
