@@ -227,6 +227,22 @@ Notable parameters:
 }
 ```
 
+## Development
+
+Install dev dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Run tests:
+
+```bash
+WANDB_MODE=disabled pytest
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
+
 ## 📝 Changelog
 
 **(1/22/2026)** Reorganized repo structure to make it easier to add a new hardware target.

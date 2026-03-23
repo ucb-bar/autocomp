@@ -27,6 +27,9 @@ agent-builder = [
     "beautifulsoup4",
     "html2text",
 ]
+dev = [
+    "pytest",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/ucb-bar/autocomp"
@@ -37,3 +40,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["autocomp", "autocomp.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["autocomp_tests"]
