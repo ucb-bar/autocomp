@@ -8,25 +8,29 @@ import pathlib
 
 import pytest
 
+from autocomp.agent_builder.built_agent import BuiltLLMAgent
 from autocomp.agents.llm_ensemble import LLMEnsemble
-from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.common import REPO_ROOT
 from autocomp.hw_config.trn_config import TrnHardwareConfig
 from autocomp.search.search import BeamSearchStrategy
 
 
+BUILT_AGENT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built" / "trn-nki1"
+
+
 @pytest.fixture
-def trn_agent(dummy_eval_backend):
+def built_agent(dummy_eval_backend):
     hw_config = TrnHardwareConfig("trn1.2xlarge")
-    agent = TrnLLMAgent("dummy::test-model", hw_config, dummy_eval_backend)
+    agent = BuiltLLMAgent("dummy::test-model", BUILT_AGENT_DIR, hw_config, dummy_eval_backend)
     return LLMEnsemble([agent])
 
 
-def test_beam_search_one_iteration(trn_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
-    """Run one iteration of beam search and verify candidates are produced."""
+def test_beam_search_two_iterations(built_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
+    """Run two iterations of beam search and verify candidates are produced."""
     strategy = BeamSearchStrategy(
         output_dir=tmp_output_dir,
         eval_backend=dummy_eval_backend,
-        agent=trn_agent,
+        agent=built_agent,
         orig_code="def nki_kernel():\n    pass\n",
         prob=dummy_prob,
         metric="p99_latency",
@@ -55,7 +59,7 @@ def test_beam_search_one_iteration(trn_agent, dummy_eval_backend, dummy_prob, tm
         translate_score=False,
     )
 
-    strategy.optimize(iterations=1)
+    strategy.optimize(iterations=2)
 
     iter0 = strategy.repository.get_candidates(0)
     assert len(iter0) >= 1, "Should have at least the initial candidate"
@@ -63,3 +67,6 @@ def test_beam_search_one_iteration(trn_agent, dummy_eval_backend, dummy_prob, tm
 
     iter1 = strategy.repository.get_candidates(1)
     assert len(iter1) >= 1, "Should have at least one candidate after iteration 1"
+
+    iter2 = strategy.repository.get_candidates(2)
+    assert len(iter2) >= 1, "Should have at least one candidate after iteration 2"
