@@ -23,14 +23,14 @@ WANDB_MODE=disabled pytest
 `LLMClient` supports a `"dummy"` provider that returns canned strings without making any API calls or requiring credentials. To use it, pass `"dummy::any-model-name"` as the model string:
 
 ```python
-from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.agent_builder.built_agent import BuiltLLMAgent
 
-agent = TrnLLMAgent("dummy::test-model", hw_config, eval_backend)
+agent = BuiltLLMAgent("dummy::test-model", config_dir, hw_config, eval_backend)
 # agent.llm_client.chat(...) returns ["dummy response", ...]
 # agent.llm_client.chat_async(...) returns [["dummy response", ...], ...]
 ```
 
-This flows through all real constructors -- no monkeypatching needed.
+This flows through all real constructors -- no monkeypatching needed. Any agent subclass (`BuiltLLMAgent`, `TrnLLMAgent`, etc.) works the same way.
 
 ### DummyEvalBackend
 
