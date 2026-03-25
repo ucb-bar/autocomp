@@ -1,4 +1,4 @@
-CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
+CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=CodeCandidate(parent=None,
 plan=None,
 code='''import jax
 
@@ -6638,204 +6638,55 @@ plan_gen_model='gpt-5.4',
 code_gen_model='gpt-5.4',
 stdout='Latency: 3.670 ms\n{"correct": true, "latency": 3.67, "error": "", "all_times_ms": [3.659, 3.659, 3.66, 3.66, 3.661, 3.661, 3.661, 3.662, 3.662, 3.662, 3.663, 3.663, 3.663, 3.664, 3.664, 3.664, 3.664, 3.664, 3.664, 3.664, 3.664, 3.665, 3.665, 3.666, 3.666, 3.666, 3.666, 3.666, 3.666, 3.666, 3.667, 3.667, 3.668, 3.668, 3.668, 3.668, 3.668, 3.669, 3.669, 3.669, 3.669, 3.669, 3.669, 3.669, 3.669, 3.67, 3.67, 3.67, 3.67, 3.67, 3.67, 3.67, 3.671, 3.671, 3.671, 3.671, 3.671, 3.671, 3.671, 3.671, 3.671, 3.671, 3.672, 3.672, 3.672, 3.672, 3.672, 3.672, 3.672, 3.672, 3.673, 3.673, 3.673, 3.673, 3.674, 3.674, 3.674, 3.674, 3.674, 3.675, 3.675, 3.675, 3.675, 3.676, 3.676, 3.677, 3.677, 3.678, 3.679, 3.681, 3.681, 3.681, 3.682, 3.685, 3.686, 3.689, 3.69, 3.695, 3.716, 3.724], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr=''),
-plan='''**Selected strategy: 9. Exploit MLA factorization more aggressively**
+plan='''Looking at this code, I\'ll analyze the strategies and identify the most impactful optimization for this final phase.
 
-### Why this is the best single change here
-The biggest remaining inefficiency is that the code **fully expands low-rank KV into dense per-head `k_nope` and `v` tensors before attention**:
+## Analysis
 
-- `k_nope`: shape `[B, S, H, nope] = [1, 2048, 128, 128]` → **64 MiB** in bf16
-- `v`: shape `[B, S, H, vd] = [1, 2048, 128, 128]` → **64 MiB** in bf16
+The current code has a significant inefficiency: it precomputes full `k_nope` [B, H, S, nope] and `v` [B, H, S, vd] tensors before attention, which requires:
+- Full materialization of [1, 128, 2048, 128] for k_nope = 64 MB
+- Full materialization of [1, 128, 2048, 128] for v = 64 MB
 
-So the program writes ~**128 MiB** of intermediates, then the attention kernel reads them back. On a **v6e-1** this is a very HBM-heavy path, and the attention stage is a natural place to keep the MLA factorization intact instead of materializing the expansion.
+This creates massive memory bandwidth pressure since these large tensors must be loaded from HBM for every attention computation.
 
----
+## Selected Strategy: Strategy 8 - Latent-Stationary Attention
 
-## Plan
+**Strategy 8: Make the KV path latent-stationary** - Keep only `k_latent` and `k_rope_raw` in memory, and expand `k_nope`/`v` on demand for each KV tile inside the attention kernel instead of precomputing full `[B,H,S,*]` K/V tensors.
 
-### 1) Stop materializing full `k_nope` and `v` in `workload`
-Keep the query path unchanged, but delete this block:
+## How This Improves Performance
 
-```python
-k_latent2d = k_latent.reshape(B * S, kvl)
-kv_up_proj = jnp.concatenate([k_up_proj, v_up_proj], axis=1)
-kv2d = jax.lax.dot_general(...)
-k_nope2d, v2d = jnp.split(...)
-k_nope = ...
-v = ...
-```
+1. **Memory Bandwidth Reduction**: Instead of loading precomputed `k_nope` [B, H, S, nope] and `v` [B, H, S, vd] from HBM, we load only:
+   - `k_latent` [B, S, kvl] = [1, 2048, 512] = 2 MB
+   - `k_rope_raw` [B, S, rope] = [1, 2048, 64] = 0.25 MB
+   - `k_up_proj` [kvl, H*nope] = [512, 128*128] = 32 MB (but reused across all tiles)
+   - `v_up_proj` [kvl, H*vd] = [512, 128*128] = 32 MB (but reused across all tiles)
 
-Instead, after `kv_down_proj`, keep only:
+2. **Trade Memory for Compute**: We perform the expansion `k_latent @ k_up_proj` and `k_latent @ v_up_proj` on-the-fly for each KV tile. This trades ~128 MB HBM reads (full k_nope + v) for smaller reads of k_latent tiles plus reused projection matrices.
 
-- `k_latent`: `[B, S, kvl]`
-- `k_rope`: `[B, 1, S, rope]` after RoPE
+3. **Arithmetic Intensity Improvement**: The expansion matmuls have high arithmetic intensity (matrix-matrix multiply) and can be overlapped with attention computation on the TPU.
 
-Then call attention with the latent tensor and the original up-projection weights:
+4. **VMEM Pressure Reduction**: The attention kernel no longer needs to stage full per-head K/V blocks; it stages smaller latent blocks and computes expanded K/V tiles in registers.
 
-```python
-out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
-```
+## Implementation Plan
 
-This keeps the same `workload(...)` signature and overall semantics.
+1. **Modify `_flash_attention_kernel`** to accept:
+   - `k_latent_ref` [B, S, kvl] instead of `k_nope_ref`
+   - `k_up_proj_ref` [kvl, nope] (per-head slice)
+   - `v_up_proj_ref` [kvl, vd] (per-head slice)
 
----
+2. **Inside the kernel\'s KV loop**: For each KV tile:
+   - Load `k_latent_tile` [kv_block, kvl]
+   - Compute `k_nope_tile = k_latent_tile @ k_up_proj` → [kv_block, nope]
+   - Compute `v_tile = k_latent_tile @ v_up_proj` → [kv_block, vd]
+   - Use these expanded tiles for attention scores and output accumulation
 
-### 2) Reshape projection weights once outside the kernel into per-head form
-Before the Pallas call, reshape the static weights so each head gets a compact tile:
+3. **Remove precomputation** of full `k_nope` and `v` tensors from `workload()`.
 
-- `k_up_proj`: from `[kvl, H * nope]` to `[H, kvl, nope]`
-- `v_up_proj`: from `[kvl, H * vd]` to `[H, kvl, vd]`
+4. **Pass projection matrices** to the attention kernel, sliced per-head via BlockSpec.
 
-That lets the kernel load **only one head’s projection weights** instead of a giant flattened matrix.
-
-Concretely:
-
-```python
-k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-```
-
----
-
-### 3) Change the Pallas attention kernel inputs
-Replace the current kernel interface:
-
-```python
-_flash_attention_kernel(q_nope_ref, q_rope_ref, k_nope_ref, k_rope_ref, v_ref, o_ref)
-```
-
-with something like:
-
-```python
-_flash_attention_kernel(
-    q_nope_ref, q_rope_ref,
-    k_latent_ref, k_rope_ref,
-    k_up_ref, v_up_ref,
-    o_ref
-)
-```
-
-#### Recommended `BlockSpec`s
-Use block specs that preserve the current persistent per-`(batch, head)` structure:
-
-- `q_nope`: `(1, 1, S, nope)` with `lambda b, h: (b, h, 0, 0)`
-- `q_rope`: `(1, 1, S, rope)` with `lambda b, h: (b, h, 0, 0)`
-- `k_latent`: `(1, S, kvl)` with `lambda b, h: (b, 0, 0)`  
-  - shared across heads
-- `k_rope`: `(1, 1, S, rope)` with `lambda b, h: (b, 0, 0, 0)`  
-  - shared across heads
-- `k_up_heads`: `(1, kvl, nope)` with `lambda b, h: (h, 0, 0)`
-- `v_up_heads`: `(1, kvl, vd)` with `lambda b, h: (h, 0, 0)`
-- output: `(1, 1, S, vd)` with `lambda b, h: (b, h, 0, 0)`
-
-These are TPU-valid:
-- rank ≥ 1
-- trailing dims satisfy divisibility:
-  - `S=2048` divisible by 8
-  - `nope=128`, `vd=128`, `kvl=512` divisible by 128 where needed
-
----
-
-### 4) Generate `k_nope_tile` and `v_tile` on-chip inside the attention kernel
-Keep the existing outer structure of the kernel: one persistent kernel per `(batch, head)`, with the current `qg` and `kv_idx` loops.
-
-But inside each `kv_idx` step:
-
-1. Read the latent KV tile from the ref:
-   ```python
-   k_latent_tile = k_latent_ref[0, kv_start:kv_start + kv_block, :].astype(jnp.float32)
-   ```
-
-2. Read the per-head weights once near kernel entry:
-   ```python
-   k_up = k_up_ref[0, :, :].astype(jnp.float32)
-   v_up = v_up_ref[0, :, :].astype(jnp.float32)
-   ```
-
-3. Project the latent tile on-chip:
-   ```python
-   k_nope_tile = jax.lax.dot_general(
-       k_latent_tile, k_up,
-       dimension_numbers=(((1,), (0,)), ((), ())),
-       preferred_element_type=jnp.float32,
-   )
-   v_tile = jax.lax.dot_general(
-       k_latent_tile, v_up,
-       dimension_numbers=(((1,), (0,)), ((), ())),
-       preferred_element_type=jnp.float32,
-   )
-   ```
-
-4. Use those generated tiles in the existing score and value update logic:
-   - `q_nope_tile @ k_nope_tile^T`
-   - `q_rope_tile @ k_rope_tile^T`
-   - online softmax update
-   - `exp_scores @ v_tile`
-
-This keeps the current algorithm intact, just moving the KV expansion from HBM into VMEM/VREG compute.
-
----
-
-### 5) Keep the rest of the kernel behavior unchanged
-Do **not** change the online softmax logic or output projection in this phase.
-
-Specifically, keep:
-
-- q scaling as today
-- RoPE application as today
-- softmax stats `m`, `l`, `acc` in `float32`
-- final write:
-  ```python
-  o_ref[...] = (acc / l[:, None]).astype(o_ref.dtype)
-  ```
-
-That preserves semantic equivalence within normal bf16/f32 tolerance.
-
----
-
-## Why this should help on v6e-1
-
-### Main benefit: eliminate giant expanded KV intermediates
-You remove the full dense K/V materialization step entirely.
-
-For this config, that avoids roughly:
-
-- **128 MiB** of bf16 intermediate writes (`k_nope` + `v`)
-- plus the corresponding rereads by the attention kernel
-
-That is exactly the sort of memory traffic that hurts on a single-core **v6e-1**.
-
-### Better reuse of shared latent data
-Because the grid is `(B, H)` and the `k_latent` / `k_rope` `BlockSpec`s **ignore head**, consecutive head programs for the same batch access the same HBM slice. On TPU Pallas, consecutive iterations reusing the same input slice can skip HBM transfer when the slice stays resident.
-
-So this plan matches the hardware well:
-- `k_latent` and `k_rope` are shared across heads
-- only small per-head `k_up` / `v_up` blocks vary
-
-That is much closer to the intended MLA dataflow.
-
----
-
-## VMEM fit check
-This plan is compatible with the v6e VMEM budget because it does **not** materialize `[S, nope]` and `[S, vd]` for all heads.
-
-Approximate live data per kernel:
-- `k_latent` block `[S, kvl]` bf16: ~2 MiB
-- `k_rope` block `[S, rope]` bf16: ~0.25 MiB
-- one head’s `k_up` + `v_up`: ~0.25 MiB total
-- q/output refs and temporary tiles: comfortably within remaining VMEM
-
-So this is far safer than storing full expanded K/V.
-
----
-
-## Summary of exact code changes
-1. **Delete** the pre-attention expansion of `k_nope` and `v` in `workload`.
-2. **Reshape** `k_up_proj` and `v_up_proj` into `[H, kvl, *]`.
-3. **Change** `_flash_attention` to accept `k_latent`, `k_rope`, `k_up_heads`, `v_up_heads`.
-4. **Inside the Pallas kernel**, read refs explicitly and generate `k_nope_tile` / `v_tile` from `k_latent_tile` on each KV block.
-5. **Keep** the online softmax and output path unchanged.
-
-If you apply only this one strategy, it directly attacks the largest code-specific inefficiency and is likely the strongest remaining latency lever for this MLA prefill path on **TPU v6e-1**.''',
+This approach is particularly effective because:
+- The MLA architecture has a large compression ratio (kvl=512 → H*nope=16384), so avoiding the expanded tensors saves substantial bandwidth
+- The projection matrices fit in VMEM and are reused across all KV tiles
+- TPU MXU can efficiently handle the small matmuls for on-the-fly expansion''',
 code='''
 import jax
 import jax.numpy as jnp
@@ -7008,24 +6859,30 @@ def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
 
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    """Persistent FlashAttention-style streaming kernel with MLA latent KV.
+    """Persistent FlashAttention-style streaming kernel with latent-stationary KV.
 
     Grid: (batch, head)
     Block shapes:
       q_nope_ref: [1, 1, S, nope]
       q_rope_ref: [1, 1, S, rope]
-      k_latent_ref: [1, S, kvl]      (shared across heads)
-      k_rope_ref: [1, 1, S, rope]    (shared across heads)
-      k_up_ref: [1, kvl, nope]       (per-head)
-      v_up_ref: [1, kvl, DV]         (per-head)
-      o_ref: [1, 1, S, DV]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
     """
     k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
     k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
 
     seq_len = k_latent_all.shape[0]
     dv = v_up.shape[1]
@@ -7101,22 +6958,20 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(
-    q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads, block_q=_FLASH_BLOCK_Q
-):
-    """Blocked causal attention with MLA latent KV kept unexpanded until on-chip use.
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
 
     Args:
         q_nope: [B, H, S, nope] - query nope component
         q_rope: [B, H, S, rope] - query rope component
-        k_latent: [B, S, kvl] - latent key/value state shared across heads
+        k_latent: [B, S, kvl] - compressed shared KV latent
         k_rope: [B, 1, S, rope] - key rope component (shared across heads)
-        k_up_heads: [H, kvl, nope] - per-head key expansion weights
-        v_up_heads: [H, kvl, DV] - per-head value expansion weights
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
     """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
     if S % block_q != 0:
@@ -7150,7 +7005,7 @@ def _flash_attention(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
     return outs[0]
 
 
@@ -7190,9 +7045,6 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
     # RoPE.
     cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
     # Apply RoPE to q_rope [B, S, H, rope]
@@ -7201,10 +7053,12 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
     k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
 
-    # Attention inputs - keep nope and rope separate and retain latent KV shared across heads.
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
     q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
     q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
     k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
     # Apply scaling to query components
     hd = nope + rope
@@ -7212,8 +7066,8 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
     q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
 
-    # FlashAttention-style fused causal attention with split nope/rope and latent KV.
-    # This avoids materializing dense per-head K/V in HBM before attention.
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
     out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
     out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
@@ -7228,218 +7082,73 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
 
     return final2d.reshape(B, S, E)
 ''',
-score=3.155,
+score=3.15,
 translation_score=None,
 hw_feedback=[],
-plan_gen_model='gpt-5.4',
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='gpt-5.4',
-stdout='Latency: 3.155 ms\n{"correct": true, "latency": 3.155, "error": "", "all_times_ms": [3.14, 3.141, 3.144, 3.144, 3.145, 3.145, 3.145, 3.146, 3.146, 3.146, 3.146, 3.146, 3.146, 3.147, 3.147, 3.147, 3.148, 3.148, 3.148, 3.149, 3.149, 3.149, 3.149, 3.149, 3.15, 3.151, 3.151, 3.151, 3.151, 3.151, 3.152, 3.152, 3.152, 3.152, 3.152, 3.152, 3.153, 3.153, 3.153, 3.153, 3.153, 3.154, 3.154, 3.154, 3.154, 3.154, 3.154, 3.155, 3.155, 3.155, 3.155, 3.155, 3.155, 3.155, 3.156, 3.156, 3.156, 3.156, 3.156, 3.156, 3.157, 3.157, 3.157, 3.157, 3.157, 3.158, 3.158, 3.158, 3.158, 3.159, 3.159, 3.16, 3.16, 3.16, 3.16, 3.16, 3.161, 3.161, 3.161, 3.162, 3.162, 3.162, 3.162, 3.163, 3.163, 3.163, 3.164, 3.164, 3.164, 3.166, 3.166, 3.167, 3.168, 3.171, 3.172, 3.172, 3.172, 3.178, 3.18, 3.209], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stdout='Latency: 3.150 ms\n{"correct": true, "latency": 3.15, "error": "", "all_times_ms": [3.136, 3.137, 3.139, 3.141, 3.142, 3.142, 3.142, 3.142, 3.143, 3.143, 3.143, 3.144, 3.144, 3.144, 3.144, 3.144, 3.144, 3.144, 3.145, 3.145, 3.146, 3.146, 3.146, 3.146, 3.146, 3.147, 3.147, 3.147, 3.147, 3.147, 3.148, 3.148, 3.148, 3.148, 3.148, 3.149, 3.149, 3.149, 3.149, 3.149, 3.149, 3.149, 3.15, 3.15, 3.15, 3.15, 3.15, 3.15, 3.15, 3.15, 3.15, 3.15, 3.151, 3.151, 3.151, 3.151, 3.151, 3.151, 3.151, 3.151, 3.151, 3.152, 3.152, 3.152, 3.153, 3.153, 3.153, 3.153, 3.153, 3.153, 3.154, 3.154, 3.154, 3.154, 3.155, 3.155, 3.155, 3.155, 3.156, 3.156, 3.156, 3.157, 3.158, 3.159, 3.159, 3.159, 3.16, 3.16, 3.16, 3.161, 3.161, 3.162, 3.163, 3.166, 3.168, 3.17, 3.171, 3.176, 3.182, 3.218], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr=''),
-plan='''To optimize the DeepSeek-V3 MLA attention implementation for the TPU v6e-1, we will apply **Strategy 7: Batch the `q_down` and `kv_down` projections into a single fused matmul**.
+plan='''Looking at this code, I need to analyze the inefficiencies and select an appropriate strategy.
 
-### Optimization Plan
-The `workload` function currently performs two separate matrix multiplications to project the input tensor `x` (shape `[B, S, E]`) into the query low-rank space (`q_low2d`) and the KV low-rank space (`kv2d`). Both operations share the same input activations.
-1.  **Fuse Projections**: We will concatenate the weight matrices `q_down_proj` (shape `[E, ql]`) and `kv_down_proj` (shape `[E, kvl + rope]`) horizontally along the output dimension (axis 1).
-2.  **Single Matmul**: By performing one `jax.lax.dot_general` with the concatenated weights, we reduce the HBM-to-VMEM traffic for the large input tensor `x` by half for this stage of the model. 
-3.  **Slice Results**: After the fused matmul, we slice the resulting tensor to recover the individual low-rank query and KV components.
-4.  **Preserve Precision**: We continue to utilize `preferred_element_type=jnp.float32` for the matrix multiplication to ensure high accumulation precision before casting back to the model\'s native dtype.
+## Analysis
 
-This reduction in memory bandwidth pressure is critical for "lite" class chips like the v6e-1, where the ratio of compute to memory bandwidth is high.
+The code implements MLA (Multi-head Latent Attention) for DeepSeek-V3. The main computational bottleneck is in `_flash_attention_kernel`, which performs causal attention with latent-stationary KV expansion.
 
+Looking at the kernel closely, I notice several inefficiencies:
+
+1. **Per-iteration dtype conversions**: Inside the inner loops, there are repeated `.astype(jnp.float32)` conversions:
+   - `k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)` - done once (OK)
+   - `q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)` - done per Q group
+   - `q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)` - done per Q group
+
+2. **The Q tiles are read fresh each Q group iteration**, but the conversion happens inside the loop.
+
+3. **Strategy 14** is highly relevant: "Avoid per-iteration dtype conversions by ensuring all intermediate values stay in float32 throughout inner loops"
+
+Currently, the kernel reads Q tiles inside the Q group loop and converts them to float32 each time. However, looking more carefully at the structure:
+
+- The Q data is read from refs that are in bf16
+- Each Q group iteration reads a different slice of Q
+- The KV data (k_latent_all, k_rope_all, k_up, v_up) is converted once at the start
+
+The real inefficiency is that we could **preload all Q data at once** at the beginning of the kernel (since we have the full sequence in the block) and convert to float32 once, rather than doing slice-by-slice conversion inside the loop.
+
+## Plan: Apply Strategy 14 - Avoid per-iteration dtype conversions
+
+**Observation**: In `_flash_attention_kernel`, the Q tensors (`q_nope_ref` and `q_rope_ref`) are sliced and converted to float32 inside the Q group loop:
 ```python
-import jax
-import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+for qg in range(num_q_groups):
+    q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+    q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+```
 
-CONFIG = {
-    "name": "deepseek_v3_mla",
-    "model": "DeepSeek-V3-671B",
-    "operator": "mla_attention",
-    "batch": 1,
-    "seq_len": 2048,
-    "emb_dim": 7168,
-    "num_heads": 128,
-    "q_lora_rank": 1536,
-    "kv_lora_rank": 512,
-    "qk_nope_head_dim": 128,
-    "qk_rope_head_dim": 64,
-    "v_head_dim": 128,
-    "rope_theta": 10000,
-}
+**Issue**: This performs dtype conversion from bf16 to float32 for every Q group iteration. On TPU, this conversion has overhead, and doing it `num_q_groups` times is wasteful.
 
-_FLASH_BLOCK_Q = 128
-_FLASH_Q_GROUP = 4
-_FLASH_BLOCK_KV = 256
+**Solution**: Load the entire Q tensors once at the start of the kernel, convert to float32 immediately, and then slice from the already-converted float32 tensors inside the loop:
 
-def _compute_rope(head_dim, seq_len, theta, dtype):
-    freqs = 1.0 / (theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim))
-    pos = jnp.arange(seq_len, dtype=jnp.float32)
-    angles = jnp.outer(pos, freqs)
-    return jnp.cos(angles).astype(dtype), jnp.sin(angles).astype(dtype)
+1. At the beginning of `_flash_attention_kernel`, immediately after loading K/V data, also load the full Q tensors:
+   ```python
+   q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+   q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+   ```
 
-def _apply_rope(x, cos, sin):
-    # Stride indexing is fine outside of Pallas kernels
-    x1, x2 = x[..., ::2], x[..., 1::2]
-    cos = cos[None, :, None, :]
-    sin = sin[None, :, None, :]
-    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
-    return rotated.reshape(x.shape)
+2. Inside the Q group loop, slice from the pre-converted float32 arrays instead of reading from the ref:
+   ```python
+   q_nope_tile = q_nope_all[q_start:q_end, :]
+   q_rope_tile = q_rope_all[q_start:q_end, :]
+   ```
 
-def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
-):
-    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
-    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
+**Benefits**:
+- Eliminates `num_q_groups` (which is `S / (_FLASH_BLOCK_Q * _FLASH_Q_GROUP)` = `2048 / 512 = 4`) dtype conversions for each of two Q tensors
+- Reduces total dtype conversions from `2 * 4 = 8` to just `2`
+- The float32 data remains in VMEM/registers for reuse across iterations
+- No change to semantics - same computation, just precomputed conversion
 
-    seq_len = k_latent_all.shape[0]
-    dv = v_up.shape[1]
-    kv_block = _FLASH_BLOCK_KV
-    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
-    num_q_groups = seq_len // q_group
-
-    for qg in range(num_q_groups):
-        q_start = qg * q_group
-        q_end = q_start + q_group
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
-        q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
-        active_kv_blocks = (q_end + kv_block - 1) // kv_block
-
-        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
-        l = jnp.zeros((q_group,), dtype=jnp.float32)
-        acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
-
-        for kv_idx in range(active_kv_blocks):
-            kv_start = kv_idx * kv_block
-            k_latent_tile = k_latent_all[kv_start:kv_start + kv_block, :]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
-            
-            k_nope_tile = jax.lax.dot_general(
-                k_latent_tile, k_up,
-                dimension_numbers=(((1,), (0,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            v_tile = jax.lax.dot_general(
-                k_latent_tile, v_up,
-                dimension_numbers=(((1,), (0,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-
-            scores_nope = jax.lax.dot_general(
-                q_nope_tile, k_nope_tile,
-                dimension_numbers=(((1,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            scores_rope = jax.lax.dot_general(
-                q_rope_tile, k_rope_tile,
-                dimension_numbers=(((1,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            scores = scores_nope + scores_rope
-
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                causal_mask = q_pos[:, None] >= k_pos
-                scores = jnp.where(causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32))
-
-            block_max = jnp.max(scores, axis=1)
-            new_m = jnp.maximum(m, block_max)
-            exp_m_scale = jnp.exp(m - new_m)
-            exp_scores = jnp.exp(scores - new_m[:, None])
-            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
-            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
-                exp_scores, v_tile,
-                dimension_numbers=(((1,), (0,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            m = new_m
-
-        o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
-
-def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads):
-    B, H, S, nope = q_nope.shape
-    rope_dim = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
-    kvl = k_latent.shape[-1]
-
-    outs = pl.pallas_call(
-        _flash_attention_kernel,
-        out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
-        grid=(B, H),
-        in_specs=[
-            pl.BlockSpec((1, 1, S, nope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope_dim), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, S, kvl), lambda b, h: (b, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope_dim), lambda b, h: (b, 0, 0, 0)),
-            pl.BlockSpec((1, kvl, nope), lambda b, h: (h, 0, 0)),
-            pl.BlockSpec((1, kvl, DV), lambda b, h: (h, 0, 0)),
-        ],
-        out_specs=[pl.BlockSpec((1, 1, S, DV), lambda b, h: (b, h, 0, 0))],
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel")),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-    return outs[0]
-
-def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
-    C = CONFIG
-    B, S, E = x.shape
-    H, nope, rope, vd = C["num_heads"], C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
-    kvl = C["kv_lora_rank"]
-    ql = q_down_proj.shape[1]
-
-    x2d = x.reshape(B * S, E)
-
-    # Strategy 7: Batch q_down and kv_down projections to reduce HBM traffic for x2d
-    combined_down_weights = jnp.concatenate([q_down_proj, kv_down_proj], axis=1)
-    combined_low2d = jax.lax.dot_general(
-        x2d, combined_down_weights,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
-    ).astype(x.dtype)
-    
-    q_low2d = combined_low2d[:, :ql]
-    kv2d = combined_low2d[:, ql:]
-
-    # Remaining projections
-    q2d = jax.lax.dot_general(
-        q_low2d, q_up_proj,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
-    ).astype(x.dtype)
-    q = q2d.reshape(B, S, H, nope + rope)
-    q_nope, q_rope = q[..., :nope], q[..., nope:]
-
-    kv = kv2d.reshape(B, S, kvl + rope)
-    k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
-
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
-    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-    q_rope = _apply_rope(q_rope, cos, sin)
-    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin)
-
-    q_nope = q_nope.transpose(0, 2, 1, 3)
-    q_rope = q_rope.transpose(0, 2, 1, 3)
-    k_rope = k_rope.transpose(0, 2, 1, 3)
-
-    scale = (nope + rope) ** -0.5
-    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
-    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
-
-    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
-
-    final2d = jax.lax.dot_general(
-        out.reshape(B * S, H * vd), o_proj,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
-    ).astype(x.dtype)
-
-    return final2d.reshape(B, S, E)
-```''',
+**VMEM consideration**: 
+- Q tensors: `q_nope_all` is `[S, nope] = [2048, 128]` in float32 = 1 MB
+- `q_rope_all` is `[S, rope] = [2048, 64]` in float32 = 0.5 MB
+- Total additional VMEM: ~1.5 MB, well within the 16 MB budget alongside existing allocations''',
 code='''
 import jax
 import jax.numpy as jnp
@@ -7612,24 +7321,34 @@ def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
 
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    """Persistent FlashAttention-style streaming kernel with MLA latent KV.
+    """Persistent FlashAttention-style streaming kernel with latent-stationary KV.
 
     Grid: (batch, head)
     Block shapes:
       q_nope_ref: [1, 1, S, nope]
       q_rope_ref: [1, 1, S, rope]
-      k_latent_ref: [1, S, kvl]      (shared across heads)
-      k_rope_ref: [1, 1, S, rope]    (shared across heads)
-      k_up_ref: [1, kvl, nope]       (per-head)
-      v_up_ref: [1, kvl, DV]         (per-head)
-      o_ref: [1, 1, S, DV]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
     """
     k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
     k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    # Preload and convert Q tensors once to avoid per-iteration dtype conversions
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
 
     seq_len = k_latent_all.shape[0]
     dv = v_up.shape[1]
@@ -7641,8 +7360,9 @@ def _flash_attention_kernel(
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+        # Slice from pre-converted float32 arrays instead of converting per iteration
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
         active_kv_blocks = (q_end + kv_block - 1) // kv_block
 
@@ -7705,22 +7425,20 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(
-    q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads, block_q=_FLASH_BLOCK_Q
-):
-    """Blocked causal attention with MLA latent KV kept unexpanded until on-chip use.
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
 
     Args:
         q_nope: [B, H, S, nope] - query nope component
         q_rope: [B, H, S, rope] - query rope component
-        k_latent: [B, S, kvl] - latent key/value state shared across heads
+        k_latent: [B, S, kvl] - compressed shared KV latent
         k_rope: [B, 1, S, rope] - key rope component (shared across heads)
-        k_up_heads: [H, kvl, nope] - per-head key expansion weights
-        v_up_heads: [H, kvl, DV] - per-head value expansion weights
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
     """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
     if S % block_q != 0:
@@ -7754,7 +7472,7 @@ def _flash_attention(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
     return outs[0]
 
 
@@ -7794,9 +7512,6 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
     # RoPE.
     cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
     # Apply RoPE to q_rope [B, S, H, rope]
@@ -7805,10 +7520,12 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
     k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
 
-    # Attention inputs - keep nope and rope separate and retain latent KV shared across heads.
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
     q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
     q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
     k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
     # Apply scaling to query components
     hd = nope + rope
@@ -7816,8 +7533,8 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
     q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
 
-    # FlashAttention-style fused causal attention with split nope/rope and latent KV.
-    # This avoids materializing dense per-head K/V in HBM before attention.
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
     out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
     out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
@@ -7835,148 +7552,122 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
 score=3.14,
 translation_score=None,
 hw_feedback=[],
-plan_gen_model='gemini-3-flash-preview',
-code_gen_model='gpt-5.4',
-stdout='Latency: 3.140 ms\n{"correct": true, "latency": 3.14, "error": "", "all_times_ms": [3.128, 3.129, 3.13, 3.13, 3.131, 3.132, 3.132, 3.132, 3.132, 3.133, 3.133, 3.134, 3.134, 3.134, 3.134, 3.134, 3.134, 3.135, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.138, 3.138, 3.138, 3.138, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.141, 3.141, 3.141, 3.141, 3.141, 3.141, 3.141, 3.142, 3.142, 3.142, 3.142, 3.142, 3.142, 3.142, 3.142, 3.142, 3.143, 3.143, 3.143, 3.144, 3.144, 3.144, 3.144, 3.145, 3.145, 3.145, 3.145, 3.146, 3.147, 3.147, 3.147, 3.149, 3.149, 3.149, 3.152, 3.153, 3.155, 3.155, 3.158, 3.201], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout='Latency: 3.140 ms\n{"correct": true, "latency": 3.14, "error": "", "all_times_ms": [3.129, 3.129, 3.13, 3.131, 3.132, 3.132, 3.133, 3.134, 3.134, 3.134, 3.134, 3.134, 3.135, 3.135, 3.135, 3.135, 3.135, 3.135, 3.135, 3.135, 3.135, 3.136, 3.136, 3.136, 3.136, 3.136, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.138, 3.138, 3.138, 3.138, 3.138, 3.138, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.141, 3.141, 3.141, 3.141, 3.141, 3.141, 3.141, 3.141, 3.142, 3.142, 3.142, 3.143, 3.143, 3.143, 3.143, 3.143, 3.143, 3.143, 3.144, 3.144, 3.144, 3.145, 3.145, 3.146, 3.146, 3.146, 3.147, 3.147, 3.147, 3.147, 3.148, 3.148, 3.149, 3.149, 3.15, 3.15, 3.151, 3.152, 3.153, 3.153, 3.155, 3.155, 3.158, 3.201, 3.265], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr=''),
-plan='''To optimize the MLA attention kernel for TPU v6e, we will apply **Strategy 6: Avoid materializing full-sequence fp32 copies**.
+plan='''Based on my analysis, the primary inefficiency in the provided kernel is the high memory bandwidth pressure caused by loading and processing `k_latent` tiles that include padding elements. The current code operates on fixed-size `_FLASH_BLOCK_KV` (256) tiles, but for the final `kv_idx` in the causal loop (`active_kv_blocks`), the valid data is typically much smaller. Processing these partially invalid tiles forces the VPU to execute padded arithmetic on garbage data, wasting compute cycles and memory bandwidth.
 
-### Analysis of Inefficiencies
-In the original `_flash_attention_kernel`, the large latent KV tensors (`k_latent_all` and `k_rope_all`) are cast to `float32` immediately upon being read into the kernel. For a sequence length of 2048 and a latent dimension of 512, `k_latent_all` alone consumes 4 MiB in `float32`. When combined with `k_rope_all`, weights (`k_up`, `v_up`), and the various tiles used during the FlashAttention loop, this places significant pressure on the 16 MiB VMEM of the TPU v6e. Since TPU elementwise operations only require `float32` at the point of computation and matrix multiplications accumulate in `float32` regardless of input precision, keeping these large, long-lived sequence buffers in `bfloat16` until the moment they are needed for a specific tile calculation reduces the persistent memory footprint by 50%.
+I will apply **Strategy 8: Slice the resulting `k_nope_tile` and `v_tile` to strictly valid shapes**.
 
-### Optimization Plan
-1.  **Delay Upcasting**: Modify the `_flash_attention_kernel` to load `k_latent_all`, `k_rope_all`, `k_up`, and `v_up` as `bfloat16` arrays (the native dtype of the `Ref`s).
-2.  **Tile-Based Upcasting**: Inside the nested `qg` and `kv_idx` loops, explicitly upcast only the current working tiles (e.g., `k_latent_tile`, `q_nope_tile`, and expansion weights) to `float32` immediately before they are consumed by `jax.lax.dot_general` or elementwise operations.
-3.  **Maintain Accumulators in FP32**: Ensure that softmax accumulators (`m`, `l`) and the output accumulator (`acc`) remain in `float32` to preserve numerical precision during the streaming reduction.
-
----
+This change ensures that the subsequent matrix multiplications (`dot_general`) operate only on valid data rows. By reducing the M-dimension of the GEMMs from a fixed 256 to the actual valid count (e.g., ~64 for the last block), we significantly lower the operational intensity and memory traffic for the tail of the sequence.
 
 ```python
-import jax
-import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-
-
-CONFIG = {
-    "name": "deepseek_v3_mla",
-    "model": "DeepSeek-V3-671B",
-    "operator": "mla_attention",
-    "batch": 1,
-    "seq_len": 2048,
-    "emb_dim": 7168,
-    "num_heads": 128,
-    "q_lora_rank": 1536,
-    "kv_lora_rank": 512,
-    "qk_nope_head_dim": 128,
-    "qk_rope_head_dim": 64,
-    "v_head_dim": 128,
-    "rope_theta": 10000,
-}
-
-_FLASH_BLOCK_Q = 128
-_FLASH_Q_GROUP = 4
-_FLASH_BLOCK_KV = 256
-
-
-def _compute_rope(head_dim, seq_len, theta, dtype):
-    freqs = 1.0 / (theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim))
-    pos = jnp.arange(seq_len, dtype=jnp.float32)
-    angles = jnp.outer(pos, freqs)
-    return jnp.cos(angles).astype(dtype), jnp.sin(angles).astype(dtype)
-
-
-def _apply_rope(x, cos, sin):
-    # Use reshape + slice to replace unsupported stride indexing x[..., ::2]
-    orig_shape = x.shape
-    x_reshaped = x.reshape(*orig_shape[:-1], orig_shape[-1] // 2, 2)
-    x1 = x_reshaped[..., 0]
-    x2 = x_reshaped[..., 1]
-    
-    cos = cos[None, :, None, :]
-    sin = sin[None, :, None, :]
-    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
-    return rotated.reshape(orig_shape)
-
+# (Previous helper functions: _compute_rope, _apply_rope, create_inputs, _choose_tpu_block, _dtype_nbytes, _estimate_gemm_working_set_bytes, _candidate_blocks, _pick_gemm_tiles)
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    # Strategy 6: Keep long-lived storage in bf16 to save 50% VMEM space
-    k_latent_all = k_latent_ref[0, :, :] # [S, kvl] bf16
-    k_rope_all = k_rope_ref[0, 0, :, :]   # [S, rope] bf16
-    k_up = k_up_ref[0, :, :]             # [kvl, nope] bf16
-    v_up = v_up_ref[0, :, :]             # [kvl, DV] bf16
+    """Persistent FlashAttention-style streaming kernel with latent-stationary KV.
+    
+    Optimized to slice K/V tiles to strictly valid shapes before matmul,
+    avoiding padded arithmetic on out-of-bounds elements.
+    """
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
 
     seq_len = k_latent_all.shape[0]
     dv = v_up.shape[1]
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+
     num_q_groups = seq_len // q_group
 
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        # Keep tile in bf16 until computation
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :]
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :]
         
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
         active_kv_blocks = (q_end + kv_block - 1) // kv_block
 
-        # Accumulators must be float32
         m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            k_latent_tile = k_latent_all[kv_start:kv_start + kv_block, :]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
             
-            # Upcast to f32 right before MXU/VPU operations
-            k_lat_f32 = k_latent_tile.astype(jnp.float32)
-            k_up_f32 = k_up.astype(jnp.float32)
-            v_up_f32 = v_up.astype(jnp.float32)
-            q_nope_f32 = q_nope_tile.astype(jnp.float32)
-            q_rope_f32 = q_rope_tile.astype(jnp.float32)
-            k_rope_f32 = k_rope_tile.astype(jnp.float32)
+            # OPTIMIZATION: Calculate the strictly valid length for this specific block
+            # to avoid padded VPU arithmetic on out-of-bounds elements.
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
 
+            # Slice inputs to the valid shape: [valid_len, ...]
+            k_latent_tile = k_latent_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+
+            # Compute K and V projections on the strictly sized tile.
+            # Matmul M-dimension is now \'valid_len\' instead of \'kv_block\'.
             k_nope_tile = jax.lax.dot_general(
-                k_lat_f32, k_up_f32,
+                k_latent_tile,
+                k_up,
                 dimension_numbers=(((1,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             v_tile = jax.lax.dot_general(
-                k_lat_f32, v_up_f32,
+                k_latent_tile,
+                v_up,
                 dimension_numbers=(((1,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
 
+            # Split score computation on strictly sized tiles.
             scores_nope = jax.lax.dot_general(
-                q_nope_f32, k_nope_tile,
+                q_nope_tile,
+                k_nope_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             scores_rope = jax.lax.dot_general(
-                q_rope_f32, k_rope_f32,
+                q_rope_tile,
+                k_rope_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             scores = scores_nope + scores_rope
 
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                causal_mask = q_pos[:, None] >= k_pos
-                scores = jnp.where(causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32))
+            # Apply causal mask.
+            # Since the slice is strictly sized, all elements are valid data.
+            # We only need to mask if the query index is less than the key index.
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
 
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
             exp_m_scale = jnp.exp(m - new_m)
             exp_scores = jnp.exp(scores - new_m[:, None])
             l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            
+            # Matmul for accumulation uses the strictly sized exp_scores [q_group, valid_len]
             acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
-                exp_scores, v_tile,
+                exp_scores,
+                v_tile,
                 dimension_numbers=(((1,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
@@ -7984,57 +7675,7 @@ def _flash_attention_kernel(
 
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
-
-def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
-    C = CONFIG
-    B, S, E = x.shape
-    H, nope, rope, vd = C["num_heads"], C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
-    kvl = C["kv_lora_rank"]
-
-    x2d = x.reshape(B * S, E)
-    q_low2d = jax.lax.dot_general(x2d, q_down_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
-    q2d = jax.lax.dot_general(q_low2d, q_up_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
-    q = q2d.reshape(B, S, H, nope + rope)
-    q_nope, q_rope = q[..., :nope], q[..., nope:]
-
-    kv2d = jax.lax.dot_general(x2d, kv_down_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
-    kv = kv2d.reshape(B, S, kvl + rope)
-    k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
-
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
-    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-    q_rope = _apply_rope(q_rope, cos, sin)
-    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin)
-
-    q_nope = q_nope.transpose(0, 2, 1, 3)
-    q_rope = q_rope.transpose(0, 2, 1, 3)
-    k_rope = k_rope.transpose(0, 2, 1, 3)
-
-    scale = (nope + rope) ** -0.5
-    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
-    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
-
-    out = pl.pallas_call(
-        _flash_attention_kernel,
-        out_shape=[jax.ShapeDtypeStruct((B, H, S, vd), q_nope.dtype)],
-        grid=(B, H),
-        in_specs=[
-            pl.BlockSpec((1, 1, S, nope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, S, kvl), lambda b, h: (b, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, 0, 0, 0)),
-            pl.BlockSpec((1, kvl, nope), lambda b, h: (h, 0, 0)),
-            pl.BlockSpec((1, kvl, vd), lambda b, h: (h, 0, 0)),
-        ],
-        out_specs=[pl.BlockSpec((1, 1, S, vd), lambda b, h: (b, h, 0, 0))],
-        compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel")),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-
-    out2d = out.transpose(0, 2, 1, 3).reshape(B * S, H * vd)
-    final2d = jax.lax.dot_general(out2d, o_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
-    return final2d.reshape(B, S, E)
+# _flash_attention and workload functions remain unchanged
 ```''',
 code='''
 import jax
@@ -8208,28 +7849,37 @@ def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
 
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    """Persistent FlashAttention-style streaming kernel with MLA latent KV.
+    """Persistent FlashAttention-style streaming kernel with latent-stationary KV.
 
     Grid: (batch, head)
     Block shapes:
       q_nope_ref: [1, 1, S, nope]
       q_rope_ref: [1, 1, S, rope]
-      k_latent_ref: [1, S, kvl]      (shared across heads)
-      k_rope_ref: [1, 1, S, rope]    (shared across heads)
-      k_up_ref: [1, kvl, nope]       (per-head)
-      v_up_ref: [1, kvl, DV]         (per-head)
-      o_ref: [1, 1, S, DV]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
 
-    Strategy 6: Keep long-lived storage in bf16 to save 50% VMEM space.
-    Only upcast to f32 right before MXU/VPU operations on each tile.
+    Optimized to slice K/V tiles to strictly valid shapes before matmul,
+    avoiding padded arithmetic on out-of-bounds elements.
     """
-    # Keep full-sequence arrays in bf16 to reduce VMEM footprint
-    k_latent_all = k_latent_ref[0, :, :]  # [S, kvl] bf16
-    k_rope_all = k_rope_ref[0, 0, :, :]   # [S, rope] bf16
-    k_up = k_up_ref[0, :, :]              # [kvl, nope] bf16
-    v_up = v_up_ref[0, :, :]              # [kvl, DV] bf16
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    # Preload and convert Q tensors once to avoid per-iteration dtype conversions
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
 
     seq_len = k_latent_all.shape[0]
     dv = v_up.shape[1]
@@ -8241,65 +7891,56 @@ def _flash_attention_kernel(
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        # Keep Q tiles in bf16 until computation
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :]
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :]
+        # Slice from pre-converted float32 arrays instead of converting per iteration
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
         active_kv_blocks = (q_end + kv_block - 1) // kv_block
 
-        # Accumulators must be float32 for numerical stability
         m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            # Extract KV tiles (still bf16)
-            k_latent_tile = k_latent_all[kv_start:kv_start + kv_block, :]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
 
-            # Upcast to f32 right before MXU/VPU operations
-            k_lat_f32 = k_latent_tile.astype(jnp.float32)
-            k_up_f32 = k_up.astype(jnp.float32)
-            v_up_f32 = v_up.astype(jnp.float32)
-            q_nope_f32 = q_nope_tile.astype(jnp.float32)
-            q_rope_f32 = q_rope_tile.astype(jnp.float32)
-            k_rope_f32 = k_rope_tile.astype(jnp.float32)
-
+            k_latent_tile = k_latent_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
             k_nope_tile = jax.lax.dot_general(
-                k_lat_f32,
-                k_up_f32,
+                k_latent_tile,
+                k_up,
                 dimension_numbers=(((1,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             v_tile = jax.lax.dot_general(
-                k_lat_f32,
-                v_up_f32,
+                k_latent_tile,
+                v_up,
                 dimension_numbers=(((1,), (0,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
 
             # Split score computation: q_nope @ k_nope.T + q_rope @ k_rope.T
             scores_nope = jax.lax.dot_general(
-                q_nope_f32,
+                q_nope_tile,
                 k_nope_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             scores_rope = jax.lax.dot_general(
-                q_rope_f32,
-                k_rope_f32,
+                q_rope_tile,
+                k_rope_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
             scores = scores_nope + scores_rope
 
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                causal_mask = q_pos[:, None] >= k_pos
-                scores = jnp.where(
-                    causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
-                )
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
 
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
@@ -8317,22 +7958,20 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(
-    q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads, block_q=_FLASH_BLOCK_Q
-):
-    """Blocked causal attention with MLA latent KV kept unexpanded until on-chip use.
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
 
     Args:
         q_nope: [B, H, S, nope] - query nope component
         q_rope: [B, H, S, rope] - query rope component
-        k_latent: [B, S, kvl] - latent key/value state shared across heads
+        k_latent: [B, S, kvl] - compressed shared KV latent
         k_rope: [B, 1, S, rope] - key rope component (shared across heads)
-        k_up_heads: [H, kvl, nope] - per-head key expansion weights
-        v_up_heads: [H, kvl, DV] - per-head value expansion weights
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
     """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
     if S % block_q != 0:
@@ -8366,7 +8005,7 @@ def _flash_attention(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
     return outs[0]
 
 
@@ -8406,9 +8045,6 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
     # RoPE.
     cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
     # Apply RoPE to q_rope [B, S, H, rope]
@@ -8417,10 +8053,12 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
     k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
 
-    # Attention inputs - keep nope and rope separate and retain latent KV shared across heads.
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
     q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
     q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
     k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
     # Apply scaling to query components
     hd = nope + rope
@@ -8428,8 +8066,8 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
     q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
 
-    # FlashAttention-style fused causal attention with split nope/rope and latent KV.
-    # This avoids materializing dense per-head K/V in HBM before attention.
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
     out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
     out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
@@ -8444,30 +8082,503 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
 
     return final2d.reshape(B, S, E)
 ''',
-score=3.139,
+score=3.114,
 translation_score=None,
 hw_feedback=[],
-plan_gen_model='gemini-3-flash-preview',
+plan_gen_model='zai.glm-5',
+code_gen_model='gpt-5.4',
+stdout='Latency: 3.114 ms\n{"correct": true, "latency": 3.114, "error": "", "all_times_ms": [3.099, 3.104, 3.104, 3.105, 3.106, 3.106, 3.107, 3.107, 3.107, 3.107, 3.107, 3.108, 3.108, 3.108, 3.109, 3.109, 3.109, 3.109, 3.109, 3.11, 3.11, 3.11, 3.11, 3.11, 3.11, 3.11, 3.11, 3.111, 3.111, 3.111, 3.111, 3.111, 3.111, 3.112, 3.112, 3.112, 3.112, 3.112, 3.112, 3.112, 3.112, 3.112, 3.113, 3.113, 3.113, 3.113, 3.113, 3.114, 3.114, 3.114, 3.114, 3.114, 3.114, 3.115, 3.115, 3.115, 3.115, 3.115, 3.115, 3.115, 3.115, 3.116, 3.116, 3.117, 3.117, 3.117, 3.118, 3.118, 3.118, 3.118, 3.118, 3.118, 3.119, 3.119, 3.119, 3.119, 3.119, 3.119, 3.119, 3.119, 3.119, 3.119, 3.12, 3.121, 3.121, 3.121, 3.121, 3.121, 3.122, 3.122, 3.122, 3.122, 3.122, 3.123, 3.124, 3.124, 3.124, 3.127, 3.129, 3.194], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stderr=''),
+plan='''Looking at the code, I need to identify inefficiencies and apply one optimization strategy.
+
+## Analysis
+
+The `_flash_attention_kernel` computes attention scores using two separate matmuls:
+
+```python
+scores_nope = jax.lax.dot_general(
+    q_nope_tile,
+    k_nope_tile,
+    dimension_numbers=(((1,), (1,)), ((), ())),
+    preferred_element_type=jnp.float32,
+)
+scores_rope = jax.lax.dot_general(
+    q_rope_tile,
+    k_rope_tile,
+    dimension_numbers=(((1,), (1,)), ((), ())),
+    preferred_element_type=jnp.float32,
+)
+scores = scores_nope + scores_rope
+```
+
+This pattern computes `Q_nope @ K_nope.T + Q_rope @ K_rope.T`, which is mathematically equivalent to `[Q_nope, Q_rope] @ [K_nope, K_rope].T` - a single concatenated matmul.
+
+## Plan: Apply Strategy 7 - Concatenate q_nope/q_rope and k_nope/k_rope to replace two score matmuls with one larger fused matmul
+
+### Current Inefficiency
+The kernel performs two separate matrix multiplications for computing attention scores:
+1. `q_nope_tile @ k_nope_tile.T` with shape `(q_group, nope) @ (valid_len, nope).T → (q_group, valid_len)`
+2. `q_rope_tile @ k_rope_tile.T` with shape `(q_group, rope) @ (valid_len, rope).T → (q_group, valid_len)`
+
+These two matmuls are then summed. This requires:
+- Two separate MXU invocations with associated overhead
+- Additional memory traffic for the intermediate results
+- An extra elementwise addition
+
+### Proposed Change
+Concatenate the query components `[q_nope_tile, q_rope_tile]` along the last axis to form `q_concat` of shape `(q_group, nope + rope)`. Similarly, concatenate key components `[k_nope_tile, k_rope_tile]` to form `k_concat` of shape `(valid_len, nope + rope)`. Then compute a single matmul:
+
+```python
+q_concat = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)  # (q_group, nope+rope)
+k_concat = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)  # (valid_len, nope+rope)
+scores = jax.lax.dot_general(
+    q_concat,
+    k_concat,
+    dimension_numbers=(((1,), (1,)), ((), ())),
+    preferred_element_type=jnp.float32,
+)
+```
+
+### Implementation Details
+1. **Precompute concatenated Q outside the KV loop**: Before entering the KV block loop, concatenate `q_nope_tile` and `q_rope_tile` once per Q group. This avoids redundant concatenation per KV block.
+
+2. **Concatenate K inside the KV loop**: After computing `k_nope_tile` from `k_latent_tile @ k_up`, concatenate it with `k_rope_tile` before the score computation.
+
+3. **Dimensions**:
+   - `nope = 128`, `rope = 64`, so `nope + rope = 192`
+   - The fused matmul is `(q_group, 192) @ (valid_len, 192).T → (q_group, valid_len)`
+   - This is larger and more efficient for the MXU than two smaller matmuls
+
+### Benefits
+- Reduces MXU kernel launch overhead by ~50% for score computation
+- Eliminates the elementwise addition of `scores_nope + scores_rope`
+- Better arithmetic intensity as the larger matmul has better compute-to-memory ratio
+- The concatenation overhead is minimal compared to matmul savings, especially when Q concatenation is hoisted outside the KV loop''',
+code='''
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "deepseek_v3_mla",
+    "model": "DeepSeek-V3-671B",
+    "operator": "mla_attention",
+    "batch": 1,
+    "seq_len": 2048,
+    "emb_dim": 7168,
+    "num_heads": 128,
+    "q_lora_rank": 1536,
+    "kv_lora_rank": 512,
+    "qk_nope_head_dim": 128,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 128,
+    "rope_theta": 10000,
+}
+
+
+# Conservative per-kernel VMEM working-set target for v6e-1.
+# This leaves headroom for compiler temporaries and pipeline buffering.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
+_FLASH_BLOCK_Q = 128
+# Larger Q grouping amortizes full-sequence K/V loads across multiple Q tiles.
+_FLASH_Q_GROUP = 4
+# INCREASED from 128 to 256 for better compute-to-memory ratio
+# This reduces KV block loads from 16 to 8, improving memory bandwidth utilization
+_FLASH_BLOCK_KV = 256
+
+
+def _compute_rope(head_dim, seq_len, theta, dtype):
+    freqs = 1.0 / (theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim))
+    pos = jnp.arange(seq_len, dtype=jnp.float32)
+    angles = jnp.outer(pos, freqs)
+    return jnp.cos(angles).astype(dtype), jnp.sin(angles).astype(dtype)
+
+
+def _apply_rope(x, cos, sin):
+    x1, x2 = x[..., ::2], x[..., 1::2]
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
+    return rotated.reshape(x.shape)
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (x, q_down, q_up, kv_down, k_up, v_up, o_proj)."""
+    key = jax.random.PRNGKey(42)
+    keys = jax.random.split(key, 8)
+    C = CONFIG
+    B, S, E = C["batch"], C["seq_len"], C["emb_dim"]
+    H = C["num_heads"]
+    ql, kvl = C["q_lora_rank"], C["kv_lora_rank"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+
+    x = jax.random.normal(keys[0], (B, S, E), dtype=dtype)
+    q_down = jax.random.normal(keys[1], (E, ql), dtype=dtype) * 0.02
+    q_up = jax.random.normal(keys[2], (ql, H * (nope + rope)), dtype=dtype) * 0.02
+    kv_down = jax.random.normal(keys[3], (E, kvl + rope), dtype=dtype) * 0.02
+    k_up = jax.random.normal(keys[4], (kvl, H * nope), dtype=dtype) * 0.02
+    v_up = jax.random.normal(keys[5], (kvl, H * vd), dtype=dtype) * 0.02
+    o_proj = jax.random.normal(keys[6], (H * vd, E), dtype=dtype) * 0.02
+    return x, q_down, q_up, kv_down, k_up, v_up, o_proj
+
+
+def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    """Choose a TPU-valid block size for one axis.
+
+    Returns either:
+      * a divisor of `dim` aligned to `multiple`, or
+      * the full dimension `dim` (which is also legal on TPU block axes).
+    """
+    preferred = min(dim, preferred)
+    if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
+        return preferred
+
+    start = preferred - (preferred % multiple)
+    for candidate in range(start, multiple - 1, -multiple):
+        if candidate > 0 and dim % candidate == 0:
+            return candidate
+
+    return dim
+
+
+def _dtype_nbytes(dtype) -> int:
+    return jnp.dtype(dtype).itemsize
+
+
+def _estimate_gemm_working_set_bytes(
+    bm: int, bn: int, bk: int, in_dtype, out_dtype
+) -> int:
+    """Approximate live VMEM footprint under TPU double-buffered pipelining."""
+    in_b = _dtype_nbytes(in_dtype)
+    out_b = _dtype_nbytes(out_dtype)
+
+    # Inputs and outputs are typically double buffered by the TPU pipeline.
+    a_bytes = 2 * bm * bk * in_b
+    b_bytes = 2 * bk * bn * in_b
+    c_bytes = 2 * bm * bn * out_b
+
+    # Accumulator scratch is float32 and must stay live across K-reduction steps.
+    acc_bytes = bm * bn * 4
+
+    return a_bytes + b_bytes + c_bytes + acc_bytes
+
+
+def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    """Generate legal block candidates, largest first."""
+    candidates = {dim}  # full-dimension fallback is always legal on TPU
+    capped = min(dim, preferred)
+
+    if multiple == 8:
+        common = (512, 256, 128, 64, 32, 16, 8)
+    else:
+        common = (1024, 512, 256, 128)
+
+    for seed in (capped,) + common:
+        if seed <= 0 or seed > dim:
+            continue
+        if seed == dim:
+            candidates.add(seed)
+            continue
+        rounded = seed - (seed % multiple)
+        while rounded >= multiple:
+            if dim % rounded == 0:
+                candidates.add(rounded)
+                break
+            rounded -= multiple
+
+    return sorted(candidates, reverse=True)
+
+
+def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    """Pick TPU-valid tiles that fit comfortably in v6e VMEM."""
+    bm_candidates = _candidate_blocks(M, bm, 8)
+    bn_candidates = _candidate_blocks(N, bn, 128)
+    bk_candidates = _candidate_blocks(K, bk, 128)
+
+    best = None
+    best_score = None
+    for bm_c in bm_candidates:
+        for bn_c in bn_candidates:
+            for bk_c in bk_candidates:
+                working_set = _estimate_gemm_working_set_bytes(
+                    bm_c, bn_c, bk_c, dtype, dtype
+                )
+                if working_set > _V6E_GEMM_WORKING_SET_BUDGET:
+                    continue
+
+                # Maximize useful work first, then favor larger output tiles.
+                score = (bm_c * bn_c * bk_c, bm_c * bn_c, bn_c, bm_c, bk_c)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (bm_c, bn_c, bk_c)
+
+    if best is not None:
+        return best
+
+    # Guaranteed-valid fallback.
+    return (
+        _choose_tpu_block(M, bm, 8),
+        _choose_tpu_block(N, bn, 128),
+        _choose_tpu_block(K, bk, 128),
+    )
+
+
+def _flash_attention_kernel(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Persistent FlashAttention-style streaming kernel with latent-stationary KV.
+
+    Grid: (batch, head)
+    Block shapes:
+      q_nope_ref: [1, 1, S, nope]
+      q_rope_ref: [1, 1, S, rope]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
+
+    Optimized to slice K/V tiles to strictly valid shapes before matmul,
+    avoiding padded arithmetic on out-of-bounds elements.
+    """
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    # Preload and convert Q tensors once to avoid per-iteration dtype conversions
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
+    kv_block = _FLASH_BLOCK_KV
+    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+
+    num_q_groups = seq_len // q_group
+
+    for qg in range(num_q_groups):
+        q_start = qg * q_group
+        q_end = q_start + q_group
+        # Slice from pre-converted float32 arrays instead of converting per iteration
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        # Concatenate Q components once per Q group (hoisted outside KV loop)
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)  # (q_group, nope+rope)
+        q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
+
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
+        l = jnp.zeros((q_group,), dtype=jnp.float32)
+        acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
+
+        for kv_idx in range(active_kv_blocks):
+            kv_start = kv_idx * kv_block
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
+
+            k_latent_tile = k_latent_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            k_nope_tile = jax.lax.dot_general(
+                k_latent_tile,
+                k_up,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            v_tile = jax.lax.dot_general(
+                k_latent_tile,
+                v_up,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            # Fused score computation: concatenate K components and use single matmul
+            # [q_nope, q_rope] @ [k_nope, k_rope].T = q_nope @ k_nope.T + q_rope @ k_rope.T
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)  # (valid_len, nope+rope)
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
+
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            m = new_m
+
+        o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
+
+
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
+
+    Args:
+        q_nope: [B, H, S, nope] - query nope component
+        q_rope: [B, H, S, rope] - query rope component
+        k_latent: [B, S, kvl] - compressed shared KV latent
+        k_rope: [B, 1, S, rope] - key rope component (shared across heads)
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
+    """
+    B, H, S, nope = q_nope.shape
+    rope = q_rope.shape[-1]
+    DV = v_up_proj.shape[-1]
+    kvl = k_latent.shape[-1]
+
+    if S % block_q != 0:
+        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={block_q}")
+    if S % _FLASH_BLOCK_KV != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by KV block: S={S}, kv_block={_FLASH_BLOCK_KV}"
+        )
+
+    q_group = block_q * _FLASH_Q_GROUP
+    if S % q_group != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by grouped Q block: S={S}, q_group={q_group}"
+        )
+
+    outs = pl.pallas_call(
+        _flash_attention_kernel,
+        out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
+        grid=(B, H),
+        in_specs=[
+            pl.BlockSpec((1, 1, S, nope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, S, kvl), lambda b0, h0: (b0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, 0, 0, 0)),
+            pl.BlockSpec((1, kvl, nope), lambda b0, h0: (h0, 0, 0)),
+            pl.BlockSpec((1, kvl, DV), lambda b0, h0: (h0, 0, 0)),
+        ],
+        out_specs=[
+            pl.BlockSpec((1, 1, S, DV), lambda b0, h0: (b0, h0, 0, 0)),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=("parallel", "parallel"),
+        ),
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
+    return outs[0]
+
+
+def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
+    C = CONFIG
+    B, S, E = x.shape
+    H = C["num_heads"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+    kvl = C["kv_lora_rank"]
+
+    # Flatten batch and sequence for dense projections.
+    x2d = x.reshape(B * S, E)
+
+    # Use XLA-optimized dense matmuls for straightforward projections.
+    q_low2d = jax.lax.dot_general(
+        x2d,
+        q_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q2d = jax.lax.dot_general(
+        q_low2d,
+        q_up_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
+    q_nope, q_rope = q[..., :nope], q[..., nope:]
+
+    kv2d = jax.lax.dot_general(
+        x2d,
+        kv_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
+    k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
+
+    # RoPE.
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
+    # Apply RoPE to q_rope [B, S, H, rope]
+    q_rope = _apply_rope(q_rope, cos, sin)
+    # Apply RoPE to k_rope_raw [B, S, rope] - keep it head-shared
+    k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
+    k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
+
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
+    q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
+    q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
+    k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
+
+    # Apply scaling to query components
+    hd = nope + rope
+    scale = hd ** -0.5
+    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
+    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
+
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
+
+    # Output projection.
+    out2d = out.reshape(B * S, H * vd)
+    final2d = jax.lax.dot_general(
+        out2d,
+        o_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+
+    return final2d.reshape(B, S, E)
+''',
+score=3.039,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
 code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
-stdout='Latency: 3.139 ms\n{"correct": true, "latency": 3.139, "error": "", "all_times_ms": [3.125, 3.13, 3.13, 3.13, 3.131, 3.131, 3.131, 3.131, 3.132, 3.132, 3.132, 3.133, 3.133, 3.133, 3.133, 3.133, 3.134, 3.134, 3.134, 3.134, 3.135, 3.135, 3.135, 3.135, 3.135, 3.135, 3.136, 3.136, 3.136, 3.136, 3.136, 3.136, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.137, 3.138, 3.138, 3.138, 3.138, 3.138, 3.138, 3.138, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.139, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.141, 3.141, 3.141, 3.141, 3.142, 3.142, 3.142, 3.142, 3.143, 3.143, 3.143, 3.143, 3.143, 3.144, 3.144, 3.144, 3.144, 3.144, 3.144, 3.145, 3.146, 3.146, 3.146, 3.146, 3.146, 3.149, 3.149, 3.15, 3.151, 3.151, 3.152, 3.152, 3.152, 3.154, 3.154, 3.156, 3.16, 3.214, 3.633], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stdout='Latency: 3.039 ms\n{"correct": true, "latency": 3.039, "error": "", "all_times_ms": [3.025, 3.026, 3.028, 3.028, 3.03, 3.031, 3.032, 3.032, 3.032, 3.033, 3.033, 3.033, 3.033, 3.033, 3.034, 3.034, 3.034, 3.034, 3.034, 3.035, 3.035, 3.035, 3.035, 3.035, 3.035, 3.035, 3.035, 3.036, 3.036, 3.036, 3.036, 3.036, 3.037, 3.037, 3.037, 3.037, 3.037, 3.037, 3.037, 3.037, 3.037, 3.037, 3.038, 3.038, 3.038, 3.038, 3.038, 3.038, 3.038, 3.039, 3.039, 3.039, 3.039, 3.039, 3.039, 3.039, 3.04, 3.04, 3.041, 3.041, 3.041, 3.042, 3.042, 3.042, 3.042, 3.042, 3.042, 3.042, 3.043, 3.043, 3.043, 3.043, 3.043, 3.043, 3.044, 3.044, 3.044, 3.045, 3.045, 3.045, 3.046, 3.046, 3.046, 3.047, 3.047, 3.047, 3.048, 3.049, 3.049, 3.05, 3.05, 3.051, 3.054, 3.055, 3.056, 3.058, 3.058, 3.06, 3.06, 3.097], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr=''),
 plan='''
 
-Looking at this DeepSeek V3 MLA attention implementation, I can identify a significant inefficiency in the `_flash_attention_kernel`. Currently, for each KV block, the code performs **two separate matmuls** loading `k_lat` twice:
+Looking at the code, I can see a significant inefficiency: **the K and V expansion from latent dimension to full head dimension is being recomputed for every Q-group within the kernel**. Since the K/V latent tensors don\'t change across Q-groups (they only change per head), we should pre-expand them once per head and cache the results. This is a major compute waste.
 
-1. `k_nope_tile = k_lat_f32 @ k_up_f32`
-2. `v_tile = k_lat_f32 @ v_up_f32`
+Additionally, the kernel structure iterates over Q-groups with a nested loop over KV blocks, and the K/V expansion matrices `k_up` and `v_up` are used repeatedly for each Q-group iteration, but they\'re loaded/converted every time.
 
-This means `k_lat_f32` is loaded from VMEM twice per KV block iteration, causing redundant memory traffic.
+## Optimization Strategy: Pre-expand K/V per head and fuse K transpose
 
-**Strategy 7: Concatenate k_up and v_up along the output-channel axis and do one larger expansion matmul from the same k_latent_tile, then split the result into k_nope_tile and v_tile to amortize lhs loads and improve MXU efficiency.**
+The key optimization is:
+1. **Pre-expand KV once per head**: Expand `k_latent -> k_full` and `v_latent -> v_full` once before the Q-group loop, then reuse for all Q-groups
+2. **Cache the expansion matrices**: Keep `k_up` and `v_up` inregisters/float32 for the entire head computation
+3. **Better memory access pattern**: Load the full K/V tiles once and reuse across Q-groups
 
-This will:
-- Reduce k_lat load from 2× to 1× per KV block
-- Improve MXU efficiency with a single larger matmul instead of two smaller ones
-- The concatenated matmul [kv_block, kvl] @ [kvl, nope+DV] → [kv_block, nope+DV] is more efficient than two separate [kv_block, kvl] @ [kvl, X] operations
+This changes the algorithm from "expand K/V for each Q-group" to "expand K/V once per head, then do FlashAttention".
 
-Here\'s the optimized code:
+Let me rewrite the code:
 
 ```python
 import jax
@@ -8493,7 +8604,8 @@ CONFIG = {
 }
 
 
-_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024
+# Conservative per-kernel VMEM working-set target for v6e-1.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
 _FLASH_BLOCK_Q = 128
 _FLASH_Q_GROUP = 4
 _FLASH_BLOCK_KV = 256
@@ -8515,6 +8627,7 @@ def _apply_rope(x, cos, sin):
 
 
 def create_inputs(dtype=jnp.bfloat16):
+    """Returns (x, q_down, q_up, kv_down, k_up, v_up, o_proj)."""
     key = jax.random.PRNGKey(42)
     keys = jax.random.split(key, 8)
     C = CONFIG
@@ -8534,6 +8647,7 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    """Choose a TPU-valid block size for one axis."""
     preferred = min(dim, preferred)
     if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
         return preferred
@@ -8553,19 +8667,20 @@ def _dtype_nbytes(dtype) -> int:
 def _estimate_gemm_working_set_bytes(
     bm: int, bn: int, bk: int, in_dtype, out_dtype
 ) -> int:
+    """Approximate live VMEM footprint under TPU double-buffered pipelining."""
     in_b = _dtype_nbytes(in_dtype)
     out_b = _dtype_nbytes(out_dtype)
 
     a_bytes = 2 * bm * bk * in_b
     b_bytes = 2 * bk * bn * in_b
     c_bytes = 2 * bm * bn * out_b
-
     acc_bytes = bm * bn * 4
 
     return a_bytes + b_bytes + c_bytes + acc_bytes
 
 
 def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    """Generate legal block candidates, largest first."""
     candidates = {dim}
     capped = min(dim, preferred)
 
@@ -8591,6 +8706,7 @@ def _candidate_blocks(dim: int, preferred: int, multiple: int):
 
 
 def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    """Pick TPU-valid tiles that fit comfortably in v6e VMEM."""
     bm_candidates = _candidate_blocks(M, bm, 8)
     bn_candidates = _candidate_blocks(N, bn, 128)
     bk_candidates = _candidate_blocks(K, bk, 128)
@@ -8622,89 +8738,111 @@ def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
 
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    """Persistent FlashAttention-style streaming kernel with MLA latent KV.
+    """Optimized FlashAttention with pre-expanded K/V per head.
     
-    Optimized: Single matmul for k_nope and v expansion by concatenating k_up and v_up.
+    Key optimization: Expand K/V from latent dimension ONCE per head,
+    then reuse for all Q-groups. This eliminates redundant expansion work.
+    
+    Grid: (batch, head)
     """
-    k_latent_all = k_latent_ref[0, :, :]
-    k_rope_all = k_rope_ref[0, 0, :, :]
-    k_up = k_up_ref[0, :, :]
-    v_up = v_up_ref[0, :, :]
-
+    # Load Q components
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    
+    # Load KV latent and rope
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    
+    # Load expansion matrices ONCE per head (cached in registers)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+    
     seq_len = k_latent_all.shape[0]
     dv = v_up.shape[1]
     nope = k_up.shape[1]
+    rope = k_rope_all.shape[-1]
+    
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
-
     num_q_groups = seq_len // q_group
-
-    # Pre-concatenate k_up and v_up along output dimension for single matmul
-    # [kvl, nope] + [kvl, dv] -> [kvl, nope + dv]
-    k_up_f32 = k_up.astype(jnp.float32)
-    v_up_f32 = v_up.astype(jnp.float32)
-    kv_up_concat = jnp.concatenate([k_up_f32, v_up_f32], axis=1)  # [kvl, nope + dv]
-
+    
+    # Pre-expand K and V for the ENTIRE sequence ONCE per head
+    # This is the key optimization: instead of expanding per Q-group,
+    # we expand once and cache the full K/V tensors
+    k_expanded = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )  # [S, nope]
+    
+    v_expanded = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )  # [S, dv]
+    
+    # Now iterate over Q groups using the pre-expanded K/V
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :]
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :]
+        
+        # Get Q tiles
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        
+        # Concatenate Q components
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
+        
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        
+        # Compute number of KV blocks for this Q group
         active_kv_blocks = (q_end + kv_block - 1) // kv_block
-
+        
         m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
-
+        
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            k_latent_tile = k_latent_all[kv_start:kv_start + kv_block, :]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
-
-            # Upcast to f32
-            k_lat_f32 = k_latent_tile.astype(jnp.float32)
-            q_nope_f32 = q_nope_tile.astype(jnp.float32)
-            q_rope_f32 = q_rope_tile.astype(jnp.float32)
-            k_rope_f32 = k_rope_tile.astype(jnp.float32)
-
-            # Single matmul: k_lat @ concat(k_up, v_up) -> [kv_block, nope + dv]
-            # This amortizes the k_lat load across both k_nope and v computations
-            kv_expanded = jax.lax.dot_general(
-                k_lat_f32,
-                kv_up_concat,
-                dimension_numbers=(((1,), (0,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-
-            # Split the result into k_nope and v
-            k_nope_tile = kv_expanded[:, :nope]  # [kv_block, nope]
-            v_tile = kv_expanded[:, nope:]       # [kv_block, dv]
-
-            # Score computation
-            scores_nope = jax.lax.dot_general(
-                q_nope_f32,
-                k_nope_tile,
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
+            
+            # Use pre-expanded K/V tiles
+            k_tile = k_expanded[kv_start:kv_end, :]
+            v_tile = v_expanded[kv_start:kv_end, :]
+            
+            # Get rope for this tile
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            
+            # Concatenate K components (nope + rope)
+            k_concat_tile = jnp.concatenate([k_tile, k_rope_tile], axis=-1)
+            
+            # Compute attention scores
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
-            scores_rope = jax.lax.dot_general(
-                q_rope_f32,
-                k_rope_f32,
-                dimension_numbers=(((1,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
+            
+            # Causal mask
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
             )
-            scores = scores_nope + scores_rope
-
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                causal_mask = q_pos[:, None] >= k_pos
-                scores = jnp.where(
-                    causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
-                )
-
+            
+            # Softmax
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
             exp_m_scale = jnp.exp(m - new_m)
@@ -8717,16 +8855,15 @@ def _flash_attention_kernel(
                 preferred_element_type=jnp.float32,
             )
             m = new_m
-
+        
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(
-    q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads, block_q=_FLASH_BLOCK_Q
-):
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with pre-expanded KV."""
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
     if S % block_q != 0:
@@ -8760,19 +8897,22 @@ def _flash_attention(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
     return outs[0]
 
 
 def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
     C = CONFIG
     B, S, E = x.shape
     H = C["num_heads"]
     nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
     kvl = C["kv_lora_rank"]
 
+    # Flatten batch and sequence for dense projections.
     x2d = x.reshape(B * S, E)
 
+    # Q projection: down proj -> up proj
     q_low2d = jax.lax.dot_general(
         x2d,
         q_down_proj,
@@ -8788,6 +8928,7 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     q = q2d.reshape(B, S, H, nope + rope)
     q_nope, q_rope = q[..., :nope], q[..., nope:]
 
+    # KV projection: down proj
     kv2d = jax.lax.dot_general(
         x2d,
         kv_down_proj,
@@ -8797,27 +8938,30 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
     # RoPE
-    cos, sin = _compute_rope(rope, S, C["ridge_theta"], x.dtype)
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
     q_rope = _apply_rope(q_rope, cos, sin)
     k_rope_raw_expanded = k_rope_raw[:, :, None, :]
     k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)
 
-    q_nope = q_nope.transpose(0, 2, 1, 3)
-    q_rope = q_rope.transpose(0, 2, 1, 3)
-    k_rope = k_rope.transpose(0, 2, 1, 3)
+    # Attention inputs - rearrange for attention kernel
+    q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
+    q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
+    k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
+    # Apply scaling
     hd = nope + rope
     scale = hd ** -0.5
     q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
     q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
 
+    # FlashAttention with pre-expanded KV
     out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
     out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
+    # Output projection
     out2d = out.reshape(B * S, H * vd)
     final2d = jax.lax.dot_general(
         out2d,
@@ -8829,21 +8973,20 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     return final2d.reshape(B, S, E)
 ```
 
-Wait, I notice there\'s a typo in the workload function - it says `C["ridge_theta"]` but should be `C["rope_theta"]`. Let me fix that:
+## How this improves performance:
 
-```python
-# In workload function, change:
-cos, sin = _compute_rope(rope, S, C["ridge_theta"], x.dtype)
-# To:
-cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-```
+1. **Eliminates redundant KV expansion**: The original code computed `k_nope = k_latent @ k_up` and `v_tile = k_latent @ v_up` for **every Q-group iteration** (16 times for S=2048, Q_GROUP=512). The new code expands K/V **once per head** and reuses the expanded tiles for all Q-groups.
 
-**Key changes made:**
-1. Moved `k_up_f32` and `v_up_f32` concatenation outside the Q-group loop (done once per head instead of once per Q-group)
-2. Replaced two separate matmuls (`k_lat @ k_up` and `k_lat @ v_up`) with a single concatenated matmul (`k_lat @ concat(k_up, v_up)`)
-3. Split the result into `k_nope_tile` and `v_tile` using slicing
+   Original work: `O(num_q_groups * active_kv_blocks * (kvl * nope + kvl * dv))`
+   New work: `O(active_kv_blocks * (kvl * nope + kvl * dv) + num_q_groups * active_kv_blocks * (nope + rope))`
+   
+   For the given config: num_q_groups=16, this is a ~16x reduction in expansion compute.
 
-This optimization reduces memory bandwidth by loading `k_lat_f32` only once per KV block (instead of twice), and improves compute efficiency by using a single larger matmul that can better utilize the MXU.''',
+2. **Better memory access pattern**: The expanded K and V tiles are loaded once and reused across all Q-group iterations, improving cache utilization.
+
+3. **Same semantic behavior**: The algorithm still computes exactly the same FlashAttention output - causal masked attention over the full sequence with RoPE applied to both Q and K.
+
+4. **VMEM footprint**: The pre-expanded K (`k_expanded [S, nope]`) and V (`v_expanded [S, dv]`) tensors are held in registers/VREG during the entire kernel, but they\'re used repeatedly so this is a good trade-off. The original code also held these in some form during the loop.''',
 code='''
 import jax
 import jax.numpy as jnp
@@ -9016,99 +9159,92 @@ def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
 
 
 def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, o_ref
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
 ):
-    """Persistent FlashAttention-style streaming kernel with MLA latent KV.
+    """Persistent FlashAttention-style streaming kernel with head-local KV expansion.
 
     Grid: (batch, head)
     Block shapes:
       q_nope_ref: [1, 1, S, nope]
       q_rope_ref: [1, 1, S, rope]
-      k_latent_ref: [1, S, kvl]      (shared across heads)
-      k_rope_ref: [1, 1, S, rope]    (shared across heads)
-      k_up_ref: [1, kvl, nope]       (per-head)
-      v_up_ref: [1, kvl, DV]         (per-head)
-      o_ref: [1, 1, S, DV]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
 
-    Strategy 7: fuse K/V expansion weights into one larger matmul so each
-    latent KV tile is read once per KV block, then split the expanded result
-    into K-nope and V tiles.
+    Key optimization: expand the full-sequence head-local K/V projections once per
+    (batch, head) program and reuse them across all Q groups instead of recomputing
+    them inside every Q-group/KV-block iteration.
     """
-    # Keep full-sequence arrays in bf16 to reduce VMEM footprint.
-    k_latent_all = k_latent_ref[0, :, :]  # [S, kvl] bf16
-    k_rope_all = k_rope_ref[0, 0, :, :]   # [S, rope] bf16
-    k_up = k_up_ref[0, :, :]              # [kvl, nope] bf16
-    v_up = v_up_ref[0, :, :]              # [kvl, DV] bf16
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
 
     seq_len = k_latent_all.shape[0]
-    nope = k_up.shape[1]
     dv = v_up.shape[1]
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
-
     num_q_groups = seq_len // q_group
 
-    # Hoist invariant casts/concatenation out of the streaming loops.
-    k_up_f32 = k_up.astype(jnp.float32)
-    v_up_f32 = v_up.astype(jnp.float32)
-    kv_up_f32 = jnp.concatenate([k_up_f32, v_up_f32], axis=1)  # [kvl, nope + dv]
+    # Pre-expand K/V once per head.
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
 
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        # Keep Q tiles in bf16 until computation.
-        q_nope_tile = q_nope_ref[0, 0, q_start:q_end, :]
-        q_rope_tile = q_rope_ref[0, 0, q_start:q_end, :]
-        q_nope_f32 = q_nope_tile.astype(jnp.float32)
-        q_rope_f32 = q_rope_tile.astype(jnp.float32)
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
         active_kv_blocks = (q_end + kv_block - 1) // kv_block
 
-        # Accumulators must be float32 for numerical stability.
         m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            # Extract KV tiles (still bf16).
-            k_latent_tile = k_latent_all[kv_start:kv_start + kv_block, :]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
 
-            # Upcast to f32 right before MXU/VPU operations.
-            k_lat_f32 = k_latent_tile.astype(jnp.float32)
-            k_rope_f32 = k_rope_tile.astype(jnp.float32)
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
 
-            kv_expanded = jax.lax.dot_general(
-                k_lat_f32,
-                kv_up_f32,
-                dimension_numbers=(((1,), (0,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            k_nope_tile = kv_expanded[:, :nope]
-            v_tile = kv_expanded[:, nope:]
-
-            # Split score computation: q_nope @ k_nope.T + q_rope @ k_rope.T
-            scores_nope = jax.lax.dot_general(
-                q_nope_f32,
-                k_nope_tile,
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
-            scores_rope = jax.lax.dot_general(
-                q_rope_f32,
-                k_rope_f32,
-                dimension_numbers=(((1,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            )
-            scores = scores_nope + scores_rope
 
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                causal_mask = q_pos[:, None] >= k_pos
-                scores = jnp.where(
-                    causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
-                )
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
 
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
@@ -9126,22 +9262,20 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(
-    q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads, block_q=_FLASH_BLOCK_Q
-):
-    """Blocked causal attention with MLA latent KV kept unexpanded until on-chip use.
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
 
     Args:
         q_nope: [B, H, S, nope] - query nope component
         q_rope: [B, H, S, rope] - query rope component
-        k_latent: [B, S, kvl] - latent key/value state shared across heads
+        k_latent: [B, S, kvl] - compressed shared KV latent
         k_rope: [B, 1, S, rope] - key rope component (shared across heads)
-        k_up_heads: [H, kvl, nope] - per-head key expansion weights
-        v_up_heads: [H, kvl, DV] - per-head value expansion weights
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
     """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
     if S % block_q != 0:
@@ -9175,7 +9309,7 @@ def _flash_attention(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
     return outs[0]
 
 
@@ -9215,9 +9349,6 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
     # RoPE.
     cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
     # Apply RoPE to q_rope [B, S, H, rope]
@@ -9226,10 +9357,12 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
     k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
 
-    # Attention inputs - keep nope and rope separate and retain latent KV shared across heads.
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
     q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
     q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
     k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
     # Apply scaling to query components
     hd = nope + rope
@@ -9237,8 +9370,8 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
     q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
 
-    # FlashAttention-style fused causal attention with split nope/rope and latent KV.
-    # This avoids materializing dense per-head K/V in HBM before attention.
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
     out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
     out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
@@ -9253,14 +9386,89 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
 
     return final2d.reshape(B, S, E)
 ''',
-score=3.103,
+score=2.814,
 translation_score=None,
 hw_feedback=[],
 plan_gen_model='minimax.minimax-m2.5',
 code_gen_model='gpt-5.4',
-stdout='Latency: 3.103 ms\n{"correct": true, "latency": 3.103, "error": "", "all_times_ms": [3.094, 3.094, 3.095, 3.095, 3.095, 3.096, 3.096, 3.096, 3.096, 3.097, 3.097, 3.097, 3.097, 3.097, 3.097, 3.098, 3.098, 3.098, 3.098, 3.098, 3.098, 3.098, 3.099, 3.099, 3.099, 3.099, 3.099, 3.099, 3.099, 3.099, 3.099, 3.099, 3.1, 3.1, 3.1, 3.1, 3.101, 3.101, 3.101, 3.101, 3.102, 3.102, 3.102, 3.102, 3.102, 3.103, 3.103, 3.103, 3.103, 3.103, 3.103, 3.103, 3.103, 3.104, 3.104, 3.104, 3.104, 3.104, 3.104, 3.105, 3.105, 3.106, 3.106, 3.106, 3.106, 3.106, 3.106, 3.107, 3.107, 3.108, 3.108, 3.108, 3.108, 3.108, 3.108, 3.109, 3.11, 3.11, 3.11, 3.11, 3.111, 3.111, 3.111, 3.111, 3.112, 3.112, 3.113, 3.113, 3.113, 3.113, 3.113, 3.114, 3.115, 3.115, 3.116, 3.116, 3.117, 3.118, 3.12, 3.168], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stdout='Latency: 2.814 ms\n{"correct": true, "latency": 2.814, "error": "", "all_times_ms": [2.801, 2.804, 2.804, 2.804, 2.805, 2.805, 2.806, 2.806, 2.806, 2.806, 2.807, 2.807, 2.807, 2.807, 2.807, 2.807, 2.808, 2.808, 2.808, 2.808, 2.809, 2.809, 2.809, 2.81, 2.81, 2.81, 2.81, 2.81, 2.81, 2.811, 2.811, 2.811, 2.811, 2.812, 2.812, 2.812, 2.812, 2.812, 2.812, 2.812, 2.813, 2.813, 2.813, 2.813, 2.813, 2.813, 2.814, 2.814, 2.814, 2.814, 2.814, 2.814, 2.814, 2.814, 2.815, 2.815, 2.815, 2.815, 2.815, 2.815, 2.816, 2.816, 2.816, 2.816, 2.817, 2.817, 2.817, 2.817, 2.817, 2.817, 2.817, 2.818, 2.818, 2.818, 2.819, 2.819, 2.819, 2.819, 2.819, 2.819, 2.82, 2.82, 2.821, 2.821, 2.822, 2.822, 2.823, 2.823, 2.827, 2.827, 2.827, 2.827, 2.828, 2.829, 2.833, 2.835, 2.837, 2.839, 2.877, 2.896], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr=''),
-plan='''```python
+plan='''Looking at this code, I need to identify inefficiencies and apply exactly one strategy to improve performance.
+
+## Analysis
+
+The main computational bottleneck is in `_flash_attention_kernel`. Looking at the RoPE application in the `workload` function, I see:
+
+```python
+def _apply_rope(x, cos, sin):
+    x1, x2 = x[..., ::2], x[..., 1::2]
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
+    return rotated.reshape(x.shape)
+```
+
+This implementation has several inefficiencies:
+1. Uses stride indexing (`::2`, `1::2`) which is problematic for TPU kernels
+2. Creates a stacked intermediate tensor that requires extra memory and a reshape
+3. The reshape on the last dimension can be expensive
+
+## Selected Strategy: Strategy 10
+
+**Rewrite RoPE application to a pairwise view/FMA form instead of `stack(...).reshape(...)`, so the rotation is done without creating an extra packed temporary tensor and with better memory locality.**
+
+## Plan
+
+The current `_apply_rope` function:
+1. Extracts even/odd elements using stride indexing (`x[..., ::2]`, `x[..., 1::2]`)
+2. Broadcasts cos/sin tensors
+3. Stacks results along a new axis
+4. Reshapes back to original shape
+
+This creates intermediate tensors and uses expensive reshape operations. The optimized approach will:
+
+1. **Reshape input to expose pairs**: Instead of stride indexing, reshape `x` from `(..., dim)` to `(..., dim//2, 2)` to group consecutive pairs
+2. **Extract elements with simple slicing**: Use `x_pairs[..., 0]` and `x_pairs[..., 1]` instead of stride indexing
+3. **Compute rotation in-place pattern**: Calculate rotated values for even and odd positions
+4. **Use concatenation instead of stack+reshape**: Concatenate the rotated even and odd results directly, avoiding the expensive `stack` + `reshape` combination
+
+The specific changes to make:
+
+```python
+def _apply_rope(x, cos, sin):
+    # Reshape to pair-wise view: (..., dim) -> (..., dim//2, 2)
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    
+    # Extract paired elements with simple indexing (no striding)
+    x1 = x_pairs[..., 0]  # even indices
+    x2 = x_pairs[..., 1]  # odd indices
+    
+    # Broadcast cos/sin appropriately
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    
+    # Compute rotated values
+    y1 = x1 * cos - x2 * sin  # new even
+    y2 = x1 * sin + x2 * cos  # new odd
+    
+    # Interleave back: reshape each to (..., dim//2, 1), concat, reshape
+    y1_exp = y1[..., None]  # (..., dim//2, 1)
+    y2_exp = y2[..., None]  # (..., dim//2, 1)
+    interleaved = jnp.concatenate([y1_exp, y2_exp], axis=-1)  # (..., dim//2, 2)
+    
+    return interleaved.reshape(x.shape)
+```
+
+This approach:
+- Avoids stride indexing which is unsupported in Pallas kernels
+- Uses reshape to expose the pair structure (allowed: reshaping leading dims)
+- Uses simple slicing `[..., 0]` and `[..., 1]` instead of `[..., ::2]`
+- Uses concatenate + reshape instead of stack + reshape, which has better memory locality
+- The final reshape from `(..., dim//2, 2)` to `(..., dim)` is a simple flatten of trailing dims
+
+This optimization applies to the host-side `workload` function where RoPE is computed, improving the preprocessing step before the attention kernel.''',
+code='''
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
@@ -9284,8 +9492,14 @@ CONFIG = {
 }
 
 
+# Conservative per-kernel VMEM working-set target for v6e-1.
+# This leaves headroom for compiler temporaries and pipeline buffering.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
 _FLASH_BLOCK_Q = 128
+# Larger Q grouping amortizes full-sequence K/V loads across multiple Q tiles.
 _FLASH_Q_GROUP = 4
+# INCREASED from 128 to 256 for better compute-to-memory ratio
+# This reduces KV block loads from 16 to 8, improving memory bandwidth utilization
 _FLASH_BLOCK_KV = 256
 
 
@@ -9297,16 +9511,32 @@ def _compute_rope(head_dim, seq_len, theta, dtype):
 
 
 def _apply_rope(x, cos, sin):
-    # TPU kernels don\'t support stride indexing [..., ::2], so we use reshape + slice.
-    # Outside the kernel (here), vanilla JAX is fine.
-    x1, x2 = x[..., ::2], x[..., 1::2]
+    # Reshape to pair-wise view: (..., dim) -> (..., dim//2, 2)
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    
+    # Extract paired elements with simple indexing (no striding)
+    x1 = x_pairs[..., 0]  # even indices
+    x2 = x_pairs[..., 1]  # odd indices
+    
+    # Broadcast cos/sin appropriately
     cos = cos[None, :, None, :]
     sin = sin[None, :, None, :]
-    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
-    return rotated.reshape(x.shape)
+    
+    # Compute rotated values
+    y1 = x1 * cos - x2 * sin  # new even
+    y2 = x1 * sin + x2 * cos  # new odd
+    
+    # Interleave back: reshape each to (..., dim//2, 1), concat, reshape
+    y1_exp = y1[..., None]  # (..., dim//2, 1)
+    y2_exp = y2[..., None]  # (..., dim//2, 1)
+    interleaved = jnp.concatenate([y1_exp, y2_exp], axis=-1)  # (..., dim//2, 2)
+    
+    return interleaved.reshape(x.shape)
 
 
 def create_inputs(dtype=jnp.bfloat16):
+    """Returns (x, q_down, q_up, kv_down, k_up, v_up, o_proj)."""
     key = jax.random.PRNGKey(42)
     keys = jax.random.split(key, 8)
     C = CONFIG
@@ -9325,121 +9555,465 @@ def create_inputs(dtype=jnp.bfloat16):
     return x, q_down, q_up, kv_down, k_up, v_up, o_proj
 
 
-def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref, 
-    o_ref, kv_expanded_scratch
-):
-    """FlashAttention kernel optimized with VMEM caching of expanded Latent KV.
-    
-    Strategy: Hoist the heavy latent KV expansion matmul out of the Q-group loop.
-    By pre-computing the head-specific expanded K-nope and V tiles for the entire 
-    sequence once and storing them in VMEM scratch, we avoid redundant matmuls 
-    across Q-group iterations.
-    """
-    # 1. Setup metadata
-    seq_len = k_latent_ref.shape[1]
-    kvl = k_latent_ref.shape[2]
-    nope = k_up_ref.shape[2]
-    dv = v_up_ref.shape[2]
-    
-    # 2. Hoist Expansion: Concatenate expansion weights once
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
-    kv_up_f32 = jnp.concatenate([k_up, v_up], axis=1) # [kvl, nope + dv]
-    
-    # 3. Cache Expansion: Compute all expanded KV for this head once and store in VMEM
-    # This avoids doing S/kv_block * S/q_group redundant GEMMs.
-    k_lat_all_f32 = k_latent_ref[0, :, :].astype(jnp.float32)
-    kv_expanded_all = jax.lax.dot_general(
-        k_lat_all_f32,
-        kv_up_f32,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
-    )
-    kv_expanded_scratch[...] = kv_expanded_all
+def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    """Choose a TPU-valid block size for one axis.
 
-    # 4. Process sequence in groups of Q blocks
+    Returns either:
+      * a divisor of `dim` aligned to `multiple`, or
+      * the full dimension `dim` (which is also legal on TPU block axes).
+    """
+    preferred = min(dim, preferred)
+    if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
+        return preferred
+
+    start = preferred - (preferred % multiple)
+    for candidate in range(start, multiple - 1, -multiple):
+        if candidate > 0 and dim % candidate == 0:
+            return candidate
+
+    return dim
+
+
+def _dtype_nbytes(dtype) -> int:
+    return jnp.dtype(dtype).itemsize
+
+
+def _estimate_gemm_working_set_bytes(
+    bm: int, bn: int, bk: int, in_dtype, out_dtype
+) -> int:
+    """Approximate live VMEM footprint under TPU double-buffered pipelining."""
+    in_b = _dtype_nbytes(in_dtype)
+    out_b = _dtype_nbytes(out_dtype)
+
+    # Inputs and outputs are typically double buffered by the TPU pipeline.
+    a_bytes = 2 * bm * bk * in_b
+    b_bytes = 2 * bk * bn * in_b
+    c_bytes = 2 * bm * bn * out_b
+
+    # Accumulator scratch is float32 and must stay live across K-reduction steps.
+    acc_bytes = bm * bn * 4
+
+    return a_bytes + b_bytes + c_bytes + acc_bytes
+
+
+def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    """Generate legal block candidates, largest first."""
+    candidates = {dim}  # full-dimension fallback is always legal on TPU
+    capped = min(dim, preferred)
+
+    if multiple == 8:
+        common = (512, 256, 128, 64, 32, 16, 8)
+    else:
+        common = (1024, 512, 256, 128)
+
+    for seed in (capped,) + common:
+        if seed <= 0 or seed > dim:
+            continue
+        if seed == dim:
+            candidates.add(seed)
+            continue
+        rounded = seed - (seed % multiple)
+        while rounded >= multiple:
+            if dim % rounded == 0:
+                candidates.add(rounded)
+                break
+            rounded -= multiple
+
+    return sorted(candidates, reverse=True)
+
+
+def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    """Pick TPU-valid tiles that fit comfortably in v6e VMEM."""
+    bm_candidates = _candidate_blocks(M, bm, 8)
+    bn_candidates = _candidate_blocks(N, bn, 128)
+    bk_candidates = _candidate_blocks(K, bk, 128)
+
+    best = None
+    best_score = None
+    for bm_c in bm_candidates:
+        for bn_c in bn_candidates:
+            for bk_c in bk_candidates:
+                working_set = _estimate_gemm_working_set_bytes(
+                    bm_c, bn_c, bk_c, dtype, dtype
+                )
+                if working_set > _V6E_GEMM_WORKING_SET_BUDGET:
+                    continue
+
+                # Maximize useful work first, then favor larger output tiles.
+                score = (bm_c * bn_c * bk_c, bm_c * bn_c, bn_c, bm_c, bk_c)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (bm_c, bn_c, bk_c)
+
+    if best is not None:
+        return best
+
+    # Guaranteed-valid fallback.
+    return (
+        _choose_tpu_block(M, bm, 8),
+        _choose_tpu_block(N, bn, 128),
+        _choose_tpu_block(K, bk, 128),
+    )
+
+
+def _flash_attention_kernel(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Persistent FlashAttention-style streaming kernel with head-local KV expansion.
+
+    Grid: (batch, head)
+    Block shapes:
+      q_nope_ref: [1, 1, S, nope]
+      q_rope_ref: [1, 1, S, rope]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
+
+    Key optimization: expand the full-sequence head-local K/V projections once per
+    (batch, head) program and reuse them across all Q groups instead of recomputing
+    them inside every Q-group/KV-block iteration.
+    """
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
     k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
     num_q_groups = seq_len // q_group
 
+    # Pre-expand K/V once per head.
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-        
-        q_nope_f32 = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
-        q_rope_f32 = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
-        
-        m = jnp.full((q_group,), -1e9, dtype=jnp.float32)
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
+
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
-        active_kv_blocks = (q_end + kv_block - 1) // kv_block
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            
-            # Read pre-computed expanded KV from VMEM scratch instead of re-calculating
-            kv_tile = kv_expanded_scratch[kv_start:kv_start + kv_block, :]
-            k_nope_tile = kv_tile[:, :nope]
-            v_tile = kv_tile[:, nope:]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
 
-            # Score computation
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
             scores = jax.lax.dot_general(
-                q_nope_f32, k_nope_tile, (((1,), (1,)), ((), ())), preferred_element_type=jnp.float32
-            ) + jax.lax.dot_general(
-                q_rope_f32, k_rope_tile, (((1,), (1,)), ((), ())), preferred_element_type=jnp.float32
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
             )
 
-            # Masking
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                scores = jnp.where(q_pos[:, None] >= k_pos, scores, jnp.array(-1e9, dtype=jnp.float32))
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
 
-            # Softmax update
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
             exp_m_scale = jnp.exp(m - new_m)
             exp_scores = jnp.exp(scores - new_m[:, None])
-            
             l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
             acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
-                exp_scores, v_tile, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
             )
             m = new_m
 
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads):
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
+
+    Args:
+        q_nope: [B, H, S, nope] - query nope component
+        q_rope: [B, H, S, rope] - query rope component
+        k_latent: [B, S, kvl] - compressed shared KV latent
+        k_rope: [B, 1, S, rope] - key rope component (shared across heads)
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
+    """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
-    # Scratch buffer to hold head-specific expanded latent KV in VMEM
-    # Size: S * (nope + DV) * 4 bytes. For S=2048, D=256, this is 2 MiB (fits in 16 MiB VMEM)
-    kv_expanded_scratch_shape = pltpu.VMEM((S, nope + DV), jnp.float32)
+    if S % block_q != 0:
+        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={block_q}")
+    if S % _FLASH_BLOCK_KV != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by KV block: S={S}, kv_block={_FLASH_BLOCK_KV}"
+        )
 
+    q_group = block_q * _FLASH_Q_GROUP
+    if S % q_group != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by grouped Q block: S={S}, q_group={q_group}"
+        )
+
+    outs = pl.pallas_call(
+        _flash_attention_kernel,
+        out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
+        grid=(B, H),
+        in_specs=[
+            pl.BlockSpec((1, 1, S, nope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, S, kvl), lambda b0, h0: (b0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, 0, 0, 0)),
+            pl.BlockSpec((1, kvl, nope), lambda b0, h0: (h0, 0, 0)),
+            pl.BlockSpec((1, kvl, DV), lambda b0, h0: (h0, 0, 0)),
+        ],
+        out_specs=[
+            pl.BlockSpec((1, 1, S, DV), lambda b0, h0: (b0, h0, 0, 0)),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=("parallel", "parallel"),
+        ),
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
+    return outs[0]
+
+
+def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
+    C = CONFIG
+    B, S, E = x.shape
+    H = C["num_heads"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+    kvl = C["kv_lora_rank"]
+
+    # Flatten batch and sequence for dense projections.
+    x2d = x.reshape(B * S, E)
+
+    # Use XLA-optimized dense matmuls for straightforward projections.
+    q_low2d = jax.lax.dot_general(
+        x2d,
+        q_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q2d = jax.lax.dot_general(
+        q_low2d,
+        q_up_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
+    q_nope, q_rope = q[..., :nope], q[..., nope:]
+
+    kv2d = jax.lax.dot_general(
+        x2d,
+        kv_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
+    k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
+
+    # RoPE.
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
+    # Apply RoPE to q_rope [B, S, H, rope]
+    q_rope = _apply_rope(q_rope, cos, sin)
+    # Apply RoPE to k_rope_raw [B, S, rope] - keep it head-shared
+    k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
+    k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
+
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
+    q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
+    q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
+    k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
+
+    # Apply scaling to query components
+    hd = nope + rope
+    scale = hd ** -0.5
+    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
+    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
+
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
+
+    # Output projection.
+    out2d = out.reshape(B * S, H * vd)
+    final2d = jax.lax.dot_general(
+        out2d,
+        o_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+
+    return final2d.reshape(B, S, E)
+''',
+score=2.761,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout='Latency: 2.761 ms\n{"correct": true, "latency": 2.761, "error": "", "all_times_ms": [2.752, 2.752, 2.753, 2.753, 2.754, 2.755, 2.755, 2.755, 2.755, 2.756, 2.756, 2.756, 2.756, 2.757, 2.757, 2.757, 2.757, 2.757, 2.757, 2.757, 2.757, 2.757, 2.757, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.758, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.759, 2.76, 2.76, 2.76, 2.76, 2.76, 2.761, 2.761, 2.761, 2.761, 2.761, 2.761, 2.762, 2.762, 2.762, 2.762, 2.762, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.763, 2.764, 2.764, 2.764, 2.764, 2.765, 2.765, 2.766, 2.766, 2.767, 2.767, 2.767, 2.767, 2.767, 2.768, 2.768, 2.768, 2.769, 2.771, 2.771, 2.772, 2.772, 2.773, 2.773, 2.774, 2.774, 2.776, 2.779, 2.817], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stderr=''),
+plan='''To optimize the MLA attention performance on TPU v6e, we will apply **Strategy 7: Precompute the combined attention scale into q_nope and q_rope projections (absorb into q_up_proj weights) to eliminate runtime scaling.**
+
+### Analysis of Inefficiency
+In the original code, the scaling factor ($1/\sqrt{head\_dim}$) is applied as an elementwise operation on the `q_nope` and `q_rope` tensors after they have been projected and after RoPE has been applied. Since $q_{nope}$ and $q_{rope}$ are large activation tensors ($B 	imes S 	imes H 	imes dim$), performing an elementwise multiplication, which includes an upcast to $f32$ and a downcast back to $bf16$, is memory-bandwidth intensive. On TPU v6e, elementwise operations are often memory-bound.
+
+### Optimization Plan
+By leveraging the linearity of matrix multiplication ($ (X \cdot W) 	imes s = X \cdot (W 	imes s) $), we can scale the weights of the up-projection layer (`q_up_proj`) once. This "fuses" the scaling operation into the existing matmul. Since the RoPE operation is also linear ($ RoPE(q 	imes s) = RoPE(q) 	imes s $), the result remains mathematically equivalent. This eliminates the need for two large elementwise passes over the query tensors in the `workload` function.
+
+### Optimized Code
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+CONFIG = {
+    "name": "deepseek_v3_mla",
+    "model": "DeepSeek-V3-671B",
+    "operator": "mla_attention",
+    "batch": 1,
+    "seq_len": 2048,
+    "emb_dim": 7168,
+    "num_heads": 128,
+    "q_lora_rank": 1536,
+    "kv_lora_rank": 512,
+    "qk_nope_head_dim": 128,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 128,
+    "rope_theta": 10000,
+}
+
+_FLASH_BLOCK_Q = 128
+_FLASH_Q_GROUP = 4
+_FLASH_BLOCK_KV = 256
+
+def _compute_rope(head_dim, seq_len, theta, dtype):
+    freqs = 1.0 / (theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.int32).astype(jnp.float32) / head_dim))
+    pos = jnp.arange(seq_len, dtype=jnp.int32).astype(jnp.float32)
+    angles = jnp.outer(pos, freqs)
+    return jnp.cos(angles).astype(dtype), jnp.sin(angles).astype(dtype)
+
+def _apply_rope(x, cos, sin):
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    x1 = x_pairs[..., 0]
+    x2 = x_pairs[..., 1]
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    y1 = (x1.astype(jnp.float32) * cos - x2.astype(jnp.float32) * sin).astype(x.dtype)
+    y2 = (x1.astype(jnp.float32) * sin + x2.astype(jnp.float32) * cos).astype(x.dtype)
+    interleaved = jnp.concatenate([y1[..., None], y2[..., None]], axis=-1)
+    return interleaved.reshape(x.shape)
+
+def _flash_attention_kernel(
+    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_head_ref, v_up_head_ref, o_ref,
+):
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
+    kv_block = _FLASH_BLOCK_KV
+    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+    num_q_groups = seq_len // q_group
+
+    k_nope_all = jax.lax.dot_general(k_latent_all, k_up, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32)
+    v_all = jax.lax.dot_general(k_latent_all, v_up, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32)
+
+    for qg in range(num_q_groups):
+        q_start = qg * q_group
+        q_end = q_start + q_group
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
+        q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
+
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
+        l = jnp.zeros((q_group,), dtype=jnp.float32)
+        acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
+
+        for kv_idx in range(active_kv_blocks):
+            kv_start = kv_idx * kv_block
+            kv_end = min(kv_start + kv_block, q_end)
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            scores = jax.lax.dot_general(q_concat_tile, k_concat_tile, (((1,), (1,)), ((), ())), preferred_element_type=jnp.float32)
+            k_pos = kv_start + jnp.arange(kv_end - kv_start, dtype=jnp.int32)[None, :]
+            scores = jnp.where(q_pos[:, None] >= k_pos, scores, -1e9)
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(exp_scores, v_tile, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32)
+            m = new_m
+        o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
+
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj):
+    B, H, S, nope = q_nope.shape
+    rope_dim, DV, kvl = q_rope.shape[-1], v_up_proj.shape[-1], k_latent.shape[-1]
     return pl.pallas_call(
         _flash_attention_kernel,
         out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
         grid=(B, H),
         in_specs=[
             pl.BlockSpec((1, 1, S, nope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, h, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope_dim), lambda b, h: (b, h, 0, 0)),
             pl.BlockSpec((1, S, kvl), lambda b, h: (b, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, 0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope_dim), lambda b, h: (b, 0, 0, 0)),
             pl.BlockSpec((1, kvl, nope), lambda b, h: (h, 0, 0)),
             pl.BlockSpec((1, kvl, DV), lambda b, h: (h, 0, 0)),
         ],
         out_specs=[pl.BlockSpec((1, 1, S, DV), lambda b, h: (b, h, 0, 0))],
-        scratch_shapes=[kv_expanded_scratch_shape],
         compiler_params=pltpu.CompilerParams(dimension_semantics=("parallel", "parallel")),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)[0]
-
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)[0]
 
 def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
     C = CONFIG
@@ -9447,32 +10021,33 @@ def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_pr
     H, nope, rope, vd, kvl = C["num_heads"], C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"], C["kv_lora_rank"]
     x2d = x.reshape(B * S, E)
 
-    # Low-rank Projections
-    q_low = (x2d @ q_down_proj).astype(x.dtype)
-    q = (q_low @ q_up_proj).reshape(B, S, H, nope + rope)
+    # Strategy 7: Absorb attention scale (1/sqrt(hd)) into the q_up_proj weights
+    hd = nope + rope
+    scale = hd ** -0.5
+    scaled_q_up_proj = (q_up_proj.astype(jnp.float32) * scale).astype(q_up_proj.dtype)
+
+    q_low2d = jax.lax.dot_general(x2d, q_down_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
+    q2d = jax.lax.dot_general(q_low2d, scaled_q_up_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
     q_nope, q_rope = q[..., :nope], q[..., nope:]
 
-    kv = (x2d @ kv_down_proj).reshape(B, S, kvl + rope)
+    kv2d = jax.lax.dot_general(x2d, kv_down_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
+    q_rope = _apply_rope(q_rope, cos, sin)
+    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin)
+
+    q_nope, q_rope, k_rope = q_nope.transpose(0, 2, 1, 3), q_rope.transpose(0, 2, 1, 3), k_rope.transpose(0, 2, 1, 3)
     k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
     v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
 
-    # RoPE
-    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-    q_rope = _apply_rope(q_rope, cos, sin).transpose(0, 2, 1, 3)
-    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin).transpose(0, 2, 1, 3)
-    q_nope = q_nope.transpose(0, 2, 1, 3)
-
-    # Scaling
-    scale = (nope + rope) ** -0.5
-    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
-    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
-
-    # Attention and Output Projection
-    attn_out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-    attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B * S, H * vd)
-    return (attn_out @ o_proj).reshape(B, S, E)
+    # Runtime scaling of activations is removed; Q is already pre-scaled.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
+    final2d = jax.lax.dot_general(out.reshape(B * S, H * vd), o_proj, (((1,), (0,)), ((), ())), preferred_element_type=jnp.float32).astype(x.dtype)
+    return final2d.reshape(B, S, E)
 ```''',
 code='''
 import jax
@@ -9498,6 +10073,461 @@ CONFIG = {
 }
 
 
+# Conservative per-kernel VMEM working-set target for v6e-1.
+# This leaves headroom for compiler temporaries and pipeline buffering.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
+_FLASH_BLOCK_Q = 128
+# Larger Q grouping amortizes full-sequence K/V loads across multiple Q tiles.
+_FLASH_Q_GROUP = 4
+# INCREASED from 128 to 256 for better compute-to-memory ratio
+# This reduces KV block loads from 16 to 8, improving memory bandwidth utilization
+_FLASH_BLOCK_KV = 256
+
+
+def _compute_rope(head_dim, seq_len, theta, dtype):
+    freqs = 1.0 / (theta ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim))
+    pos = jnp.arange(seq_len, dtype=jnp.float32)
+    angles = jnp.outer(pos, freqs)
+    return jnp.cos(angles).astype(dtype), jnp.sin(angles).astype(dtype)
+
+
+def _apply_rope(x, cos, sin):
+    # Reshape to pair-wise view: (..., dim) -> (..., dim//2, 2)
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    
+    # Extract paired elements with simple indexing (no striding)
+    x1 = x_pairs[..., 0]  # even indices
+    x2 = x_pairs[..., 1]  # odd indices
+    
+    # Broadcast cos/sin appropriately
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    
+    # Compute rotated values
+    y1 = x1 * cos - x2 * sin  # new even
+    y2 = x1 * sin + x2 * cos  # new odd
+    
+    # Interleave back: reshape each to (..., dim//2, 1), concat, reshape
+    y1_exp = y1[..., None]  # (..., dim//2, 1)
+    y2_exp = y2[..., None]  # (..., dim//2, 1)
+    interleaved = jnp.concatenate([y1_exp, y2_exp], axis=-1)  # (..., dim//2, 2)
+    
+    return interleaved.reshape(x.shape)
+
+
+def create_inputs(dtype=jnp.bfloat16):
+    """Returns (x, q_down, q_up, kv_down, k_up, v_up, o_proj)."""
+    key = jax.random.PRNGKey(42)
+    keys = jax.random.split(key, 8)
+    C = CONFIG
+    B, S, E = C["batch"], C["seq_len"], C["emb_dim"]
+    H = C["num_heads"]
+    ql, kvl = C["q_lora_rank"], C["kv_lora_rank"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+
+    x = jax.random.normal(keys[0], (B, S, E), dtype=dtype)
+    q_down = jax.random.normal(keys[1], (E, ql), dtype=dtype) * 0.02
+    q_up = jax.random.normal(keys[2], (ql, H * (nope + rope)), dtype=dtype) * 0.02
+    kv_down = jax.random.normal(keys[3], (E, kvl + rope), dtype=dtype) * 0.02
+    k_up = jax.random.normal(keys[4], (kvl, H * nope), dtype=dtype) * 0.02
+    v_up = jax.random.normal(keys[5], (kvl, H * vd), dtype=dtype) * 0.02
+    o_proj = jax.random.normal(keys[6], (H * vd, E), dtype=dtype) * 0.02
+    return x, q_down, q_up, kv_down, k_up, v_up, o_proj
+
+
+def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    """Choose a TPU-valid block size for one axis.
+
+    Returns either:
+      * a divisor of `dim` aligned to `multiple`, or
+      * the full dimension `dim` (which is also legal on TPU block axes).
+    """
+    preferred = min(dim, preferred)
+    if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
+        return preferred
+
+    start = preferred - (preferred % multiple)
+    for candidate in range(start, multiple - 1, -multiple):
+        if candidate > 0 and dim % candidate == 0:
+            return candidate
+
+    return dim
+
+
+def _dtype_nbytes(dtype) -> int:
+    return jnp.dtype(dtype).itemsize
+
+
+def _estimate_gemm_working_set_bytes(
+    bm: int, bn: int, bk: int, in_dtype, out_dtype
+) -> int:
+    """Approximate live VMEM footprint under TPU double-buffered pipelining."""
+    in_b = _dtype_nbytes(in_dtype)
+    out_b = _dtype_nbytes(out_dtype)
+
+    # Inputs and outputs are typically double buffered by the TPU pipeline.
+    a_bytes = 2 * bm * bk * in_b
+    b_bytes = 2 * bk * bn * in_b
+    c_bytes = 2 * bm * bn * out_b
+
+    # Accumulator scratch is float32 and must stay live across K-reduction steps.
+    acc_bytes = bm * bn * 4
+
+    return a_bytes + b_bytes + c_bytes + acc_bytes
+
+
+def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    """Generate legal block candidates, largest first."""
+    candidates = {dim}  # full-dimension fallback is always legal on TPU
+    capped = min(dim, preferred)
+
+    if multiple == 8:
+        common = (512, 256, 128, 64, 32, 16, 8)
+    else:
+        common = (1024, 512, 256, 128)
+
+    for seed in (capped,) + common:
+        if seed <= 0 or seed > dim:
+            continue
+        if seed == dim:
+            candidates.add(seed)
+            continue
+        rounded = seed - (seed % multiple)
+        while rounded >= multiple:
+            if dim % rounded == 0:
+                candidates.add(rounded)
+                break
+            rounded -= multiple
+
+    return sorted(candidates, reverse=True)
+
+
+def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    """Pick TPU-valid tiles that fit comfortably in v6e VMEM."""
+    bm_candidates = _candidate_blocks(M, bm, 8)
+    bn_candidates = _candidate_blocks(N, bn, 128)
+    bk_candidates = _candidate_blocks(K, bk, 128)
+
+    best = None
+    best_score = None
+    for bm_c in bm_candidates:
+        for bn_c in bn_candidates:
+            for bk_c in bk_candidates:
+                working_set = _estimate_gemm_working_set_bytes(
+                    bm_c, bn_c, bk_c, dtype, dtype
+                )
+                if working_set > _V6E_GEMM_WORKING_SET_BUDGET:
+                    continue
+
+                # Maximize useful work first, then favor larger output tiles.
+                score = (bm_c * bn_c * bk_c, bm_c * bn_c, bn_c, bm_c, bk_c)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (bm_c, bn_c, bk_c)
+
+    if best is not None:
+        return best
+
+    # Guaranteed-valid fallback.
+    return (
+        _choose_tpu_block(M, bm, 8),
+        _choose_tpu_block(N, bn, 128),
+        _choose_tpu_block(K, bk, 128),
+    )
+
+
+def _flash_attention_kernel(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Persistent FlashAttention-style streaming kernel with head-local KV expansion.
+
+    Grid: (batch, head)
+    Block shapes:
+      q_nope_ref: [1, 1, S, nope]
+      q_rope_ref: [1, 1, S, rope]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
+
+    Key optimization: expand the full-sequence head-local K/V projections once per
+    (batch, head) program and reuse them across all Q groups instead of recomputing
+    them inside every Q-group/KV-block iteration.
+    """
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
+    kv_block = _FLASH_BLOCK_KV
+    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+    num_q_groups = seq_len // q_group
+
+    # Pre-expand K/V once per head.
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
+    for qg in range(num_q_groups):
+        q_start = qg * q_group
+        q_end = q_start + q_group
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
+        q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
+
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
+        l = jnp.zeros((q_group,), dtype=jnp.float32)
+        acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
+
+        for kv_idx in range(active_kv_blocks):
+            kv_start = kv_idx * kv_block
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
+
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
+
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            m = new_m
+
+        o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
+
+
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
+
+    Args:
+        q_nope: [B, H, S, nope] - query nope component
+        q_rope: [B, H, S, rope] - query rope component
+        k_latent: [B, S, kvl] - compressed shared KV latent
+        k_rope: [B, 1, S, rope] - key rope component (shared across heads)
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
+    """
+    B, H, S, nope = q_nope.shape
+    rope = q_rope.shape[-1]
+    DV = v_up_proj.shape[-1]
+    kvl = k_latent.shape[-1]
+
+    if S % block_q != 0:
+        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={block_q}")
+    if S % _FLASH_BLOCK_KV != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by KV block: S={S}, kv_block={_FLASH_BLOCK_KV}"
+        )
+
+    q_group = block_q * _FLASH_Q_GROUP
+    if S % q_group != 0:
+        raise ValueError(
+            f"Sequence length must be divisible by grouped Q block: S={S}, q_group={q_group}"
+        )
+
+    outs = pl.pallas_call(
+        _flash_attention_kernel,
+        out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
+        grid=(B, H),
+        in_specs=[
+            pl.BlockSpec((1, 1, S, nope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, S, kvl), lambda b0, h0: (b0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, 0, 0, 0)),
+            pl.BlockSpec((1, kvl, nope), lambda b0, h0: (h0, 0, 0)),
+            pl.BlockSpec((1, kvl, DV), lambda b0, h0: (h0, 0, 0)),
+        ],
+        out_specs=[
+            pl.BlockSpec((1, 1, S, DV), lambda b0, h0: (b0, h0, 0, 0)),
+        ],
+        compiler_params=pltpu.CompilerParams(
+            dimension_semantics=("parallel", "parallel"),
+        ),
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
+    return outs[0]
+
+
+def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
+    C = CONFIG
+    B, S, E = x.shape
+    H = C["num_heads"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+    kvl = C["kv_lora_rank"]
+
+    # Strategy 7: Absorb attention scale (1/sqrt(hd)) into the q_up_proj weights.
+    # This eliminates two large elementwise passes over the query tensors.
+    hd = nope + rope
+    scale = hd ** -0.5
+    scaled_q_up_proj = (q_up_proj.astype(jnp.float32) * scale).astype(q_up_proj.dtype)
+
+    # Flatten batch and sequence for dense projections.
+    x2d = x.reshape(B * S, E)
+
+    # Use XLA-optimized dense matmuls for straightforward projections.
+    q_low2d = jax.lax.dot_general(
+        x2d,
+        q_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    # The scaled q_up_proj already includes the attention scale factor.
+    q2d = jax.lax.dot_general(
+        q_low2d,
+        scaled_q_up_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
+    q_nope, q_rope = q[..., :nope], q[..., nope:]
+
+    kv2d = jax.lax.dot_general(
+        x2d,
+        kv_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
+    k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
+
+    # RoPE.
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
+    # Apply RoPE to q_rope [B, S, H, rope]
+    q_rope = _apply_rope(q_rope, cos, sin)
+    # Apply RoPE to k_rope_raw [B, S, rope] - keep it head-shared
+    k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
+    k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
+
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
+    q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
+    q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
+    k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
+
+    # Runtime scaling of activations is removed; Q is already pre-scaled.
+
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
+
+    # Output projection.
+    out2d = out.reshape(B * S, H * vd)
+    final2d = jax.lax.dot_general(
+        out2d,
+        o_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+
+    return final2d.reshape(B, S, E)
+''',
+score=2.537,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='gemini-3-flash-preview',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout='Latency: 2.537 ms\n{"correct": true, "latency": 2.537, "error": "", "all_times_ms": [2.525, 2.527, 2.528, 2.528, 2.529, 2.529, 2.529, 2.529, 2.53, 2.53, 2.53, 2.53, 2.53, 2.53, 2.53, 2.531, 2.531, 2.531, 2.532, 2.532, 2.532, 2.532, 2.533, 2.534, 2.534, 2.534, 2.534, 2.534, 2.534, 2.535, 2.535, 2.535, 2.535, 2.535, 2.536, 2.536, 2.536, 2.536, 2.536, 2.536, 2.536, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.537, 2.538, 2.538, 2.538, 2.538, 2.538, 2.539, 2.539, 2.539, 2.54, 2.54, 2.54, 2.54, 2.54, 2.541, 2.541, 2.541, 2.541, 2.541, 2.542, 2.542, 2.542, 2.542, 2.543, 2.543, 2.543, 2.544, 2.545, 2.546, 2.546, 2.546, 2.547, 2.547, 2.547, 2.547, 2.548, 2.549, 2.553, 2.553, 2.553, 2.555, 2.555, 2.557, 2.557, 2.56, 2.592, 2.596, 2.654, 2.665], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stderr=''),
+plan='''
+
+Looking at the code, I can see it\'s implementing FlashAttention-style MLA (Multi-Latent Attention) for DeepSeek-V3. The current latency is 2.537.
+
+## Analysis of Current Code
+
+The `_flash_attention_kernel` has a nested loop structure:
+1. Pre-expands K/V once per head (outside Q-group loop)
+2. Loops over Q groups with inner loop over KV blocks
+3. Applies causal masking on EVERY iteration using `jnp.where`
+
+The key inefficiency is that the causal mask computation and application happens in every iteration, even for blocks that are fully in the causal region (no mask needed).
+
+## Selected Strategy: **Strategy 15** - Separate schedules for causal vs non-causal blocks
+
+The diagonal/tail blocks (where Q and KV overlap) need masking, but most blocks in the grid are fully valid. I\'ll restructure the code to:
+1. Separate the grid into "mask-free" (fully valid) and "masked" (causal) regions
+2. Use a mask-free kernel path for the majority of iterations to avoid the overhead of `where`, `min`, and causal mask computation
+
+## Plan
+
+1. Modify the kernel grid to iterate only over KV blocks that need masking (the diagonal blocks)
+2. Add separate handling for the non-diagonal (mask-free) KV blocks
+3. Remove the causal mask computation for the mask-free path
+4. Use `pl.when` conditions to handle the tail blocks differently
+
+Let me rewrite the code:
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+CONFIG = {
+    "name": "deepseek_v3_mla",
+    "model": "DeepSeek-V3-671B",
+    "operator": "mla_attention",
+    "batch": 1,
+    "seq_len": 2048,
+    "emb_dim": 7168,
+    "num_heads": 128,
+    "q_lora_rank": 1536,
+    "kv_lora_rank": 512,
+    "qk_nope_head_dim": 128,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 128,
+    "rope_theta": 10000,
+}
+
+
+# Conservative per-kernel VMEM working-set target for v6e-1.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
 _FLASH_BLOCK_Q = 128
 _FLASH_Q_GROUP = 4
 _FLASH_BLOCK_KV = 256
@@ -9511,11 +10541,18 @@ def _compute_rope(head_dim, seq_len, theta, dtype):
 
 
 def _apply_rope(x, cos, sin):
-    x1, x2 = x[..., ::2], x[..., 1::2]
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    x1 = x_pairs[..., 0]
+    x2 = x_pairs[..., 1]
     cos = cos[None, :, None, :]
     sin = sin[None, :, None, :]
-    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
-    return rotated.reshape(x.shape)
+    y1 = x1 * cos - x2 * sin
+    y2 = x1 * sin + x2 * cos
+    y1_exp = y1[..., None]
+    y2_exp = y2[..., None]
+    interleaved = jnp.concatenate([y1_exp, y2_exp], axis=-1)
+    return interleaved.reshape(x.shape)
 
 
 def create_inputs(dtype=jnp.bfloat16):
@@ -9537,78 +10574,166 @@ def create_inputs(dtype=jnp.bfloat16):
     return x, q_down, q_up, kv_down, k_up, v_up, o_proj
 
 
-def _flash_attention_kernel(
-    q_nope_ref, q_rope_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref,
-    o_ref, kv_expanded_scratch
-):
-    """FlashAttention kernel optimized with VMEM caching of expanded latent KV."""
-    seq_len = k_latent_ref.shape[1]
-    nope = k_up_ref.shape[2]
-    dv = v_up_ref.shape[2]
+def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    preferred = min(dim, preferred)
+    if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
+        return preferred
+    start = preferred - (preferred % multiple)
+    for candidate in range(start, multiple - 1, -multiple):
+        if candidate > 0 and dim % candidate == 0:
+            return candidate
+    return dim
 
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
-    kv_up_f32 = jnp.concatenate([k_up, v_up], axis=1)
 
-    k_lat_all_f32 = k_latent_ref[0, :, :].astype(jnp.float32)
-    kv_expanded_all = jax.lax.dot_general(
-        k_lat_all_f32,
-        kv_up_f32,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
+def _dtype_nbytes(dtype) -> int:
+    return jnp.dtype(dtype).itemsize
+
+
+def _estimate_gemm_working_set_bytes(
+    bm: int, bn: int, bk: int, in_dtype, out_dtype
+) -> int:
+    in_b = _dtype_nbytes(in_dtype)
+    out_b = _dtype_nbytes(out_dtype)
+    a_bytes = 2 * bm * bk * in_b
+    b_bytes = 2 * bk * bn * in_b
+    c_bytes = 2 * bm * bn * out_b
+    acc_bytes = bm * bn * 4
+    return a_bytes + b_bytes + c_bytes + acc_bytes
+
+
+def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    candidates = {dim}
+    capped = min(dim, preferred)
+    if multiple == 8:
+        common = (512, 256, 128, 64, 32, 16, 8)
+    else:
+        common = (1024, 512, 256, 128)
+    for seed in (capped,) + common:
+        if seed <= 0 or seed > dim:
+            continue
+        if seed == dim:
+            candidates.add(seed)
+            continue
+        rounded = seed - (seed % multiple)
+        while rounded >= multiple:
+            if dim % rounded == 0:
+                candidates.add(rounded)
+                break
+            rounded -= multiple
+    return sorted(candidates, reverse=True)
+
+
+def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    bm_candidates = _candidate_blocks(M, bm, 8)
+    bn_candidates = _candidate_blocks(N, bn, 128)
+    bk_candidates = _candidate_blocks(K, bk, 128)
+    best = None
+    best_score = None
+    for bm_c in bm_candidates:
+        for bn_c in bn_candidates:
+            for bk_c in bk_candidates:
+                working_set = _estimate_gemm_working_set_bytes(
+                    bm_c, bn_c, bk_c, dtype, dtype
+                )
+                if working_set > _V6E_GEMM_WORKING_SET_BUDGET:
+                    continue
+                score = (bm_c * bn_c * bk_c, bm_c * bn_c, bn_c, bm_c, bk_c)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (bm_c, bn_c, bk_c)
+    if best is not None:
+        return best
+    return (
+        _choose_tpu_block(M, bm, 8),
+        _choose_tpu_block(N, bn, 128),
+        _choose_tpu_block(K, bk, 128),
     )
-    kv_expanded_scratch[...] = kv_expanded_all
 
+
+def _flash_attention_kernel_masked(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Kernel for causal (masked) attention - diagonal/tail blocks only.
+    
+    This kernel applies causal masking. It handles the case where Q and KV
+    overlap and masking is required.
+    """
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
     k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
     num_q_groups = seq_len // q_group
 
+    # Pre-expand K/V once per head (same as before)
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-
-        q_nope_f32 = q_nope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
-        q_rope_f32 = q_rope_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        
+        # Diagonal: only process KV blocks where kv_start < q_end
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
 
-        m = jnp.full((q_group,), -1e9, dtype=jnp.float32)
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
-        active_kv_blocks = (q_end + kv_block - 1) // kv_block
         for kv_idx in range(active_kv_blocks):
             kv_start = kv_idx * kv_block
-            kv_tile = kv_expanded_scratch[kv_start:kv_start + kv_block, :]
-            k_nope_tile = kv_tile[:, :nope]
-            v_tile = kv_tile[:, nope:]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
 
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
             scores = jax.lax.dot_general(
-                q_nope_f32,
-                k_nope_tile,
-                dimension_numbers=(((1,), (1,)), ((), ())),
-                preferred_element_type=jnp.float32,
-            ) + jax.lax.dot_general(
-                q_rope_f32,
-                k_rope_tile,
+                q_concat_tile,
+                k_concat_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
 
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                scores = jnp.where(
-                    q_pos[:, None] >= k_pos,
-                    scores,
-                    jnp.array(-1e9, dtype=jnp.float32),
-                )
+            # Apply causal mask
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
 
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
             exp_m_scale = jnp.exp(m - new_m)
             exp_scores = jnp.exp(scores - new_m[:, None])
-
             l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
             acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
                 exp_scores,
@@ -9621,124 +10746,361 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads):
+def _flash_attention_kernel_mask_free(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+    q_start_ref,
+    num_q_groups_ref,
+):
+    """Mask-free FlashAttention kernel for fully valid Q-KV blocks.
+    
+    This kernel is used when we know all Q positions can attend to all KV positions
+    (i.e., kv_end <= q_start, so the block is fully in the causal region).
+    No masking overhead - this is the hot path.
+    """
+    # Read scalar params from refs
+    q_start = q_start_ref[...].astype(jnp.int32)
+    num_q_groups = num_q_groups_ref[...].astype(jnp.int32)
+    
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
+    kv_block = _FLASH_BLOCK_KV
+    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+
+    # Pre-expand K/V once per head
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
+    # Compute number of fully-valid (mask-free) KV blocks
+    # For a given q_group ending at q_end, KV blocks where kv_end <= q_start are mask-free
+    q_start_val = int(q_start)
+    num_q_groups_val = int(num_q_groups)
+    
+    first_masked_kv_idx = (q_start_val + q_group + kv_block - 1) // kv_block
+    num_mask_free_kv_blocks = first_masked_kv_idx
+
+    m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
+    l = jnp.zeros((q_group,), dtype=jnp.float32)
+    acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
+
+    # HOT PATH: Process mask-free KV blocks WITHOUT any masking overhead
+    for kv_idx in range(num_mask_free_kv_blocks):
+        kv_start = kv_idx * kv_block
+        kv_end = kv_start + kv_block
+
+        k_nope_tile = k_nope_all[kv_start:kv_end, :]
+        k_rope_tile = k_rope_all[kv_start:kv_end, :]
+        v_tile = v_all[kv_start:kv_end, :]
+
+        k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+        
+        # Mask-free dot - no causal_mask computation
+        scores = jax.lax.dot_general(
+            q_nope_ref[0, 0, q_start:q_start+q_group, :].astype(jnp.float32),
+            k_concat_tile,
+            dimension_numbers=(((1,), (1,)), ((), ())),
+            preferred_element_type=jnp.float32,
+        ) + jax.lax.dot_general(
+            q_rope_ref[0, 0, q_start:q_start+q_group, :].astype(jnp.float32),
+            k_concat_tile,
+            dimension_numbers=(((1,), (1,)), ((), ())),
+            preferred_element_type=jnp.float32,
+        )
+
+        block_max = jnp.max(scores, axis=1)
+        new_m = jnp.maximum(m, block_max)
+        exp_m_scale = jnp.exp(m - new_m)
+        exp_scores = jnp.exp(scores - new_m[:, None])
+        l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+        acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+            exp_scores,
+            v_tile,
+            dimension_numbers=(((1,), (0,)), ((), ())),
+            preferred_element_type=jnp.float32,
+        )
+        m = new_m
+
+    # Store output
+    o_ref[0, 0, q_start:q_start+q_group, :] = (acc / l[:, None]).astype(o_ref.dtype)
+
+
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
+    
+    This version splits into mask-free and masked paths for efficiency.
+    """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
 
-    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
-    if S % _FLASH_BLOCK_Q != 0:
-        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={_FLASH_BLOCK_Q}")
+    if S % block_q != 0:
+        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={block_q}")
     if S % _FLASH_BLOCK_KV != 0:
         raise ValueError(
             f"Sequence length must be divisible by KV block: S={S}, kv_block={_FLASH_BLOCK_KV}"
         )
+
+    q_group = block_q * _FLASH_Q_GROUP
     if S % q_group != 0:
         raise ValueError(
             f"Sequence length must be divisible by grouped Q block: S={S}, q_group={q_group}"
         )
 
-    kv_expanded_scratch_shape = pltpu.VMEM((S, nope + DV), jnp.float32)
-
-    return pl.pallas_call(
-        _flash_attention_kernel,
+    # For this implementation, we\'ll keep the single kernel but use the mask-free
+    # optimization by restructuring the loop to skip mask computation for 
+    # fully-valid blocks (kv_end <= q_start)
+    
+    outs = pl.pallas_call(
+        _flash_attention_kernel_optimized,
         out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
         grid=(B, H),
         in_specs=[
-            pl.BlockSpec((1, 1, S, nope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, S, kvl), lambda b, h: (b, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, 0, 0, 0)),
-            pl.BlockSpec((1, kvl, nope), lambda b, h: (h, 0, 0)),
-            pl.BlockSpec((1, kvl, DV), lambda b, h: (h, 0, 0)),
+            pl.BlockSpec((1, 1, S, nope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, S, kvl), lambda b0, h0: (b0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, 0, 0, 0)),
+            pl.BlockSpec((1, kvl, nope), lambda b0, h0: (h0, 0, 0)),
+            pl.BlockSpec((1, kvl, DV), lambda b0, h0: (h0, 0, 0)),
         ],
-        out_specs=[pl.BlockSpec((1, 1, S, DV), lambda b, h: (b, h, 0, 0))],
-        scratch_shapes=[kv_expanded_scratch_shape],
+        out_specs=[
+            pl.BlockSpec((1, 1, S, DV), lambda b0, h0: (b0, h0, 0, 0)),
+        ],
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)[0]
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
+    return outs[0]
+
+
+def _flash_attention_kernel_optimized(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Optimized FlashAttention with mask-free fast path for non-overlapping blocks.
+    
+    Key optimization: For KV blocks where kv_end <= q_start (fully in the past),
+    we skip the causal mask computation and jnp.where entirely. This is the 
+    majority of iterations in typical attention patterns.
+    
+    Only the "diagonal" blocks where Q and KV overlap need masking.
+    """
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
+    k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
+    kv_block = _FLASH_BLOCK_KV
+    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
+    num_q_groups = seq_len // q_group
+    num_kv_blocks = seq_len // kv_block
+
+    # Pre-expand K/V once per head
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
+    for qg in range(num_q_groups):
+        q_start = qg * q_group
+        q_end = q_start + q_group
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
+        q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        
+        # Calculate first block that needs masking (diagonal)
+        # Blocks before this are mask-free
+        first_masked_kv_idx = (q_end + kv_block - 1) // kv_block
+
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
+        l = jnp.zeros((q_group,), dtype=jnp.float32)
+        acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
+
+        # HOT PATH: Mask-free iterations (fully valid, no causal mask needed)
+        for kv_idx in range(first_masked_kv_idx):
+            kv_start = kv_idx * kv_block
+            kv_end = kv_start + kv_block
+
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            
+            # Mask-free dot product - skip causal mask entirely
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            m = new_m
+
+        # COLD PATH: Masked iterations (causal overlapping region)
+        for kv_idx in range(first_masked_kv_idx, num_kv_blocks):
+            kv_start = kv_idx * kv_block
+            kv_end = min(kv_start + kv_block, q_end)
+            if kv_start >= q_end:
+                break
+            valid_len = kv_end - kv_start
+
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            # Apply causal mask only for overlapping blocks
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            causal_mask = q_pos[:, None] >= k_pos
+            scores = jnp.where(
+                causal_mask, scores, jnp.array(-1e9, dtype=jnp.float32)
+            )
+
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            m = new_m
+
+        o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
 def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
     C = CONFIG
     B, S, E = x.shape
-    H, nope, rope, vd, kvl = (
-        C["num_heads"],
-        C["qk_nope_head_dim"],
-        C["qk_rope_head_dim"],
-        C["v_head_dim"],
-        C["kv_lora_rank"],
-    )
+    H = C["num_heads"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+    kvl = C["kv_lora_rank"]
+
+    # Strategy 7: Absorb attention scale (1/sqrt(hd)) into the q_up_proj weights.
+    hd = nope + rope
+    scale = hd ** -0.5
+    scaled_q_up_proj = (q_up_proj.astype(jnp.float32) * scale).astype(q_up_proj.dtype)
+
+    # Flatten batch and sequence for dense projections.
     x2d = x.reshape(B * S, E)
 
-    q_low = (x2d @ q_down_proj).astype(x.dtype)
-    q = (q_low @ q_up_proj).reshape(B, S, H, nope + rope)
+    # Use XLA-optimized dense matmuls for straightforward projections.
+    q_low2d = jax.lax.dot_general(
+        x2d,
+        q_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    # The scaled q_up_proj already includes the attention scale factor.
+    q2d = jax.lax.dot_general(
+        q_low2d,
+        scaled_q_up_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
     q_nope, q_rope = q[..., :nope], q[..., nope:]
 
-    kv = (x2d @ kv_down_proj).reshape(B, S, kvl + rope)
+    kv2d = jax.lax.dot_general(
+        x2d,
+        kv_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
+    # RoPE.
+    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
+    q_rope = _apply_rope(q_rope, cos, sin)
+    k_rope_raw_expanded = k_rope_raw[:, :, None, :]
+    k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)
+
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
+    q_nope = q_nope.transpose(0, 2, 1, 3)
+    q_rope = q_rope.transpose(0, 2, 1, 3)
+    k_rope = k_rope.transpose(0, 2, 1, 3)
     k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
     v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
 
-    cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-    q_rope = _apply_rope(q_rope, cos, sin).transpose(0, 2, 1, 3)
-    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin).transpose(0, 2, 1, 3)
-    q_nope = q_nope.transpose(0, 2, 1, 3)
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
 
-    scale = (nope + rope) ** -0.5
-    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
-    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
+    # Output projection.
+    out2d = out.reshape(B * S, H * vd)
+    final2d = jax.lax.dot_general(
+        out2d,
+        o_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
 
-    attn_out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-    attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B * S, H * vd)
-    return (attn_out @ o_proj).reshape(B, S, E)
-''',
-score=2.956,
-translation_score=None,
-hw_feedback=[],
-plan_gen_model='gemini-3-flash-preview',
-code_gen_model='gpt-5.4',
-stdout='Latency: 2.956 ms\n{"correct": true, "latency": 2.956, "error": "", "all_times_ms": [2.945, 2.945, 2.945, 2.946, 2.947, 2.948, 2.948, 2.948, 2.949, 2.949, 2.949, 2.949, 2.949, 2.949, 2.949, 2.95, 2.95, 2.951, 2.951, 2.951, 2.951, 2.952, 2.952, 2.952, 2.952, 2.952, 2.953, 2.953, 2.953, 2.953, 2.953, 2.953, 2.954, 2.954, 2.954, 2.954, 2.954, 2.954, 2.954, 2.955, 2.955, 2.955, 2.955, 2.955, 2.955, 2.955, 2.956, 2.956, 2.956, 2.956, 2.956, 2.956, 2.956, 2.956, 2.957, 2.957, 2.957, 2.957, 2.957, 2.957, 2.957, 2.957, 2.957, 2.958, 2.958, 2.959, 2.959, 2.959, 2.959, 2.959, 2.96, 2.96, 2.96, 2.96, 2.961, 2.961, 2.961, 2.961, 2.961, 2.961, 2.962, 2.962, 2.963, 2.964, 2.964, 2.965, 2.965, 2.965, 2.967, 2.967, 2.967, 2.967, 2.969, 2.969, 2.97, 2.972, 2.978, 2.981, 2.985, 3.019], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
-stderr=''),
-plan='''Based on my analysis of the code and the provided strategies, I will apply **Strategy 9: Fuse the two separate dot_products for scores into a single concatenated matmul**.
-
-### Performance Inefficiency
-The current Flash Attention kernel computes attention scores using two separate matrix multiplications followed by an element-wise addition:
-```python
-scores = (q_nope_f32 @ k_nope_tile.T) + (q_rope_f32 @ k_rope_tile.T)
-```
-This approach has two inefficiencies:
-1. **Dispatch Overhead:** It requires launching two separate MXU operations, which introduces dispatch latency and prevents the compiler from fusing the data paths.
-2. **Instruction Mix:** It uses `int32` for masking logic inside the kernel (`jnp.arange`, `jnp.where`), which is expensive compared to a fused matmul approach.
-
-### Optimization Plan
-I will modify the kernel to combine the `q_nope` and `q_rope` inputs into a single concatenated buffer `q_combined` before launching the kernel, and similarly concatenate the expanded KV latent parts with the rope parts inside the kernel. This allows replacing the two matmuls with a single high-throughput matrix multiplication:
-```python
-scores = q_combined_f32 @ kv_combined_tile.T
-```
-
-This leverages the TPU v6e\'s native matrix multiply unit more efficiently and simplifies the control flow inside the Pallas kernel.
-
-### Implementation Steps
-
-1.  **Modify Input Preparation (`_flash_attention`):**
-    *   Concatenate `q_nope` and `q_rope` along the last dimension to form `q_combined`.
-    *   Update `in_specs` to pass this combined tensor.
-    *   Remove `q_rope_ref` and its corresponding `BlockSpec`.
-
-2.  **Modify Kernel (`_flash_attention_kernel`):**
-    *   Update the function signature to accept `q_combined_ref` instead of separate refs.
-    *   When loading the KV block from the pre-computed latent expansion in `kv_expanded_scratch`, concatenate it with the corresponding slice of `k_rope` from `k_rope_ref`.
-    *   Compute `scores` using a single `jax.lax.dot_general` call with the concatenated tensors.
-    *   This replaces the two `dot_general` calls and the addition with a single call, maximizing MXU throughput.
-
-3.  **Memory Constraints:**
-    *   The `kv_expanded_scratch` size increases from `(S, nope + dv)` to `(S, nope + rope + dv)`. For the given dimensions (2048, 128, 64, 128), this increases memory by 0.5 MB (128 * 2048 * 4 bytes), which is well within the VMEM budget given the ~6 MB savings from removing the Q-Rope buffer.
-
-This change follows the hardware principle that the MXU is the most efficient compute unit on the TPU, and minimizing the number of dispatches to it improves performance.''',
+    return final2d.reshape(B, S, E)
+```''',
 code='''
 import jax
 import jax.numpy as jnp
@@ -9763,8 +11125,14 @@ CONFIG = {
 }
 
 
+# Conservative per-kernel VMEM working-set target for v6e-1.
+# This leaves headroom for compiler temporaries and pipeline buffering.
+_V6E_GEMM_WORKING_SET_BUDGET = 2 * 1024 * 1024  # 2 MiB
 _FLASH_BLOCK_Q = 128
+# Larger Q grouping amortizes full-sequence K/V loads across multiple Q tiles.
 _FLASH_Q_GROUP = 4
+# INCREASED from 128 to 256 for better compute-to-memory ratio
+# This reduces KV block loads from 16 to 8, improving memory bandwidth utilization
 _FLASH_BLOCK_KV = 256
 
 
@@ -9776,14 +11144,32 @@ def _compute_rope(head_dim, seq_len, theta, dtype):
 
 
 def _apply_rope(x, cos, sin):
-    x1, x2 = x[..., ::2], x[..., 1::2]
+    # Reshape to pair-wise view: (..., dim) -> (..., dim//2, 2)
+    *leading, dim = x.shape
+    x_pairs = x.reshape(*leading, dim // 2, 2)
+    
+    # Extract paired elements with simple indexing (no striding)
+    x1 = x_pairs[..., 0]  # even indices
+    x2 = x_pairs[..., 1]  # odd indices
+    
+    # Broadcast cos/sin appropriately
     cos = cos[None, :, None, :]
     sin = sin[None, :, None, :]
-    rotated = jnp.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
-    return rotated.reshape(x.shape)
+    
+    # Compute rotated values
+    y1 = x1 * cos - x2 * sin  # new even
+    y2 = x1 * sin + x2 * cos  # new odd
+    
+    # Interleave back: reshape each to (..., dim//2, 1), concat, reshape
+    y1_exp = y1[..., None]  # (..., dim//2, 1)
+    y2_exp = y2[..., None]  # (..., dim//2, 1)
+    interleaved = jnp.concatenate([y1_exp, y2_exp], axis=-1)  # (..., dim//2, 2)
+    
+    return interleaved.reshape(x.shape)
 
 
 def create_inputs(dtype=jnp.bfloat16):
+    """Returns (x, q_down, q_up, kv_down, k_up, v_up, o_proj)."""
     key = jax.random.PRNGKey(42)
     keys = jax.random.split(key, 8)
     C = CONFIG
@@ -9802,74 +11188,230 @@ def create_inputs(dtype=jnp.bfloat16):
     return x, q_down, q_up, kv_down, k_up, v_up, o_proj
 
 
-def _flash_attention_kernel(
-    q_combined_ref, k_latent_ref, k_rope_ref, k_up_ref, v_up_ref,
-    o_ref, kv_expanded_scratch
-):
-    """FlashAttention kernel optimized with fused score matmul over concatenated Q/K."""
-    seq_len = k_latent_ref.shape[1]
-    nope = k_up_ref.shape[2]
-    rope = k_rope_ref.shape[3]
-    dv = v_up_ref.shape[2]
+def _choose_tpu_block(dim: int, preferred: int, multiple: int) -> int:
+    """Choose a TPU-valid block size for one axis.
 
-    k_up = k_up_ref[0, :, :].astype(jnp.float32)
-    v_up = v_up_ref[0, :, :].astype(jnp.float32)
-    kv_up_f32 = jnp.concatenate([k_up, v_up], axis=1)
+    Returns either:
+      * a divisor of `dim` aligned to `multiple`, or
+      * the full dimension `dim` (which is also legal on TPU block axes).
+    """
+    preferred = min(dim, preferred)
+    if preferred > 0 and dim % preferred == 0 and preferred % multiple == 0:
+        return preferred
 
-    k_lat_all_f32 = k_latent_ref[0, :, :].astype(jnp.float32)
-    kv_expanded_all = jax.lax.dot_general(
-        k_lat_all_f32,
-        kv_up_f32,
-        dimension_numbers=(((1,), (0,)), ((), ())),
-        preferred_element_type=jnp.float32,
+    start = preferred - (preferred % multiple)
+    for candidate in range(start, multiple - 1, -multiple):
+        if candidate > 0 and dim % candidate == 0:
+            return candidate
+
+    return dim
+
+
+def _dtype_nbytes(dtype) -> int:
+    return jnp.dtype(dtype).itemsize
+
+
+def _estimate_gemm_working_set_bytes(
+    bm: int, bn: int, bk: int, in_dtype, out_dtype
+) -> int:
+    """Approximate live VMEM footprint under TPU double-buffered pipelining."""
+    in_b = _dtype_nbytes(in_dtype)
+    out_b = _dtype_nbytes(out_dtype)
+
+    # Inputs and outputs are typically double buffered by the TPU pipeline.
+    a_bytes = 2 * bm * bk * in_b
+    b_bytes = 2 * bk * bn * in_b
+    c_bytes = 2 * bm * bn * out_b
+
+    # Accumulator scratch is float32 and must stay live across K-reduction steps.
+    acc_bytes = bm * bn * 4
+
+    return a_bytes + b_bytes + c_bytes + acc_bytes
+
+
+def _candidate_blocks(dim: int, preferred: int, multiple: int):
+    """Generate legal block candidates, largest first."""
+    candidates = {dim}  # full-dimension fallback is always legal on TPU
+    capped = min(dim, preferred)
+
+    if multiple == 8:
+        common = (512, 256, 128, 64, 32, 16, 8)
+    else:
+        common = (1024, 512, 256, 128)
+
+    for seed in (capped,) + common:
+        if seed <= 0 or seed > dim:
+            continue
+        if seed == dim:
+            candidates.add(seed)
+            continue
+        rounded = seed - (seed % multiple)
+        while rounded >= multiple:
+            if dim % rounded == 0:
+                candidates.add(rounded)
+                break
+            rounded -= multiple
+
+    return sorted(candidates, reverse=True)
+
+
+def _pick_gemm_tiles(M: int, N: int, K: int, dtype, bm: int, bn: int, bk: int):
+    """Pick TPU-valid tiles that fit comfortably in v6e VMEM."""
+    bm_candidates = _candidate_blocks(M, bm, 8)
+    bn_candidates = _candidate_blocks(N, bn, 128)
+    bk_candidates = _candidate_blocks(K, bk, 128)
+
+    best = None
+    best_score = None
+    for bm_c in bm_candidates:
+        for bn_c in bn_candidates:
+            for bk_c in bk_candidates:
+                working_set = _estimate_gemm_working_set_bytes(
+                    bm_c, bn_c, bk_c, dtype, dtype
+                )
+                if working_set > _V6E_GEMM_WORKING_SET_BUDGET:
+                    continue
+
+                # Maximize useful work first, then favor larger output tiles.
+                score = (bm_c * bn_c * bk_c, bm_c * bn_c, bn_c, bm_c, bk_c)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (bm_c, bn_c, bk_c)
+
+    if best is not None:
+        return best
+
+    # Guaranteed-valid fallback.
+    return (
+        _choose_tpu_block(M, bm, 8),
+        _choose_tpu_block(N, bn, 128),
+        _choose_tpu_block(K, bk, 128),
     )
-    kv_expanded_scratch[...] = kv_expanded_all
 
+
+def _flash_attention_kernel(
+    q_nope_ref,
+    q_rope_ref,
+    k_latent_ref,
+    k_rope_ref,
+    k_up_head_ref,
+    v_up_head_ref,
+    o_ref,
+):
+    """Persistent FlashAttention-style streaming kernel with a mask-free fast path.
+
+    Grid: (batch, head)
+    Block shapes:
+      q_nope_ref: [1, 1, S, nope]
+      q_rope_ref: [1, 1, S, rope]
+      k_latent_ref: [1, S, kvl]
+      k_rope_ref: [1, 1, S, rope]  (shared across heads, broadcast)
+      k_up_head_ref: [1, kvl, nope]
+      v_up_head_ref: [1, kvl, dv]
+      o_ref: [1, 1, S, dv]
+
+    Key optimization: separate fully causal KV blocks from the single overlapping
+    diagonal block for each Q group. The fully causal blocks skip mask materialization
+    and jnp.where entirely.
+    """
+    q_nope_all = q_nope_ref[0, 0, :, :].astype(jnp.float32)
+    q_rope_all = q_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_latent_all = k_latent_ref[0, :, :].astype(jnp.float32)
     k_rope_all = k_rope_ref[0, 0, :, :].astype(jnp.float32)
+    k_up = k_up_head_ref[0, :, :].astype(jnp.float32)
+    v_up = v_up_head_ref[0, :, :].astype(jnp.float32)
+
+    seq_len = k_latent_all.shape[0]
+    dv = v_up.shape[1]
     kv_block = _FLASH_BLOCK_KV
     q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
     num_q_groups = seq_len // q_group
 
+    # Pre-expand K/V once per head.
+    k_nope_all = jax.lax.dot_general(
+        k_latent_all,
+        k_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    v_all = jax.lax.dot_general(
+        k_latent_all,
+        v_up,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+
+    neg_inf = jnp.array(-1e9, dtype=jnp.float32)
+
     for qg in range(num_q_groups):
         q_start = qg * q_group
         q_end = q_start + q_group
-
-        q_combined_f32 = q_combined_ref[0, 0, q_start:q_end, :].astype(jnp.float32)
+        q_nope_tile = q_nope_all[q_start:q_end, :]
+        q_rope_tile = q_rope_all[q_start:q_end, :]
+        q_concat_tile = jnp.concatenate([q_nope_tile, q_rope_tile], axis=-1)
         q_pos = q_start + jnp.arange(q_group, dtype=jnp.int32)
+        active_kv_blocks = (q_end + kv_block - 1) // kv_block
+        full_kv_blocks = q_start // kv_block
 
-        m = jnp.full((q_group,), -1e9, dtype=jnp.float32)
+        m = jnp.full((q_group,), -jnp.inf, dtype=jnp.float32)
         l = jnp.zeros((q_group,), dtype=jnp.float32)
         acc = jnp.zeros((q_group, dv), dtype=jnp.float32)
 
-        active_kv_blocks = (q_end + kv_block - 1) // kv_block
-        for kv_idx in range(active_kv_blocks):
+        # Fast path: all keys in these blocks are strictly before every query in the group.
+        for kv_idx in range(full_kv_blocks):
             kv_start = kv_idx * kv_block
-            kv_tile = kv_expanded_scratch[kv_start:kv_start + kv_block, :]
-            k_nope_tile = kv_tile[:, :nope]
-            v_tile = kv_tile[:, nope:]
-            k_rope_tile = k_rope_all[kv_start:kv_start + kv_block, :]
-            k_combined_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=1)
+            kv_end = kv_start + kv_block
 
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
             scores = jax.lax.dot_general(
-                q_combined_f32,
-                k_combined_tile,
+                q_concat_tile,
+                k_concat_tile,
                 dimension_numbers=(((1,), (1,)), ((), ())),
                 preferred_element_type=jnp.float32,
             )
-
-            if kv_start + kv_block > q_start:
-                k_pos = kv_start + jnp.arange(kv_block, dtype=jnp.int32)[None, :]
-                scores = jnp.where(
-                    q_pos[:, None] >= k_pos,
-                    scores,
-                    jnp.array(-1e9, dtype=jnp.float32),
-                )
 
             block_max = jnp.max(scores, axis=1)
             new_m = jnp.maximum(m, block_max)
             exp_m_scale = jnp.exp(m - new_m)
             exp_scores = jnp.exp(scores - new_m[:, None])
+            l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
+            acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
+                exp_scores,
+                v_tile,
+                dimension_numbers=(((1,), (0,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+            m = new_m
 
+        # Slow path: only the overlapping / diagonal region needs causal masking.
+        for kv_idx in range(full_kv_blocks, active_kv_blocks):
+            kv_start = kv_idx * kv_block
+            kv_end = min(kv_start + kv_block, q_end)
+            valid_len = kv_end - kv_start
+
+            k_nope_tile = k_nope_all[kv_start:kv_end, :]
+            k_rope_tile = k_rope_all[kv_start:kv_end, :]
+            v_tile = v_all[kv_start:kv_end, :]
+
+            k_concat_tile = jnp.concatenate([k_nope_tile, k_rope_tile], axis=-1)
+            scores = jax.lax.dot_general(
+                q_concat_tile,
+                k_concat_tile,
+                dimension_numbers=(((1,), (1,)), ((), ())),
+                preferred_element_type=jnp.float32,
+            )
+
+            k_pos = kv_start + jnp.arange(valid_len, dtype=jnp.int32)[None, :]
+            scores = jnp.where(q_pos[:, None] >= k_pos, scores, neg_inf)
+
+            block_max = jnp.max(scores, axis=1)
+            new_m = jnp.maximum(m, block_max)
+            exp_m_scale = jnp.exp(m - new_m)
+            exp_scores = jnp.exp(scores - new_m[:, None])
             l = l * exp_m_scale + jnp.sum(exp_scores, axis=1)
             acc = acc * exp_m_scale[:, None] + jax.lax.dot_general(
                 exp_scores,
@@ -9882,85 +11424,137 @@ def _flash_attention_kernel(
         o_ref[0, 0, q_start:q_end, :] = (acc / l[:, None]).astype(o_ref.dtype)
 
 
-def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads):
+def _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj, block_q=_FLASH_BLOCK_Q):
+    """Blocked causal attention with latent-stationary KV expansion.
+
+    Args:
+        q_nope: [B, H, S, nope] - query nope component
+        q_rope: [B, H, S, rope] - query rope component
+        k_latent: [B, S, kvl] - compressed shared KV latent
+        k_rope: [B, 1, S, rope] - key rope component (shared across heads)
+        k_up_proj: [H, kvl, nope] - per-head key expansion weights
+        v_up_proj: [H, kvl, DV] - per-head value expansion weights
+    """
     B, H, S, nope = q_nope.shape
     rope = q_rope.shape[-1]
-    DV = v_up_heads.shape[-1]
+    DV = v_up_proj.shape[-1]
     kvl = k_latent.shape[-1]
-    q_combined = jnp.concatenate([q_nope, q_rope], axis=-1)
 
-    q_group = _FLASH_BLOCK_Q * _FLASH_Q_GROUP
-    if S % _FLASH_BLOCK_Q != 0:
-        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={_FLASH_BLOCK_Q}")
+    if S % block_q != 0:
+        raise ValueError(f"Sequence length must be divisible by block_q: S={S}, block_q={block_q}")
     if S % _FLASH_BLOCK_KV != 0:
         raise ValueError(
             f"Sequence length must be divisible by KV block: S={S}, kv_block={_FLASH_BLOCK_KV}"
         )
+
+    q_group = block_q * _FLASH_Q_GROUP
     if S % q_group != 0:
         raise ValueError(
             f"Sequence length must be divisible by grouped Q block: S={S}, q_group={q_group}"
         )
 
-    kv_expanded_scratch_shape = pltpu.VMEM((S, nope + DV), jnp.float32)
-
-    return pl.pallas_call(
+    outs = pl.pallas_call(
         _flash_attention_kernel,
         out_shape=[jax.ShapeDtypeStruct((B, H, S, DV), q_nope.dtype)],
         grid=(B, H),
         in_specs=[
-            pl.BlockSpec((1, 1, S, nope + rope), lambda b, h: (b, h, 0, 0)),
-            pl.BlockSpec((1, S, kvl), lambda b, h: (b, 0, 0)),
-            pl.BlockSpec((1, 1, S, rope), lambda b, h: (b, 0, 0, 0)),
-            pl.BlockSpec((1, kvl, nope), lambda b, h: (h, 0, 0)),
-            pl.BlockSpec((1, kvl, DV), lambda b, h: (h, 0, 0)),
+            pl.BlockSpec((1, 1, S, nope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, h0, 0, 0)),
+            pl.BlockSpec((1, S, kvl), lambda b0, h0: (b0, 0, 0)),
+            pl.BlockSpec((1, 1, S, rope), lambda b0, h0: (b0, 0, 0, 0)),
+            pl.BlockSpec((1, kvl, nope), lambda b0, h0: (h0, 0, 0)),
+            pl.BlockSpec((1, kvl, DV), lambda b0, h0: (h0, 0, 0)),
         ],
-        out_specs=[pl.BlockSpec((1, 1, S, DV), lambda b, h: (b, h, 0, 0))],
-        scratch_shapes=[kv_expanded_scratch_shape],
+        out_specs=[
+            pl.BlockSpec((1, 1, S, DV), lambda b0, h0: (b0, h0, 0, 0)),
+        ],
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("parallel", "parallel"),
         ),
-    )(q_combined, k_latent, k_rope, k_up_heads, v_up_heads)[0]
+    )(q_nope, q_rope, k_latent, k_rope, k_up_proj, v_up_proj)
+    return outs[0]
 
 
 def workload(x, q_down_proj, q_up_proj, kv_down_proj, k_up_proj, v_up_proj, o_proj):
+    """MLA: low-rank KV compression with separated position/content attention."""
     C = CONFIG
     B, S, E = x.shape
-    H, nope, rope, vd, kvl = (
-        C["num_heads"],
-        C["qk_nope_head_dim"],
-        C["qk_rope_head_dim"],
-        C["v_head_dim"],
-        C["kv_lora_rank"],
-    )
+    H = C["num_heads"]
+    nope, rope, vd = C["qk_nope_head_dim"], C["qk_rope_head_dim"], C["v_head_dim"]
+    kvl = C["kv_lora_rank"]
+
+    # Strategy 7: Absorb attention scale (1/sqrt(hd)) into the q_up_proj weights.
+    # This eliminates two large elementwise passes over the query tensors.
+    hd = nope + rope
+    scale = hd ** -0.5
+    scaled_q_up_proj = (q_up_proj.astype(jnp.float32) * scale).astype(q_up_proj.dtype)
+
+    # Flatten batch and sequence for dense projections.
     x2d = x.reshape(B * S, E)
 
-    q_low = (x2d @ q_down_proj).astype(x.dtype)
-    q = (q_low @ q_up_proj).reshape(B, S, H, nope + rope)
+    # Use XLA-optimized dense matmuls for straightforward projections.
+    q_low2d = jax.lax.dot_general(
+        x2d,
+        q_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    # The scaled q_up_proj already includes the attention scale factor.
+    q2d = jax.lax.dot_general(
+        q_low2d,
+        scaled_q_up_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    q = q2d.reshape(B, S, H, nope + rope)
     q_nope, q_rope = q[..., :nope], q[..., nope:]
 
-    kv = (x2d @ kv_down_proj).reshape(B, S, kvl + rope)
+    kv2d = jax.lax.dot_general(
+        x2d,
+        kv_down_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+    kv = kv2d.reshape(B, S, kvl + rope)
     k_latent, k_rope_raw = kv[..., :kvl], kv[..., kvl:]
 
-    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)
-    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)
-
+    # RoPE.
     cos, sin = _compute_rope(rope, S, C["rope_theta"], x.dtype)
-    q_rope = _apply_rope(q_rope, cos, sin).transpose(0, 2, 1, 3)
-    k_rope = _apply_rope(k_rope_raw[:, :, None, :], cos, sin).transpose(0, 2, 1, 3)
-    q_nope = q_nope.transpose(0, 2, 1, 3)
+    # Apply RoPE to q_rope [B, S, H, rope]
+    q_rope = _apply_rope(q_rope, cos, sin)
+    # Apply RoPE to k_rope_raw [B, S, rope] - keep it head-shared
+    k_rope_raw_expanded = k_rope_raw[:, :, None, :]  # [B, S, 1, rope]
+    k_rope = _apply_rope(k_rope_raw_expanded, cos, sin)  # [B, S, 1, rope]
 
-    scale = (nope + rope) ** -0.5
-    q_nope = (q_nope.astype(jnp.float32) * scale).astype(x.dtype)
-    q_rope = (q_rope.astype(jnp.float32) * scale).astype(x.dtype)
+    # Attention inputs - keep nope and rope separate to avoid broadcasting k_rope.
+    q_nope = q_nope.transpose(0, 2, 1, 3)  # [B, H, S, nope]
+    q_rope = q_rope.transpose(0, 2, 1, 3)  # [B, H, S, rope]
+    k_rope = k_rope.transpose(0, 2, 1, 3)  # [B, 1, S, rope] (shared across heads)
+    k_up_heads = k_up_proj.reshape(kvl, H, nope).transpose(1, 0, 2)  # [H, kvl, nope]
+    v_up_heads = v_up_proj.reshape(kvl, H, vd).transpose(1, 0, 2)  # [H, kvl, vd]
 
-    attn_out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
-    attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B * S, H * vd)
-    return (attn_out @ o_proj).reshape(B, S, E)
+    # Runtime scaling of activations is removed; Q is already pre-scaled.
+
+    # FlashAttention-style fused causal attention with latent-stationary KV.
+    # This avoids materializing full per-head K/V tensors in HBM.
+    out = _flash_attention(q_nope, q_rope, k_latent, k_rope, k_up_heads, v_up_heads)
+    out = out.transpose(0, 2, 1, 3).reshape(B, S, H * vd)
+
+    # Output projection.
+    out2d = out.reshape(B * S, H * vd)
+    final2d = jax.lax.dot_general(
+        out2d,
+        o_proj,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    ).astype(x.dtype)
+
+    return final2d.reshape(B, S, E)
 ''',
-score=2.721,
+score=2.458,
 translation_score=None,
 hw_feedback=[],
-plan_gen_model='zai.glm-5',
+plan_gen_model='minimax.minimax-m2.5',
 code_gen_model='gpt-5.4',
-stdout='Latency: 2.721 ms\n{"correct": true, "latency": 2.721, "error": "", "all_times_ms": [2.711, 2.711, 2.712, 2.712, 2.712, 2.713, 2.713, 2.714, 2.715, 2.715, 2.715, 2.715, 2.715, 2.715, 2.715, 2.715, 2.716, 2.716, 2.716, 2.717, 2.717, 2.717, 2.717, 2.717, 2.717, 2.717, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.718, 2.719, 2.719, 2.719, 2.719, 2.719, 2.72, 2.72, 2.721, 2.721, 2.721, 2.721, 2.721, 2.721, 2.721, 2.721, 2.721, 2.721, 2.722, 2.722, 2.722, 2.722, 2.722, 2.722, 2.722, 2.723, 2.723, 2.723, 2.723, 2.724, 2.724, 2.724, 2.724, 2.724, 2.725, 2.725, 2.725, 2.725, 2.725, 2.725, 2.725, 2.725, 2.726, 2.727, 2.727, 2.728, 2.728, 2.728, 2.728, 2.729, 2.729, 2.732, 2.733, 2.733, 2.734, 2.735, 2.736, 2.737, 2.737, 2.737, 2.738, 2.739, 2.747, 2.776], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
+stdout='Latency: 2.458 ms\n{"correct": true, "latency": 2.458, "error": "", "all_times_ms": [2.448, 2.449, 2.449, 2.449, 2.451, 2.452, 2.452, 2.453, 2.453, 2.453, 2.453, 2.453, 2.453, 2.454, 2.454, 2.454, 2.454, 2.454, 2.454, 2.454, 2.454, 2.455, 2.455, 2.455, 2.455, 2.455, 2.455, 2.455, 2.455, 2.455, 2.455, 2.456, 2.456, 2.456, 2.456, 2.456, 2.456, 2.456, 2.457, 2.457, 2.457, 2.457, 2.457, 2.457, 2.457, 2.457, 2.457, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.458, 2.459, 2.459, 2.459, 2.459, 2.459, 2.459, 2.459, 2.46, 2.46, 2.46, 2.46, 2.46, 2.46, 2.46, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.461, 2.462, 2.463, 2.463, 2.464, 2.464, 2.465, 2.466, 2.467, 2.467, 2.467, 2.469, 2.469, 2.471, 2.475, 2.492, 2.505], "max_diff": 0.03125, "max_rel_diff": 0.004303}',
 stderr='')
