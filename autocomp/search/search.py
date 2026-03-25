@@ -811,11 +811,11 @@ class BeamSearchStrategy(SearchStrategy):
 
 def main():
     # Select evaluation backend, LLM agent, and hardware config
-    backend_name = "jaxbench"  # Options: "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
-    agent_name = "built:tpu-v6e"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent (for TPU v6e, use built:tpu-v6e)
+    backend_name = "trn"  # Options: "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
+    agent_name = "built:trn-nki1"  # Options: "gemmini", "trn", "cuda", "built:<name>", or a path to a built agent (for TPU v6e, use built:tpu-v6e)
     simulator = None # "firesim" or "spike" if backend_name == "gemmini"; "gpumode-local" or "gpumode-cli" if backend_name == "gpumode"
     # Hardware configuration
-    hw_config = TpuHardwareConfig("v6e-1")
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
     # Examples:
     # hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
@@ -825,13 +825,18 @@ def main():
     # Models are specified as "provider::model"
     # Valid providers are "openai", "anthropic", "together", "aws", "gcp", "vllm"
     # If no provider is specified, the provider is inferred from the model name
-    models = ["aws::us.anthropic.claude-opus-4-5-20251101-v1:0", "openai::gpt-5.4", "aws::zai.glm-5", "aws::minimax.minimax-m2.5", "gcp::gemini-3-flash-preview"] # Models for planning    
+    models = [ # Models for planning
+        "aws::us.anthropic.claude-opus-4-5-20251101-v1:0", 
+        "aws::zai.glm-4.7", 
+        "aws::deepseek.v3.2", 
+        "aws::moonshotai.kimi-k2.5"
+    ]
     code_models = None # Models for code implementation (None means use same as planning models)
     metric = "latency"
     search_strategy = "beam"
-    iterations = 16
-    prob_type = "jaxbench-priority" # see README.md or sols directory for available problems
-    prob_id = "mla_attention"
+    iterations = 8
+    prob_type = "trn-tutorial" # see README.md or sols directory for available problems
+    prob_id = 2
 
     # Reimplement failed implementations
     # Only works for agents for which it is implemented (trn, built agents)
@@ -842,7 +847,7 @@ def main():
     early_stop_threshold = 1.0 # ratio threshold: current_best / best_N_ago >= threshold means no improvement
 
     # Beam search parameters
-    num_plan_candidates=5
+    num_plan_candidates=4
     num_code_candidates=2
     beam_size=4
 
@@ -854,11 +859,11 @@ def main():
 
     # Resume from a previous run's output directory (e.g. to optimize after translation)
     # Set to a path like "output/built:tpu-v6e_..._tr5_..." to load its final candidates
-    resume_from = "output/built:tpu-v6e_jaxbench-priority_mla_attention_beam_iters6_TPU_v6e-1_us-4-5-20251101-v1:0_openai::gpt-5.4_aws::zai.glm-4.7_aws::deepseek.v3.2_mini-3-flash-preview_do0.25_p5_c2_b4_tr6_10_trdrop_tscore_score1_ms1_fgisa1_ex0.25"
+    resume_from = ""
 
     # Use structured-output edit mode instead of full code generation
     # When True, the LLM outputs JSON edits (old_str/new_str pairs) instead of rewriting the entire file
-    use_edits = True
+    use_edits = False
 
     ### BuiltLLMAgent-specific parameters ###
     # Menu strategy
