@@ -1,5 +1,7 @@
 import json
 import pathlib
+import random
+import re
 
 from autocomp.common import logger, LLMClient
 from autocomp.search.prob import Prob
@@ -80,38 +82,26 @@ def parse_edits_response(response_text: str) -> list[dict] | None:
             return edits
     return None
 
+_FENCED_CODE_RE = re.compile(r"```\w*\n(.*?)```", re.DOTALL)
 
 def extract(code_str: str) -> str:
-    """
-    Takes LLM-generated code and extracts the "test" wrapper function
+    """Extract code from an LLM response.
 
-    for example:
-    '''
-    void test(Kinf, r, K_r) {
-        config_ex(WEIGHT_STATIONARY,  NO_ACTIVATION, true, false);
-        config_st(1 * sizeof(float)); // output K_r has 1 column in DRAM
-        ...
-        mvout(K_r + 0x8, K_r_acc_addr + 8, 1, 4); // mvout the third 4x1 block of K_r
-        fence();
-    }
-    '''
+    Tries, in order:
+    1. Fenced code blocks (```<optional-lang> ... ```) — returns the *last*
+       block, which is typically the final complete implementation.
+    2. Gemmini-style ``void test(...) { ... }`` brace matching.
+    3. Fallback: the entire string.
     """
-    # Remove the function wrapper and return only the body of the function
     if not code_str:
         return code_str
-    
-    if "```python" in code_str:
-        code_str = code_str.split("```python")[1].split("```")[0]
-        return code_str
-    if "```cuda" in code_str:
-        code_str = code_str.split("```cuda")[1].split("```")[0]
-        return code_str
+
+    blocks = _FENCED_CODE_RE.findall(code_str)
+    if blocks:
+        return blocks[-1]
 
     if "void test" in code_str:
         from_void_test_str = code_str[code_str.find("void test"):]
-        # end = from_void_test_str.rfind('}\n')
-        # Iterate through all characters until matching curly braces have been found
-        # Ignore curly braces in comments
         open_braces = 0
         in_comment = False
         in_single_line_comment = False
@@ -139,7 +129,6 @@ def extract(code_str: str) -> str:
             return from_void_test_str
         return body
 
-    # Fallback: just return the whole thing
     return code_str
 
 def extract_plan(plan_str: str) -> str:
