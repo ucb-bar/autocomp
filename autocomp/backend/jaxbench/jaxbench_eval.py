@@ -277,16 +277,19 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
 
         stdout_f = f"{remote_dir}/stdout.txt"
         stderr_f = f"{remote_dir}/stderr.txt"
+
         remote_cmd = (
             f"{setup_cmd}"
             f"{run_python} > {stdout_f} 2> {stderr_f}; true"
         )
 
-        # 5. Execute
+        # 5. Execute — scale timeout: runner has a 120s per-impl timeout,
+        # plus overhead for JAX setup, reference compilation, and SSH.
+        ssh_timeout = 180 + 150 * len(code_strs)
         try:
-            self._ssh(remote_cmd)
+            self._ssh(remote_cmd, timeout=ssh_timeout)
         except subprocess.TimeoutExpired:
-            logger.warning("Remote execution timed out")
+            logger.warning("Remote execution timed out after %ds", ssh_timeout)
             return None
 
         stdout = self._ssh_cat(stdout_f)
@@ -361,10 +364,10 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
             logger.error("scp failed (exit %s): %s", proc.returncode, proc.stderr[:200])
         return proc.returncode
 
-    def _ssh(self, remote_command: str) -> subprocess.CompletedProcess:
+    def _ssh(self, remote_command: str, timeout: int = 600) -> subprocess.CompletedProcess:
         cmd = self._build_ssh_cmd(remote_command=remote_command, allocate_tty=False, batch_mode=True)
         logger.debug("ssh: %s", " ".join(cmd))
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
     def _ssh_cat(self, remote_path: str) -> str:
         cmd = self._build_ssh_cmd(

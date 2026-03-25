@@ -433,7 +433,7 @@ async def fetch_tool_completion(
     tools: list[dict] | None = None,
     response_format: dict | None = None,
     temperature: float | None = None,
-    max_tokens: int = 16384,
+    max_tokens: int | None = None,
     bedrock_client=None,
 ) -> dict:
     """Provider-dispatching async helper for chat-completions with tool calling.
@@ -445,7 +445,9 @@ async def fetch_tool_completion(
         try:
             async with semaphore:
                 if provider in ("openai", "vllm", "together"):
-                    kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens}
+                    kwargs = {"model": model, "messages": messages}
+                    if max_tokens is not None:
+                        kwargs["max_tokens"] = max_tokens
                     if tools:
                         kwargs["tools"] = _openai_tools_from_schema(tools)
                     if temperature is not None:
@@ -460,7 +462,7 @@ async def fetch_tool_completion(
 
                 elif provider in ("anthropic", "aws"):
                     system, anth_messages = _messages_for_anthropic(messages)
-                    kwargs = {"model": model, "messages": anth_messages, "max_tokens": max_tokens}
+                    kwargs = {"model": model, "messages": anth_messages, "max_tokens": max_tokens or 16384}
                     if system:
                         kwargs["system"] = system
                     if tools:
@@ -491,7 +493,9 @@ async def fetch_tool_completion(
 
                 elif provider == "gcp":
                     system, contents = _messages_for_gemini(messages)
-                    config = types.GenerateContentConfig(max_output_tokens=max_tokens)
+                    config = types.GenerateContentConfig()
+                    if max_tokens is not None:
+                        config.max_output_tokens = max_tokens
                     if temperature is not None:
                         config.temperature = temperature
                     if system:
@@ -513,8 +517,10 @@ async def fetch_tool_completion(
                     kwargs = {
                         "modelId": model,
                         "messages": br_messages,
-                        "inferenceConfig": {"maxTokens": max_tokens},
+                        "inferenceConfig": {},
                     }
+                    if max_tokens is not None:
+                        kwargs["inferenceConfig"]["maxTokens"] = max_tokens
                     if system:
                         kwargs["system"] = system
                     if temperature is not None:
@@ -948,7 +954,7 @@ class LLMClient():
         tools: list[dict] | None = None,
         response_format: dict | None = None,
         temperature: float | None = None,
-        max_tokens: int = 16384,
+        max_tokens: int | None = None,
     ) -> dict:
         """Single LLM call with message array, optional tool schemas, optional structured output.
         Returns normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...]}."""
@@ -967,6 +973,58 @@ class LLMClient():
             bedrock_client=bedrock,
         ))
 
+    def chat_messages_async(
+        self,
+        messages_lst: list[list[dict]],
+        num_samples: int = 1,
+        tools: list[dict] | None = None,
+        response_format: dict | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> list[list[dict]]:
+        """Batched async version of chat_messages.
+
+        Args:
+            messages_lst: List of message arrays, one per prompt.
+            num_samples: Number of samples per prompt.
+            tools: Optional tool schemas.
+            response_format: Optional structured output schema.
+            temperature: Sampling temperature.
+            max_tokens: Max tokens per response.
+
+        Returns:
+            List of lists of normalized dicts, one inner list per prompt,
+            each inner list containing num_samples responses.
+        """
+        MAX_CONCURRENT = 9
+        bedrock = getattr(self, "_bedrock_client", None)
+
+        async def _run():
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+            tasks = []
+            for messages in messages_lst:
+                for _ in range(num_samples):
+                    tasks.append(fetch_tool_completion(
+                        semaphore,
+                        self.async_client,
+                        copy.deepcopy(messages),
+                        provider=self.provider,
+                        model=self.model,
+                        tools=tools,
+                        response_format=response_format,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        bedrock_client=bedrock,
+                    ))
+            return await asyncio.gather(*tasks)
+
+        results = self._run_async(_run())
+
+        grouped: list[list[dict]] = []
+        for i in range(len(messages_lst)):
+            grouped.append(list(results[i * num_samples:(i + 1) * num_samples]))
+        return grouped
+
     def agent_loop(
         self,
         messages: list[dict],
@@ -974,7 +1032,7 @@ class LLMClient():
         tool_executor,
         max_turns: int = 30,
         temperature: float | None = None,
-        max_tokens: int = 16384,
+        max_tokens: int | None = None,
     ) -> list[dict]:
         """Run a tool-use loop: call LLM, execute tool calls, feed results back, repeat.
         Stops when the model returns content without tool calls, or max_turns is reached.
