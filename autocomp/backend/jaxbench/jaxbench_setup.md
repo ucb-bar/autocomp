@@ -61,7 +61,7 @@ Each JAXBench workload file defines `create_inputs()` and `workload()`. The back
 
 ## Recommended Workflow
 
-JAXBench workloads are vanilla JAX code, not Pallas kernels. We recommend a two-phase approach:
+For workloads that are vanilla JAX code, if you would like to translate them to Pallas kernels, we recommend a two-phase approach:
 
 1. **Translation**: Run with `translate_iters > 0` to first convert the JAX workload into a Pallas kernel. Inspect the outputs to verify the translation is complete.
 2. **Optimization**: Use `resume_from` to load the translated candidates and optimize from there.
