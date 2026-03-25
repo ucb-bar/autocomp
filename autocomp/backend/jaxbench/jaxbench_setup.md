@@ -39,7 +39,7 @@ export JAXBENCH_DIR=/path/to/JAXBench
 
 ## Running
 
-Set the following in `search.py`:
+Set the following in `run_search.py`:
 
 ```python
 backend_name = "jaxbench"
