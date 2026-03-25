@@ -15,6 +15,8 @@ AI-Driven Code Optimizer for Tensor Accelerators
 
 Welcome to the code repository of **Autocomp**. Recent updates:
 
+**(3/25/2026)** Added support for structured-output code edits in the code implementation phase.
+
 **(3/17/2026)** Added preliminary TPU support and enhanced Autocomp's code translation capabilities.
 
 **(3/13/2026)** Added the **Agent Builder** for automatically creating hardware-specific LLM agents from documentation sources.
@@ -181,7 +183,7 @@ Notable parameters:
 - `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
 - `prob_type`: The problem type to use.
   - For Trainium, `trn-tutorial` or `trn-advanced`.
-  - For TPU, `tpu`.
+  - For TPU, `tpu`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
@@ -190,6 +192,7 @@ Notable parameters:
 - `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of the best score (e.g., `1.2` means up to 20% worse).
 - `translate_score`: If `True`, score translation candidates by code similarity to the original (how complete the translation is), not just latency. Defaults to `True`.
 - `translate_drop_original`: If `True`, drop the original (untranslated) candidate from the beam after the last translation iteration. Defaults to `True`.
+- `use_edits`: If `True`, in the code implementation phase, the LLM outputs structured JSON edits (`old_str`/`new_str` pairs) instead of rewriting the entire file. Generally more effective when code size is large. Defaults to `False`.
 - `resume_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
 - `reimplement_failed`: Re-generate code for candidates that failed evaluation (only works on supported agents).

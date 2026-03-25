@@ -8,7 +8,8 @@ general:
   array dimension or be divisible by 8 (second-to-last) and 128 (last) respectively. Violating this causes compiler errors.
 - Elementwise operations on TPU only support 32-bit types natively; narrower-precision operands (bf16, int8, etc.) must be
   upcast to a 32-bit type before elementwise computation. Matrix multiplication always accumulates in float32, and f32 inputs
-  are silently rounded to bf16 unless explicit precision is requested.
+  are silently rounded to bf16 unless explicit precision is requested. Accumulate attention scores, softmax, and reductions
+  in float32; cast back to bf16 only when writing to the output Ref.
 - Integer reductions (sum, max, min) are not supported on TPU; these reductions work only on floating-point values. Boolean
   reductions (any/all) work only on booleans. Loop primitives (fori_loop, for_loop) are fully unrolled at compile time, so
   trip counts must be small.
@@ -34,6 +35,12 @@ planning:
 - 'Reshapes modifying the last two dimensions are only supported for: (1) flattening leading dims onto the second-to-last
   dim, or (2) restoring a dim removed by reduction. Transpositions of non-trailing axes require ≥4 dimensions. All other reshape/transpose
   patterns on the last two dims cause compiler errors.'
+- 'Inside kernels, `jnp.max`/`jnp.sum` along the last axis can trigger "Unsupported implicit dim change" if tile
+  dims are not multiples of 8×128. Keep reductions outside Pallas kernels unless tile layout is verified.'
+- 'Inside kernels, `jnp.arange` only supports int32. Use int32 dtype and cast to float afterward.'
+- 'Stride indexing (`x[:, ::2]`) is unsupported inside kernels. Use reshape + slice instead:
+  `x.reshape(*x.shape[:-1], x.shape[-1]//2, 2)[..., 0]`.'
+- 'Ref dtype must match the written value. Cast explicitly: `out_ref[...] = acc.astype(out_ref.dtype)`.'
 coding:
 - Wrap the generated code with ```python at the beginning and ``` at the end.
 - '`pallas_call` requires `out_shape` (a `jax.ShapeDtypeStruct` or list thereof) to define output shapes/dtypes. When a `grid`
