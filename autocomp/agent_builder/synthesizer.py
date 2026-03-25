@@ -957,7 +957,7 @@ Translation strategies:"""
                 "Do not count out any of the strategies unless they are clearly irrelevant to the code.",
             ],
             "coding": [
-                "Wrap the generated code with ```python at the beginning and ``` at the end.",
+                "Wrap the generated code with ``` at the beginning and ``` at the end.",
             ],
         }
 
