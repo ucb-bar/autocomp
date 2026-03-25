@@ -9,7 +9,7 @@ To add a new hardware target, you need to:
 1. [**Create a Hardware Config class**](ADDING_HARDWARE_SUPPORT.md#step-1-create-a-hardware-config-class) - Describes the target hardware
 2. [**Create an Eval Backend class**](ADDING_HARDWARE_SUPPORT.md#step-2-create-an-eval-backend-class) - Implements code evaluation and testing
 3. [**Create an LLM Agent class**](ADDING_HARDWARE_SUPPORT.md#step-3-create-an-llm-agent-class) - Handles target-specific prompting for code generation
-4. [**Register the hardware target**](ADDING_HARDWARE_SUPPORT.md#step-4-register-the-hardware-target) - Add instantiation logic in `search.py` and `run_search.py`
+4. [**Register the hardware target**](ADDING_HARDWARE_SUPPORT.md#step-4-register-the-hardware-target) - Add instantiation logic in `search.py`
 5. [**Create setup documentation**](ADDING_HARDWARE_SUPPORT.md#step-5-create-setup-documentation) - Setup instructions for users
 6. [**Update README**](ADDING_HARDWARE_SUPPORT.md#step-6-update-readme) - Add your hardware target to the README
 7. [**Add problems**](ADDING_HARDWARE_SUPPORT.md#step-7-add-problems) - Define problems to optimize (this is backend-specific)
@@ -220,14 +220,6 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     ...
 ```
 
-### Add a Hardware Config Instantiation
-
-In `run_search.py`, add an example of instantiating your hardware config:
-
-```python
-# hw_config = YourHardwareConfig(...)
-```
-
 ### Handle Initial Code Loading
 
 Add logic to load initial code in the `load_initial_code()` function:
@@ -244,6 +236,8 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             return f.read()
     ...
 ```
+
+Optionally, add a commented-out example of your hardware config to `run_search.py` so users can see the syntax (e.g., `# hw_config = YourHardwareConfig(...)`).
 
 ## Step 5: Create Setup Documentation
 
