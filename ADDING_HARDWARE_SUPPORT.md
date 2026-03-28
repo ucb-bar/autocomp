@@ -93,6 +93,14 @@ class YourEvalBackend(EvalBackend):
 
 You can also optionally override `get_backend_specific_rules()` to return a list of backend-specific rule strings for LLM prompts, and `get_hw_feedback()` to return hardware feedback for candidates.
 
+### Evaluation Performance
+
+Code evaluation can account for a majority of search time and scales directly with candidate count. Making `evaluate_code` fast is critical. Patterns used by existing backends:
+
+- **Parallel compilation** (Trainium `trn_eval.py`): Compilation is decoupled from execution and parallelized across candidates. Only candidates that compile successfully are executed on-device.
+- **Batched simulation** (Gemmini `gemmini_eval.py`): Multiple candidates are packaged into a single FireSim run to amortize startup overhead.
+- **Early exit on failure**: Return `{"correct": False}` as soon as a failure is detected rather than running remaining steps.
+
 ### Code Cleaning
 
 Eval backends generally need to clean LLM-generated code. There is some simple extraction logic implemented at the top of `autocomp/agents/llm_agent.py`, but if this does not work for your hardware target, you can implement your own cleaning logic in the `evaluate_code` method of your eval backend class or in `llm_agent.py`. You can also prompt the LLM to generate only the code and no other text, but this may actually reduce the quality of the code generated!
@@ -106,9 +114,8 @@ Eval backends generally need to clean LLM-generated code. There is some simple e
 
 ### Other Considerations
 
-- **Test Integration**: Tests are located in `tests/{prob_type}/` and should be integrated into your evaluation
+- **Test Integration**: Some backends place initial code in `sols/{prob_type}/` and corresponding test harnesses in `tests/{prob_type}/`. You can consider following this pattern, or you can implement your own method for separating the code to optimize from the test harness.
 - **Error Handling**: You can consider reading in `stdout` and `stderr` from the code execution to provide feedback to the LLM, to try to fix errors automatically (like we do with Trainium), or for manual inspection later.
-- **Evaluation Time**: When the evaluation is slow, this can be a bottleneck in search. Consider parallelizing or batching evaluations if it can help reduce evaluation time.
 
 ## Step 3: Create an LLM Agent Class
 
@@ -194,7 +201,7 @@ Register your hardware target's components in the helper functions in `autocomp/
 
 ### Import Your Classes
 
-Add imports at the top of `search.py`:
+Add imports at the top of `search.py` (backend and agent registration):
 
 ```python
 from autocomp.backend.{backend_name}.{backend_name}_eval import YourEvalBackend
@@ -220,14 +227,6 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     ...
 ```
 
-### Add a Hardware Config Instantiation
-
-In the `main()` function of `search.py`, add an example of instantiating your hardware config:
-
-```python
-# hw_config = YourHardwareConfig(...)
-```
-
 ### Handle Initial Code Loading
 
 Add logic to load initial code in the `load_initial_code()` function:
@@ -244,6 +243,8 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             return f.read()
     ...
 ```
+
+Optionally, add a commented-out example of your hardware config to `run_search.py` so users can see the syntax (e.g., `# hw_config = YourHardwareConfig(...)`).
 
 ## Step 5: Create Setup Documentation
 

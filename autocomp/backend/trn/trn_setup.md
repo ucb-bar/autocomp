@@ -26,7 +26,7 @@ pip install -e .
 
 ## Available Problems
 
-Trainium has the following problem types (`prob_type` in `search.py`):
+Trainium has the following problem types (`prob_type` in `run_search.py`):
 
 | `prob_type` | Description |
 |---|---|
