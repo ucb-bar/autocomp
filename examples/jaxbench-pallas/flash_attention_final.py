@@ -330,13 +330,34 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
     kernel = _flash_attention_kernel_single_batch
+  q_seq_idx = pl.program_id(2)
+  kv_seq_idx = pl.program_id(3)
+  should_run = True
+  if kwargs["causal"]:
+    block_q = q_tile_ref.shape[2]
+    block_k_major = args[1].shape[2]
+    should_run = below_or_on_diag(q_seq_idx, block_q, kv_seq_idx, block_k_major)
   for batch_idx in range(block_b):
-    kernel((batch_idx, 0), q_tile_ref, *args, **kwargs)
+    kernel((batch_idx, 0), q_tile_ref, *args, should_run=should_run, **kwargs)
+
+
+def _get_head_dim_broadcast(head_dim):
+  """Return (head_dim_repeats, l_broadcast_fn) for broadcasting l to head_dim."""
+  head_dim_repeats, hd_rem = divmod(head_dim, MIN_BLOCK_SIZE)
+  if hd_rem:
+    if head_dim_repeats == 0:
+      return 0, lambda l: l[:, :head_dim]
+    else:
+      raise NotImplementedError(
+          f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
+      )
+  else:
+    return head_dim_repeats, lambda l: pltpu.repeat(l, head_dim_repeats, 1)
 
 
 def _flash_attention_kernel_causal_triangular(
@@ -358,7 +379,10 @@ def _flash_attention_kernel_causal_triangular(
     kv_seq_len,
     mask_value,
 ):
-  """Optimized causal forward kernel that skips fully-masked subproblems.
+  """Optimized causal forward kernel using K/V-panel-outer traversal.
+  
+  This kernel batches multiple Q subblocks that share the same K/V panel into
+  single matmul operations to amortize K/V loading overhead.
   
   This kernel is used when:
   - causal=True
@@ -366,110 +390,125 @@ def _flash_attention_kernel_causal_triangular(
   - segment_ids are None
   - block_q == block_k_major == kv_seq_len (single grid cell in kv dimension)
   - block_q % block_k == 0
-  
-  Instead of computing all Q rows against all K/V tiles and masking afterward,
-  we split Q into subblocks of size block_k and only compute the lower-triangular
-  subproblems that contribute to the causal attention.
   """
   del ab_tile_ref, q_segment_ids_tile_ref, kv_segment_ids_tile_ref  # Unused
   
   block_b = q_tile_ref.shape[0]
   block_q = q_tile_ref.shape[2]
   head_dim = q_tile_ref.shape[3]
-  num_q_subs = block_q // block_k
+  num_k_subs = block_q // block_k
+  
+  _, l_broadcast = _get_head_dim_broadcast(head_dim)
+  block_k_repeats, rem = divmod(block_k, MIN_BLOCK_SIZE)
+  if rem:
+    raise NotImplementedError(
+        f"{block_k=} should be a multiple of {MIN_BLOCK_SIZE}"
+    )
   
   for batch_idx in range(block_b):
     bidx = (batch_idx, 0)
     
-    # Process each q subblock
-    for q_sub in range(num_q_subs):
-      q_start = q_sub * block_k
-      q = q_tile_ref[batch_idx, 0, pl.dslice(q_start, block_k), :]  # [block_k, head_dim]
+    # Initialize full-block scratch once
+    m_scratch_ref[bidx] = jnp.full(m_scratch_ref.shape[2:], -jnp.inf, jnp.float32)
+    l_scratch_ref[bidx] = jnp.zeros(l_scratch_ref.shape[2:], jnp.float32)
+    acc_scratch_ref[bidx] = jnp.zeros(acc_scratch_ref.shape[2:], jnp.float32)
+    
+    # Process each K/V panel (k_sub outer loop)
+    for k_sub in range(num_k_subs):
+      k_start = k_sub * block_k
       
-      # Initialize scratch for this q subblock
-      m_scratch_ref[bidx] = jnp.full(m_scratch_ref.shape[2:], -jnp.inf, jnp.float32)
-      l_scratch_ref[bidx] = jnp.zeros(l_scratch_ref.shape[2:], jnp.float32)
-      acc_scratch_ref[bidx] = jnp.zeros(acc_scratch_ref.shape[2:], jnp.float32)
+      # Load K/V panel once
+      k = k_tile_ref[batch_idx, 0, pl.dslice(k_start, block_k), :]
+      v = v_tile_ref[batch_idx, 0, pl.dslice(k_start, block_k), :]
       
-      # Only iterate over k subblocks that can contribute (k_sub <= q_sub for causal)
-      for k_sub in range(q_sub + 1):
-        k_start = k_sub * block_k
+      # Off-diagonal: process all Q rows after this K/V panel (q_idx > k_sub)
+      # These rows are fully unmasked w.r.t. this K/V panel
+      q_off_start = (k_sub + 1) * block_k
+      q_off_size = block_q - q_off_start
+      
+      if q_off_size > 0:
+        # Read Q rows and their state
+        q_off = q_tile_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :]
+        m_prev_off = m_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :]
+        l_prev_off = l_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :]
+        acc_prev_off = acc_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :]
         
-        m_prev = m_scratch_ref[bidx]
-        l_prev = l_scratch_ref[bidx]
-        
-        k = k_tile_ref[batch_idx, 0, pl.dslice(k_start, block_k), :]  # [block_k, head_dim]
-        
-        s = jax.lax.dot_general(
-            q, k, TRANS_B_DIM_NUMBERS, preferred_element_type=jnp.float32
-        )  # [block_k, block_k]
-        
-        if sm_scale != 1.0:
-          s *= sm_scale
-        
-        # Apply causal mask only on diagonal subproblem (k_sub == q_sub)
-        if k_sub == q_sub:
-          mask_shape = (block_k, block_k)
-          row_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 0)
-          row_ids += q_start
-          col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
-          col_ids += k_start
-          causal_mask = col_ids <= row_ids
-          s = s + jnp.where(causal_mask, 0.0, mask_value)
-        
-        m_curr = jnp.max(s, axis=1)[:, None]  # [block_k, 1]
-        m_next = jnp.maximum(m_prev, m_curr)  # [block_k, MIN_BLOCK_SIZE]
-        
-        block_k_repeats, rem = divmod(block_k, MIN_BLOCK_SIZE)
-        if rem:
-          raise NotImplementedError(
-              f"{block_k=} should be a multiple of {MIN_BLOCK_SIZE}"
-          )
-        p = jnp.exp(s - pltpu.repeat(m_next, block_k_repeats, 1))
-        
-        alpha = jnp.exp(m_prev - m_next)
-        l_next = jnp.sum(p, axis=1)[:, None] + alpha * l_prev  # [block_k, MIN_BLOCK_SIZE]
-        
-        head_dim_repeats, hd_rem = divmod(head_dim, MIN_BLOCK_SIZE)
-        if hd_rem:
-          if head_dim_repeats == 0:
-            l_broadcast = lambda l: l[:, :head_dim]
-          else:
-            raise NotImplementedError(
-                f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
-            )
-        else:
-          l_broadcast = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
-        
-        v = v_tile_ref[batch_idx, 0, pl.dslice(k_start, block_k), :]
-        o_curr = jax.lax.dot(
-            p.astype(v.dtype), v, preferred_element_type=jnp.float32
+        # Compute scores for off-diagonal batch
+        s_off = jax.lax.dot_general(
+            q_off, k, TRANS_B_DIM_NUMBERS, preferred_element_type=jnp.float32
         )
+        if sm_scale != 1.0:
+          s_off = s_off * sm_scale
         
-        acc_prev = acc_scratch_ref[bidx]
-        acc_scratch_ref[bidx] = acc_prev * l_broadcast(alpha) + o_curr
+        # Online softmax update (no masking needed)
+        m_curr_off = jnp.max(s_off, axis=1)[:, None]
+        m_next_off = jnp.maximum(m_prev_off, m_curr_off)
         
-        l_scratch_ref[bidx] = l_next
-        m_scratch_ref[bidx] = m_next
+        p_off = jnp.exp(s_off - pltpu.repeat(m_next_off, block_k_repeats, 1))
+        alpha_off = jnp.exp(m_prev_off - m_next_off)
+        l_next_off = jnp.sum(p_off, axis=1)[:, None] + alpha_off * l_prev_off
+        
+        o_curr_off = jax.lax.dot(
+            p_off.astype(v.dtype), v, preferred_element_type=jnp.float32
+        )
+        acc_next_off = acc_prev_off * l_broadcast(alpha_off) + o_curr_off
+        
+        # Write back updated state
+        m_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :] = m_next_off
+        l_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :] = l_next_off
+        acc_scratch_ref[batch_idx, 0, pl.dslice(q_off_start, q_off_size), :] = acc_next_off
       
-      # Normalize and write output for this q subblock
-      l_final = l_scratch_ref[bidx]
-      head_dim_repeats, hd_rem = divmod(head_dim, MIN_BLOCK_SIZE)
-      if hd_rem:
-        if head_dim_repeats == 0:
-          l_broadcast = lambda l: l[:, :head_dim]
-        else:
-          raise NotImplementedError(
-              f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
-          )
-      else:
-        l_broadcast = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
-      inv_l = jnp.where(l_final == 0.0, 1.0, 1.0 / l_final)
-      o_tile_ref[batch_idx, 0, pl.dslice(q_start, block_k), :] = (acc_scratch_ref[bidx] * l_broadcast(inv_l)).astype(o_tile_ref.dtype)
-      if l_ref is not None:
-        l_ref[batch_idx, 0, pl.dslice(q_start, block_k), :] = l_scratch_ref[bidx].astype(l_ref.dtype)
-      if m_ref is not None:
-        m_ref[batch_idx, 0, pl.dslice(q_start, block_k), :] = m_scratch_ref[bidx].astype(m_ref.dtype)
+      # Diagonal: process Q rows at k_sub (q_idx == k_sub) with causal mask
+      q_diag_start = k_start
+      q_diag = q_tile_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :]
+      m_prev_diag = m_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :]
+      l_prev_diag = l_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :]
+      acc_prev_diag = acc_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :]
+      
+      # Compute scores for diagonal block
+      s_diag = jax.lax.dot_general(
+          q_diag, k, TRANS_B_DIM_NUMBERS, preferred_element_type=jnp.float32
+      )
+      if sm_scale != 1.0:
+        s_diag = s_diag * sm_scale
+      
+      # Apply causal mask (only needed on diagonal)
+      mask_shape = (block_k, block_k)
+      row_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 0)
+      row_ids = row_ids + q_diag_start
+      col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
+      col_ids = col_ids + k_start
+      causal_mask = col_ids <= row_ids
+      s_diag = s_diag + jnp.where(causal_mask, 0.0, mask_value)
+      
+      # Online softmax update for diagonal
+      m_curr_diag = jnp.max(s_diag, axis=1)[:, None]
+      m_next_diag = jnp.maximum(m_prev_diag, m_curr_diag)
+      
+      p_diag = jnp.exp(s_diag - pltpu.repeat(m_next_diag, block_k_repeats, 1))
+      alpha_diag = jnp.exp(m_prev_diag - m_next_diag)
+      l_next_diag = jnp.sum(p_diag, axis=1)[:, None] + alpha_diag * l_prev_diag
+      
+      o_curr_diag = jax.lax.dot(
+          p_diag.astype(v.dtype), v, preferred_element_type=jnp.float32
+      )
+      acc_next_diag = acc_prev_diag * l_broadcast(alpha_diag) + o_curr_diag
+      
+      # Write back updated diagonal state
+      m_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :] = m_next_diag
+      l_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :] = l_next_diag
+      acc_scratch_ref[batch_idx, 0, pl.dslice(q_diag_start, block_k), :] = acc_next_diag
+    
+    # Normalize once at the end for the full block
+    l_final = l_scratch_ref[bidx]
+    l_final_inv = jnp.where(l_final == 0.0, 1.0, 1.0 / l_final)
+    o_tile_ref[batch_idx, 0, :, :] = (
+        acc_scratch_ref[bidx] * l_broadcast(l_final_inv)
+    ).astype(o_tile_ref.dtype)
+    if l_ref is not None:
+      l_ref[batch_idx, 0, :, :] = l_scratch_ref[bidx].astype(l_ref.dtype)
+    if m_ref is not None:
+      m_ref[batch_idx, 0, :, :] = m_scratch_ref[bidx].astype(m_ref.dtype)
 
 
 def _flash_attention_kernel_single_batch(
@@ -492,6 +531,7 @@ def _flash_attention_kernel_single_batch(
     block_k,
     kv_seq_len,
     mask_value,
+    should_run=True,
 ):
   block_k_major = k_tile_ref.shape[2]
   block_q = q_tile_ref.shape[2]
@@ -509,14 +549,6 @@ def _flash_attention_kernel_single_batch(
     )
 
   q_seq_idx = pl.program_id(2)
-  if causal:
-    should_run = below_or_on_diag(q_seq_idx, block_q, kv_seq_idx, block_k_major)
-    mask_shape = (block_q, block_k)
-    base_row_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 0)
-    base_col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
-    row_ids = base_row_ids + q_seq_idx * block_q
-  else:
-    should_run = True
 
   @pl.when(should_run)
   def run():
@@ -562,7 +594,11 @@ def _flash_attention_kernel_single_batch(
         mask = jnp.equal(q_segment_ids, kv_segment_ids).astype(jnp.bool_)
 
       if causal:
-        col_ids = base_col_ids + kv_seq_idx * block_k_major + start_k
+        mask_shape = (block_q, block_k)
+        row_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 0)
+        row_ids += q_seq_idx * block_q
+        col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
+        col_ids += kv_seq_idx * block_k_major + start_k
         causal_mask = col_ids <= row_ids
         mask = (
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
@@ -582,7 +618,9 @@ def _flash_attention_kernel_single_batch(
 
       alpha = jnp.exp(m_prev - m_next)  # Shape [block_q, 128].
 
-      l_next = jnp.sum(p, axis=1)[:, None] + alpha * l_prev  # Shape [block_q, 128]
+      l_corr = alpha * l_prev
+
+      l_next = jnp.sum(p, axis=1)[:, None] + l_corr  # Shape [block_q, 128]
 
       head_dim_repeats, rem = divmod(head_dim, MIN_BLOCK_SIZE)
       l_broadcast = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
@@ -593,34 +631,35 @@ def _flash_attention_kernel_single_batch(
           raise NotImplementedError(
               f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
           )
+      l_scratch_ref[batch_idx] = l_next
+      m_scratch_ref[batch_idx] = m_next
 
       v = v_tile_ref[(*batch_idx, pl.dslice(start_k, block_k), slice(None))]
       o_curr = jax.lax.dot(
           p.astype(v.dtype), v, preferred_element_type=jnp.float32
       )
-
-      acc_prev = acc_scratch_ref[batch_idx]
-      acc_scratch_ref[batch_idx] = acc_prev * l_broadcast(alpha) + o_curr
-
-      l_scratch_ref[batch_idx] = l_next
-      m_scratch_ref[batch_idx] = m_next
+      # Store unnormalized numerator: n_next = alpha * n_prev + o_curr
+      acc_scratch_ref[batch_idx] = acc_scratch_ref[batch_idx] * l_broadcast(alpha) + o_curr
 
   @pl.when(kv_seq_idx == (kv_seq_len // block_k_major) - 1)
   def store_output():
-    l_final = l_scratch_ref[batch_idx]
+    # Normalize the accumulated numerator by l to get final output
     head_dim_repeats, rem = divmod(head_dim, MIN_BLOCK_SIZE)
-    l_broadcast = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
+    l_broadcast_final = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
     if rem:
       if head_dim_repeats == 0:
-        l_broadcast = lambda l: l[:, :head_dim]
+        l_broadcast_final = lambda l: l[:, :head_dim]
       else:
         raise NotImplementedError(
             f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
         )
-    inv_l = jnp.where(l_final == 0.0, 1.0, 1.0 / l_final)
-    o_tile_ref[batch_idx] = (acc_scratch_ref[batch_idx] * l_broadcast(inv_l)).astype(o_tile_ref.dtype)
+    l_final = l_scratch_ref[batch_idx]
+    l_final_inv = jnp.where(l_final == 0.0, 1.0, 1.0 / l_final)
+    o_tile_ref[batch_idx] = (
+        acc_scratch_ref[batch_idx] * l_broadcast_final(l_final_inv)
+    ).astype(o_tile_ref.dtype)
     if l_ref is not None:
-      l_ref[batch_idx] = l_final.astype(l_ref.dtype)
+      l_ref[batch_idx] = l_scratch_ref[batch_idx].astype(l_ref.dtype)
     if m_ref is not None:
       m_ref[batch_idx] = m_scratch_ref[batch_idx].astype(m_ref.dtype)
 
@@ -822,10 +861,10 @@ def _flash_attention_impl(
         kv_seq_len=kv_seq_len,
         mask_value=DEFAULT_MASK_VALUE,
     )
-    # Use smaller scratch buffers sized for q subblocks (block_k rows)
-    m_scratch = pltpu.VMEM((block_b, 1, block_k, MIN_BLOCK_SIZE), jnp.float32)
-    l_scratch = pltpu.VMEM((block_b, 1, block_k, MIN_BLOCK_SIZE), jnp.float32)
-    acc_scratch = pltpu.VMEM((block_b, 1, block_k, head_dim), jnp.float32)
+    # Use full-block scratch buffers to store state for all Q rows
+    m_scratch = pltpu.VMEM((block_b, 1, block_q, MIN_BLOCK_SIZE), jnp.float32)
+    l_scratch = pltpu.VMEM((block_b, 1, block_q, MIN_BLOCK_SIZE), jnp.float32)
+    acc_scratch = pltpu.VMEM((block_b, 1, block_q, head_dim), jnp.float32)
     scratch_shapes = [m_scratch, l_scratch, acc_scratch]
   else:
     kernel = functools.partial(
@@ -1885,42 +1924,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    'name': 'pallas_flash_attention_llama70b',
-    'model': 'Llama-3.1-70B',
-    'operator': 'pallas_flash_attention',
-    'batch': 1,
-    'seq_len': 2048,
-    'num_heads': 64,
-    'head_dim': 128,
-    'atol': 2e-3,
-    'rtol': 2e-3,
+    \'name\': \'pallas_flash_attention_llama70b\',
+    \'model\': \'Llama-3.1-70B\',
+    \'operator\': \'pallas_flash_attention\',
+    \'batch\': 1,
+    \'seq_len\': 2048,
+    \'num_heads\': 64,
+    \'head_dim\': 128,
+    \'atol\': 2e-3,
+    \'rtol\': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    'block_q': 2048,
-    'block_k_major': 2048,
-    'block_k': 512,
+    \'block_q\': 2048,
+    \'block_k_major\': 2048,
+    \'block_k\': 512,
     # Not autotuned (batch=1, backward-only).
-    'block_b': 1,
-    'block_q_major_dkv': 128,
-    'block_k_major_dkv': 128,
-    'block_k_dkv': 128,
-    'block_q_dkv': 128,
-    'block_k_major_dq': 128,
-    'block_k_dq': 128,
-    'block_q_dq': 128,
+    \'block_b\': 1,
+    \'block_q_major_dkv\': 128,
+    \'block_k_major_dkv\': 128,
+    \'block_k_dkv\': 128,
+    \'block_q_dkv\': 128,
+    \'block_k_major_dq\': 128,
+    \'block_k_dq\': 128,
+    \'block_q_dq\': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG['batch']
-    H = CONFIG['num_heads']
-    S = CONFIG['seq_len']
-    D = CONFIG['head_dim']
+    B = CONFIG[\'batch\']
+    H = CONFIG[\'num_heads\']
+    S = CONFIG[\'seq_len\']
+    D = CONFIG[\'head_dim\']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -1928,19 +1967,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
+    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS['block_q'],
-        block_k_major=TUNED_PARAMS['block_k_major'],
-        block_k=TUNED_PARAMS['block_k'],
-        block_b=TUNED_PARAMS['block_b'],
-        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
-        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
-        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
-        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
-        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
-        block_k_dq=TUNED_PARAMS['block_k_dq'],
-        block_q_dq=TUNED_PARAMS['block_q_dq'],
+        block_q=TUNED_PARAMS[\'block_q\'],
+        block_k_major=TUNED_PARAMS[\'block_k_major\'],
+        block_k=TUNED_PARAMS[\'block_k\'],
+        block_b=TUNED_PARAMS[\'block_b\'],
+        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
+        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
+        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
+        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
+        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
+        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
+        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
