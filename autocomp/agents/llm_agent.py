@@ -20,7 +20,7 @@ EDITS_JSON_SCHEMA = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "old_str": {"type": "string", "description": "Exact substring to find in the current code. Must match exactly once."},
+                            "old_str": {"type": "string", "description": "Exact substring to find in the current code. All occurrences are replaced."},
                             "new_str": {"type": "string", "description": "Replacement string."},
                         },
                         "required": ["old_str", "new_str"],
@@ -39,19 +39,16 @@ def apply_edits(code: str, edits: list[dict]) -> str:
     """Apply a sequence of str_replace edits to code.
 
     Each edit is {"old_str": ..., "new_str": ...}.
-    Raises ValueError if an old_str is not found or is ambiguous (appears > 1 time).
+    Replaces all occurrences of old_str. Raises ValueError if old_str is not found.
     """
     for i, edit in enumerate(edits):
         old = edit["old_str"]
         new = edit["new_str"]
         if old == new:
             continue
-        count = code.count(old)
-        if count == 0:
+        if old not in code:
             raise ValueError(f"Edit {i}: old_str not found in code:\n{old[:200]}")
-        if count > 1:
-            raise ValueError(f"Edit {i}: old_str is ambiguous ({count} occurrences):\n{old[:200]}")
-        code = code.replace(old, new, 1)
+        code = code.replace(old, new)
     return code
 
 
