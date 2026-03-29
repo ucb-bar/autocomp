@@ -332,7 +332,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -1719,42 +1719,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -1762,19 +1762,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -2304,7 +2304,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -3839,42 +3839,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -3882,19 +3882,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -3928,7 +3928,7 @@ def run():
 3. **The tuned parameters show**: `block_q=2048`, `block_k_major=2048`, `block_k=512`, and `seq_len=2048`. This means:
    - `q_seq_len // block_q = 1` (single Q block)
    - `kv_seq_len // block_k_major = 1` (single KV major block)
-   - The grid\'s KV dimension is just 1 iteration
+   - The grid's KV dimension is just 1 iteration
 
 4. **The `_flash_attention_kernel_causal_triangular`** path is already implemented but requires specific conditions. Looking at the check:
 ```python
@@ -3947,7 +3947,7 @@ With `block_q=2048`, `block_k_major=2048`, `kv_seq_len=2048`, and `block_k=512`,
 
 ## Selected Strategy: #9 - Materialize causal masks lazily only for diagonal subproblems using compile-time block position checks
 
-Looking at `_flash_attention_kernel_causal_triangular`, the causal mask is applied every iteration regardless of whether we\'re on the diagonal:
+Looking at `_flash_attention_kernel_causal_triangular`, the causal mask is applied every iteration regardless of whether we're on the diagonal:
 
 ```python
 # Apply causal mask only on diagonal subproblem (k_sub == q_sub)
@@ -4316,7 +4316,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -5952,42 +5952,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -5995,19 +5995,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -6565,7 +6565,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -8201,42 +8201,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -8244,19 +8244,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -8786,7 +8786,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -10450,42 +10450,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -10493,19 +10493,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -10867,7 +10867,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -12535,42 +12535,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -12578,19 +12578,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
@@ -13171,7 +13171,7 @@ def below_or_on_diag(r, r_blk_size, c, c_blk_size):
 
 def _flash_attention_kernel(q_tile_ref, *args, **kwargs):
   block_b = q_tile_ref.shape[0]
-  # If we\'re not going to tile the softmax, then we can avoid a bunch of VPU ops.
+  # If we're not going to tile the softmax, then we can avoid a bunch of VPU ops.
   if kwargs["block_k"] == kwargs["kv_seq_len"]:
     kernel = _flash_attention_kernel_single_batch_single_step
   else:
@@ -14765,42 +14765,42 @@ def _verify_block(block_name, dim_name, block, dim, should_divide=True):
 
 
 CONFIG = {
-    \'name\': \'pallas_flash_attention_llama70b\',
-    \'model\': \'Llama-3.1-70B\',
-    \'operator\': \'pallas_flash_attention\',
-    \'batch\': 1,
-    \'seq_len\': 2048,
-    \'num_heads\': 64,
-    \'head_dim\': 128,
-    \'atol\': 2e-3,
-    \'rtol\': 2e-3,
+    'name': 'pallas_flash_attention_llama70b',
+    'model': 'Llama-3.1-70B',
+    'operator': 'pallas_flash_attention',
+    'batch': 1,
+    'seq_len': 2048,
+    'num_heads': 64,
+    'head_dim': 128,
+    'atol': 2e-3,
+    'rtol': 2e-3,
 }
 
 # Tuned by autotune_block_sizes.py. Re-run to update.
 TUNED_PARAMS = {
     # Autotuned (forward pass).
-    \'block_q\': 2048,
-    \'block_k_major\': 2048,
-    \'block_k\': 512,
+    'block_q': 2048,
+    'block_k_major': 2048,
+    'block_k': 512,
     # Not autotuned (batch=1, backward-only).
-    \'block_b\': 1,
-    \'block_q_major_dkv\': 128,
-    \'block_k_major_dkv\': 128,
-    \'block_k_dkv\': 128,
-    \'block_q_dkv\': 128,
-    \'block_k_major_dq\': 128,
-    \'block_k_dq\': 128,
-    \'block_q_dq\': 128,
+    'block_b': 1,
+    'block_q_major_dkv': 128,
+    'block_k_major_dkv': 128,
+    'block_k_dkv': 128,
+    'block_q_dkv': 128,
+    'block_k_major_dq': 128,
+    'block_k_dq': 128,
+    'block_q_dq': 128,
 }
 
 
 def create_inputs(dtype=jnp.bfloat16):
     key = jax.random.PRNGKey(42)
     k1, k2, k3 = jax.random.split(key, 3)
-    B = CONFIG[\'batch\']
-    H = CONFIG[\'num_heads\']
-    S = CONFIG[\'seq_len\']
-    D = CONFIG[\'head_dim\']
+    B = CONFIG['batch']
+    H = CONFIG['num_heads']
+    S = CONFIG['seq_len']
+    D = CONFIG['head_dim']
     q = jax.random.normal(k1, (B, H, S, D), dtype=dtype)
     k = jax.random.normal(k2, (B, H, S, D), dtype=dtype)
     v = jax.random.normal(k3, (B, H, S, D), dtype=dtype)
@@ -14808,19 +14808,19 @@ def create_inputs(dtype=jnp.bfloat16):
 
 
 def workload(q, k, v):
-    sm_scale = 1.0 / math.sqrt(CONFIG[\'head_dim\'])
+    sm_scale = 1.0 / math.sqrt(CONFIG['head_dim'])
     block_sizes = BlockSizes(
-        block_q=TUNED_PARAMS[\'block_q\'],
-        block_k_major=TUNED_PARAMS[\'block_k_major\'],
-        block_k=TUNED_PARAMS[\'block_k\'],
-        block_b=TUNED_PARAMS[\'block_b\'],
-        block_q_major_dkv=TUNED_PARAMS[\'block_q_major_dkv\'],
-        block_k_major_dkv=TUNED_PARAMS[\'block_k_major_dkv\'],
-        block_k_dkv=TUNED_PARAMS[\'block_k_dkv\'],
-        block_q_dkv=TUNED_PARAMS[\'block_q_dkv\'],
-        block_k_major_dq=TUNED_PARAMS[\'block_k_major_dq\'],
-        block_k_dq=TUNED_PARAMS[\'block_k_dq\'],
-        block_q_dq=TUNED_PARAMS[\'block_q_dq\'],
+        block_q=TUNED_PARAMS['block_q'],
+        block_k_major=TUNED_PARAMS['block_k_major'],
+        block_k=TUNED_PARAMS['block_k'],
+        block_b=TUNED_PARAMS['block_b'],
+        block_q_major_dkv=TUNED_PARAMS['block_q_major_dkv'],
+        block_k_major_dkv=TUNED_PARAMS['block_k_major_dkv'],
+        block_k_dkv=TUNED_PARAMS['block_k_dkv'],
+        block_q_dkv=TUNED_PARAMS['block_q_dkv'],
+        block_k_major_dq=TUNED_PARAMS['block_k_major_dq'],
+        block_k_dq=TUNED_PARAMS['block_k_dq'],
+        block_q_dq=TUNED_PARAMS['block_q_dq'],
     )
     return flash_attention(
         q, k, v, causal=True, sm_scale=sm_scale, block_sizes=block_sizes,
