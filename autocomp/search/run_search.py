@@ -38,8 +38,8 @@ def main():
     )
     hw_config = TrnHardwareConfig("trn2.3xlarge")
 
-    prob_type = "trn-tutorial-nki2"  # NKI 0.2.0 tutorial problems
-    prob_id = 0  # rmsnorm (start simple for validation)
+    prob_type = "trn-internal"  # Internal NKI kernels for optimization
+    prob_id = 5  # 5=fft256, 6=mamba_scan, 4=trimul (change per run)
 
     # ------------------------------------------------------------------
     # Models -- Bedrock-only ensemble via IAM role
@@ -61,10 +61,10 @@ def main():
     # ------------------------------------------------------------------
     search_strategy = "beam"
     metric = "latency"
-    iterations = 3  # Small for validation; increase for production runs
+    iterations = 8  # Production: 8 iterations for meaningful optimization
     num_plan_candidates = 4
     num_code_candidates = 2
-    beam_size = 2  # Small for validation; increase for production runs
+    beam_size = 4  # Production: wider beam for better exploration
     dropout_menu_options = 0.25
     early_stop_iters = 0  # 0 = disabled
     early_stop_threshold = 1.0

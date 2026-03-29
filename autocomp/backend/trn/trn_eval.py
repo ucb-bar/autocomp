@@ -500,14 +500,14 @@ if __name__ == "__main__":
         cmd = ["python", str(temp_dir.resolve() / f"code_{idx}.py")]
         logger.info(f"Running command {' '.join(cmd)}")
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
-            logger.error(f"Code {idx} timed out after 300 seconds")
+            logger.error(f"Code {idx} timed out after 600 seconds")
             return {
                 "correct": False,
                 "latency": None,
                 "stdout": "",
-                "stderr": "Timed out after 300 seconds",
+                "stderr": "Timed out after 600 seconds",
             }
 
         with open(temp_dir / f"code_{idx}_output.txt", "w") as f:
