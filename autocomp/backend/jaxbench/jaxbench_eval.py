@@ -30,6 +30,7 @@ JAXBENCH_DIR = pathlib.Path(_jaxbench_env) if _jaxbench_env else _THIS_DIR.paren
 _SUITE_DIRS = {
     "jaxbench-real": JAXBENCH_DIR / "real_workloads",
     "jaxbench-priority": JAXBENCH_DIR / "priority_kernels",
+    "jaxbench-pallas": JAXBENCH_DIR / "pallas_kernels",
     "jaxbench-tokamax": JAXBENCH_DIR / "tokamax",
     "jaxkernelbench": JAXBENCH_DIR / "jaxkernelbench",
 }
@@ -133,27 +134,29 @@ def _extract_model_style(source: str, tree: ast.Module) -> str:
 
 
 def _extract_workload_style(source: str, tree: ast.Module) -> str:
-    """Keep imports, CONFIG, and all functions (except benchmark) from a file."""
+    """Keep everything from a workload file except benchmark() and __main__ blocks."""
     lines = source.splitlines()
-    keep_ranges = []
+    skip_ranges = []
 
     for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            keep_ranges.append((node.lineno - 1, node.end_lineno))
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "CONFIG":
-                    keep_ranges.append((node.lineno - 1, node.end_lineno))
-        elif isinstance(node, ast.FunctionDef) and node.name not in (
-            "benchmark",
-        ):
-            keep_ranges.append((node.lineno - 1, node.end_lineno))
+        if isinstance(node, ast.FunctionDef) and node.name == "benchmark":
+            skip_ranges.append((node.lineno - 1, node.end_lineno))
+        elif isinstance(node, ast.If):
+            test = node.test
+            if (isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "__name__"):
+                skip_ranges.append((node.lineno - 1, node.end_lineno))
 
     kept = []
-    for start, end in sorted(keep_ranges):
-        if kept:
-            kept.append("")
-        kept.extend(lines[start:end])
+    skip_set = set()
+    for start, end in skip_ranges:
+        for i in range(start, end):
+            skip_set.add(i)
+
+    for i, line in enumerate(lines):
+        if i not in skip_set:
+            kept.append(line)
 
     return "\n".join(kept) + "\n"
 

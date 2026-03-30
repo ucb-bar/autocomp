@@ -33,3 +33,5 @@ optimizations:
 - strategy: Perform reductions over second-to-last axis instead of last axis for faster hardware reduction
 - strategy: Keep reduction dimension as innermost grid axis so output stays in SRAM during accumulation
 - strategy: Use `pltpu.sync_copy` for explicit HBM-to-VMEM transfers when manual memory control is needed
+- strategy: Precompute data-independent metadata with numpy before the kernel so it compiles to constants
+- strategy: Skip or shrink iterations that produce zero-contribution results due to masking or structure
