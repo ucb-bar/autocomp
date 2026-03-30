@@ -6,7 +6,7 @@
 </p>
 
 <h3 align="center">
-The Kernel Optimizer for Any AI Accelerator
+Optimize any AI kernel, anywhere.
 </h3>
 
 <p align="center">
