@@ -106,7 +106,15 @@ class LLMEnsemble:
         # Distribute work across models, similarly to how we divide plans, making a total of BEAM_SIZE calls.
         # In each iteration, each candidate is processed by one LLMAgent in the ensemble.
         # Then, the proposed menu options for that candidate are shared with the other LLMAgents in the ensemble.
-        if self.llms[0].menu_strategy is not None and not translate:
+        # Skip if all plans are already cached (every agent would just load from disk).
+        all_cached = all(
+            llm.plans_cached(candidate_lst, num_to_gen_per_agent[i], save_dir,
+                             [s + "_" + llm.llm_client.model for s in save_strs],
+                             force_opt_menu_lst)
+            for i, llm in enumerate(self.llms)
+            if num_to_gen_per_agent[i] > 0
+        )
+        if self.llms[0].menu_strategy is not None and not translate and not all_cached:
             num_to_handle_per_agent = self.divide_work(len(candidate_lst))
             tasks_new_menus = []
             curr_candidate_idx = 0
@@ -138,6 +146,19 @@ class LLMEnsemble:
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
                 tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
+        return cands
+
+    def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        tasks = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                tasks.append((llm.implement_code_edits_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
 
         cands = []
         for result in self._run_parallel(tasks):

@@ -14,7 +14,7 @@ python -m autocomp.agent_builder.run_agent_builder \
     --source-dir path/to/docs \
     --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
 
-# Use the built agent in search.py:
+# Use the built agent in run_search.py:
 #   agent_name = "built:my_accelerator"
 ```
 
@@ -160,11 +160,11 @@ For deeper changes to agent behavior (e.g., prompt structure, ISA selection logi
 
 ### Translation support
 
-Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics). When `translate_iters > 0` in `search.py`, the first `translate_iters` iterations use a translation menu instead of the optimization menu, with a relaxed performance threshold (`translate_perf_threshold`, default 1.2×) for keeping candidates.
+Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics). When `translate_iters > 0` in `run_search.py`, the first `translate_iters` iterations use a translation menu instead of the optimization menu, with a relaxed performance threshold (`translate_perf_threshold`, default 1.2×) for keeping candidates.
 
 To configure:
 
-1. Set `translate_iters` to a positive value in `search.py` (e.g., `translate_iters = 2`).
+1. Set `translate_iters` to a positive value in `run_search.py` (e.g., `translate_iters = 2`).
 2. Optionally create `translate_menu.yaml` in the agent's config directory:
 
 ```yaml

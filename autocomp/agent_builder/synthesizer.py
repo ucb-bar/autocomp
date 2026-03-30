@@ -721,6 +721,8 @@ JSON array:"""
             "hoist redundant operations out of loops",
             "eliminate redundant computation",
             "simplify or remove unnecessary code",
+            "try new parameter values",
+            "rewrite the algorithm to reduce total work",
         ]
 
         if not items:
@@ -955,7 +957,7 @@ Translation strategies:"""
                 "Do not count out any of the strategies unless they are clearly irrelevant to the code.",
             ],
             "coding": [
-                "Wrap the generated code with ```python at the beginning and ``` at the end.",
+                "Wrap the generated code with ``` at the beginning and ``` at the end.",
             ],
         }
 

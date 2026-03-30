@@ -20,45 +20,15 @@ SCHEMA_VERSION = 1
 
 
 def parse_run_config(dirname: str, run_dir: Path = None) -> dict:
-    """Extract config params from run_metadata.json if available, else from directory name."""
+    """Load run config from run_metadata.json, falling back to just the directory name."""
     config = {"raw_name": dirname}
 
     if run_dir and (run_dir / "run_metadata.json").exists():
         try:
             with open(run_dir / "run_metadata.json") as f:
-                meta = json.load(f)
-            config.update(meta)
-            all_models = sorted(set(meta.get("plan_models", []) + meta.get("code_models", [])))
-            if all_models:
-                config["models"] = all_models
-            return config
+                config.update(json.load(f))
         except Exception:
             pass
-
-    beam_match = re.search(r"_b(\d+)_", dirname)
-    if beam_match:
-        config["beam_size"] = int(beam_match.group(1))
-
-    iter_match = re.search(r"beam_iters(\d+)", dirname)
-    if iter_match:
-        config["iterations"] = int(iter_match.group(1))
-
-    hw_match = re.search(r"(Trainium|Gemmini|GPU|CUDA)", dirname, re.IGNORECASE)
-    if hw_match:
-        config["hardware"] = hw_match.group(1)
-
-    inst_match = re.search(r"(trn\d+\.\w+)", dirname)
-    if inst_match:
-        config["instance"] = inst_match.group(1)
-
-    prob_match = re.search(r"(trn-tutorial|trn|gemmini|kernelbench|gpumode)_(\d+)_", dirname)
-    if prob_match:
-        config["problem"] = f"{prob_match.group(1)}_{prob_match.group(2)}"
-        config["prob_type"] = prob_match.group(1)
-        config["prob_id"] = int(prob_match.group(2))
-
-    config["reimpl"] = "reimpl1" in dirname
-    config["fgisa"] = "fgisa1" in dirname
 
     return config
 
@@ -242,9 +212,6 @@ def ingest_run(run_dir: Path) -> dict | None:
         })
 
     assign_candidate_ids(iterations_data)
-
-    if "models" not in config:
-        config["models"] = []
 
     best_score = None
     original_score = None

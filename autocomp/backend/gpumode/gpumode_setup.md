@@ -2,7 +2,7 @@
 
 ## Evaluation Modes
 
-The GPU MODE backend supports two evaluation methods, configured via the `simulator` parameter in `autocomp/search/search.py`:
+The GPU MODE backend supports two evaluation methods, configured via the `simulator` parameter in `autocomp/search/run_search.py`:
 
 ### `gpumode-local`
 
@@ -49,7 +49,7 @@ Place the initial (unoptimized) solution file in `sols/gpumode/` following the n
 
 ## Running Autocomp
 
-When running Autocomp, set the following in `autocomp/search/search.py`:
+When running Autocomp, set the following in `autocomp/search/run_search.py`:
 - `backend_name` should be `"gpumode"`.
 - `agent_name` should be `"cuda"` (this is the default when `backend_name` is `"gpumode"`).
 - `simulator` should be `"gpumode-local"` for local evaluation or `"gpumode-cli"` for remote evaluation.
