@@ -6,7 +6,7 @@
 </p>
 
 <h3 align="center">
-AI-Driven Code Optimizer for Tensor Accelerators
+The Kernel Optimizer for Any AI Accelerator
 </h3>
 
 <p align="center">
