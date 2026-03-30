@@ -181,7 +181,7 @@ Notable parameters:
   - For CUDA/GPU MODE, `gpumode-local` or `gpumode-cli`
 - `prob_type`: The problem type to use.
   - For Trainium, `trn-tutorial` or `trn-advanced`.
-  - For TPU, `tpu`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
+  - For TPU, `tpu`, `jaxbench-pallas`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
