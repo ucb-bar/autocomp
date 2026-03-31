@@ -1,25 +1,22 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="img/autocomp_logo_dark.svg">
-    <img alt="Autocomp Logo" src="img/autocomp_logo.svg" width=55%>
-  </picture>
+  <img alt="Autocomp" src="img/autocomp_icon.svg" width="128">
 </p>
+
+<h1 align="center">Autocomp</h1>
 
 <h3 align="center">
 Optimize any AI kernel, anywhere.
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="vscode:extension/charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
+| <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
 </p>
 
-**Autocomp** is an LLM-powered kernel optimizer that writes faster code for your accelerator — so you don't have to. Point it at a kernel, pick your hardware target, and Autocomp makes it faster, automatically.
+**Autocomp** is an LLM-powered kernel optimizer that writes faster code for your accelerator — so you don't have to. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
 It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **NVIDIA GPUs**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and the **RISC-V Vector Extension**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
 Under the hood, Autocomp runs iterative beam search — planning optimization strategies, implementing them, evaluating real performance, and keeping only the winners. Each round applies a new optimization to the code.
-
-Download the VS Code extension [here](vscode:extension/charleshong3.autocomp-visualizer). Install instructions [below](#-trace-visualizer-vs-code-extension).
 
 <p align="center">
 <a href="https://arxiv.org/abs/2505.18574"><b>📚 Read the paper</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<b>✏️ Authors:</b> <a href="https://charleshong3.github.io/">Charles Hong</a>, <a href="https://x.com/sahilb17">Sahil Bhatia</a>, <a href="https://people.eecs.berkeley.edu/~akcheung/">Alvin Cheung</a>, <a href="https://people.eecs.berkeley.edu/~ysshao/">Yakun Sophia Shao</a> (UC Berkeley)
@@ -218,13 +215,7 @@ Notable parameters:
 
 ## 🔍 Trace Visualizer (VS Code Extension)
 
-The [Autocomp Trace Visualizer](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer) is a VS Code extension for exploring optimization runs interactively. After a run completes, use it to understand what strategies worked, how scores improved, and where the search spent its time.
-
-**Install:**
-- **VS Code** — [Install directly](vscode:extension/charleshong3.autocomp-visualizer), or search "Autocomp Trace Visualizer" in the Extensions sidebar. Also on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer).
-- **Cursor** — Search "autocomp-visualizer" in the Extensions sidebar, or install from [Open VSX](https://open-vsx.org/extension/charleshong3/autocomp-visualizer).
-
-For features, usage, and development instructions, see the [Trace Visualizer documentation](visualizer/README.md).
+The [Autocomp Trace Visualizer](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer) is a VS Code extension for exploring optimization runs interactively. After a run completes, use it to understand what strategies worked, how scores improved, and where the search spent its time. See the [Trace Visualizer documentation](visualizer/README.md) for install instructions and features.
 
 ## 📁 Repository Structure
 

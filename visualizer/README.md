@@ -4,7 +4,7 @@ A VS Code extension for visualizing [Autocomp](https://github.com/ucb-bar/autoco
 
 ## Install
 
-- **VS Code** — [Install directly](vscode:extension/charleshong3.autocomp-visualizer), or search "Autocomp Trace Visualizer" in the Extensions sidebar. Also on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer).
+- **VS Code** — Search "Autocomp Trace Visualizer" in the Extensions sidebar, or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer), or .
 - **Cursor** — Search "autocomp-visualizer" in the Extensions sidebar, or install from [Open VSX](https://open-vsx.org/extension/charleshong3/autocomp-visualizer).
 
 ## Features
