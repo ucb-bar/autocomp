@@ -2,13 +2,18 @@
 
 A VS Code extension for visualizing [Autocomp](https://github.com/ucb-bar/autocomp) beam search optimization traces. Explore how LLM-driven code optimization progresses across iterations — from plan proposals to score improvements.
 
+## Install
+
+- **VS Code** — [Install directly](vscode:extension/charleshong3.autocomp-visualizer), or search "Autocomp Trace Visualizer" in the Extensions sidebar. Also on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer).
+- **Cursor** — Search "autocomp-visualizer" in the Extensions sidebar, or install from [Open VSX](https://open-vsx.org/extension/charleshong3/autocomp-visualizer).
+
 ## Features
 
 - **Score Progression Chart** — Interactive SVG chart plotting individual candidate lineage traces across iterations. Click any point to inspect the candidate.
 - **Beam Tree** — Visual tree showing beam search ancestry with score-based coloring. Selecting a node highlights its ancestors and descendants.
 - **Code Diff** — Compare any candidate against its ancestors using VS Code's native diff viewer. Choose which ancestor to diff against from a dropdown.
 - **Candidate Summary** — View optimization plans, model attributions (plan and code models), and score improvements for each candidate.
-- **AI Plan Summaries** — Generate concise one-line summaries of optimization plans using an LLM (requires the `autocomp` Python package).
+- **AI Plan Summaries** — Generate concise one-line summaries of optimization plans using an LLM (requires the `autocomp` Python package with LLM API credentials).
 - **Run Config** — Expandable panel showing all run metadata (beam size, models, metric, etc.) — automatically populated from `run_metadata.json`.
 
 ## Getting Started
@@ -16,7 +21,7 @@ A VS Code extension for visualizing [Autocomp](https://github.com/ucb-bar/autoco
 ### Prerequisites
 
 - Python 3.10+ with the [`autocomp`](https://github.com/ucb-bar/autocomp) package installed (for data ingestion and plan summarization)
-- An Autocomp output directory from a completed optimization run
+- An Autocomp output directory from one or more completed optimization run(s)
 
 ### Usage
 
