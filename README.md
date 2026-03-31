@@ -1,4 +1,4 @@
-# Autocomp - AI kernel optimizer for any accelerator.
+# Autocomp
 
 <p align="center">
   <picture>
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-Optimize any AI kernel, anywhere.
+<strong>Optimize any AI kernel, anywhere.</strong>
 </p>
 
 <p align="center">
