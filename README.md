@@ -1,3 +1,5 @@
+# Autocomp - AI kernel optimizer for any accelerator.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="img/autocomp_logo_dark.svg">
@@ -6,9 +8,9 @@
   </picture>
 </p>
 
-<h3 align="center">
+<p align="center">
 Optimize any AI kernel, anywhere.
-</h3>
+</p>
 
 <p align="center">
 | <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
