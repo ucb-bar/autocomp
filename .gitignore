@@ -21,6 +21,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!visualizer/src/webview/lib/
 parts/
 sdist/
 var/
@@ -166,6 +167,12 @@ cython_debug/
 
 .sources/
 
+# Runtime artifacts
+output/
+wandb/
+config/
+tmp*/
+temp*/
 autocomp/backend/saturn/tmp_dir/
 
 autocomp/backend/xnnpack/tmp_dir/

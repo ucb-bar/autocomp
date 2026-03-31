@@ -799,6 +799,37 @@ class BuiltLLMAgent(LLMAgent):
 
         return prompt_text
 
+    def _get_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
+        if prob is None:
+            raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
+
+        system = (
+            "You are an expert performance engineer. "
+            "You modify high-performance code by outputting precise code edits.\n\n"
+            "You MUST respond with ONLY a JSON object in this exact format:\n"
+            '{"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            "Rules for edits:\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
+            "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
+            "- Do NOT output anything outside the JSON object.\n"
+        )
+
+        user = self._architecture + "\n"
+        user += self._get_isa_for_problem(prob, candidate.parent.code) + "\n"
+        user += "\nThe current code is:\n```\n"
+        user += candidate.parent.code
+        user += "\n```\n"
+        user += "\nApply the following optimization plan by outputting JSON edits:\n"
+        user += candidate.plan
+        user += "\n\nRules:\n"
+        user += self._get_prompt_rules(planning=False, coding=False, prob=prob)
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate],
                                         prob: Prob = None) -> str:
         prompt_text = self._architecture + "\n"

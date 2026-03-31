@@ -12,6 +12,8 @@ optimizations:
 - strategy: hoist redundant operations out of loops
 - strategy: eliminate redundant computation
 - strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
 - strategy: Place control-flow scalars and block indices in SMEM via `pltpu.SMEM` for fast scalar access
 - strategy: Use `pltpu.emit_pipeline` for nested pipelines within a single kernel
 - strategy: Align block shapes so last two dimensions are multiples of 8 and 128 respectively
@@ -31,3 +33,5 @@ optimizations:
 - strategy: Perform reductions over second-to-last axis instead of last axis for faster hardware reduction
 - strategy: Keep reduction dimension as innermost grid axis so output stays in SRAM during accumulation
 - strategy: Use `pltpu.sync_copy` for explicit HBM-to-VMEM transfers when manual memory control is needed
+- strategy: Precompute data-independent metadata with numpy before the kernel so it compiles to constants
+- strategy: Skip or shrink iterations that produce zero-contribution results due to masking or structure

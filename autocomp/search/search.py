@@ -24,11 +24,12 @@ from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
 from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
+from autocomp.backend.jaxbench.jaxbench_eval import JaxBenchEvalBackend
 from autocomp.backend.saturn.saturn_eval import SaturnEvalBackend
 from autocomp.backend.xnnpack.xnnpack_eval import XnnpackEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
-from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig
+from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig  # noqa: F401 — re-exported for backwards compat
 
 
 def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0, cache_dir=None):
@@ -54,6 +55,8 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         eval_backend = TrnEvalBackend()
     elif backend_name == "tpu":
         eval_backend = TpuEvalBackend()
+    elif backend_name == "jaxbench":
+        eval_backend = JaxBenchEvalBackend()
     elif backend_name == "saturn":
         eval_backend = SaturnEvalBackend()
     elif backend_name == "xnnpack":
@@ -144,6 +147,14 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
         with open(matches[0]) as f:
             return f.read()
+    elif backend_name == "jaxbench":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.py"))
+        if matches:
+            with open(matches[0]) as f:
+                return f.read()
+        from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
+        return extract_workload_code(prob)
     elif backend_name == "saturn":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.c"))
@@ -206,10 +217,12 @@ class SearchStrategy:
                  early_stop_iters: int = 0,
                  early_stop_threshold: float = 1.0,
                  resume_from: str | pathlib.Path | None = None,
+                 use_edits: bool = False,
                ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.agent = agent  # The agent used to propose optimizations (planning)
         self.code_agent = code_agent if code_agent is not None else agent  # The agent used for code implementation
+        self.use_edits = use_edits
         self.prob = prob
         self.problem = prob.name if hasattr(prob, "name") else str(prob)
         self.plan_models = sorted({a.llm_client.provider + "::" + a.llm_client.model for a in self.agent.llms})
@@ -523,10 +536,16 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             save_dir = self.output_dir / f"generated-code-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
             save_strs = [f"plan{p_i}" for p_i in range(len(plan_only_candidates))]
-            impl_candidates = self.code_agent.implement_code_parallel(
-                plan_only_candidates, self.num_code_candidates, save_dir,
-                save_strs=save_strs, prob=self.prob,
-            )
+            if self.use_edits:
+                impl_candidates = self.code_agent.implement_code_edits_parallel(
+                    plan_only_candidates, self.num_code_candidates, save_dir,
+                    save_strs=save_strs, prob=self.prob,
+                )
+            else:
+                impl_candidates = self.code_agent.implement_code_parallel(
+                    plan_only_candidates, self.num_code_candidates, save_dir,
+                    save_strs=save_strs, prob=self.prob,
+                )
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             # Step 3: Evaluate the generated implementations
@@ -591,6 +610,7 @@ class BeamSearchStrategy(SearchStrategy):
                  early_stop_iters: int = 0,
                  early_stop_threshold: float = 1.0,
                  resume_from: str | pathlib.Path | None = None,
+                 use_edits: bool = False,
                 ):
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
@@ -602,7 +622,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
         self.reimplement_failed = reimplement_failed
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from)
+        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from, use_edits=use_edits)
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -738,7 +758,10 @@ class BeamSearchStrategy(SearchStrategy):
             for cand_idx, cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
-            impl_candidates = self.code_agent.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
+            if self.use_edits:
+                impl_candidates = self.code_agent.implement_code_edits_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
+            else:
+                impl_candidates = self.code_agent.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
