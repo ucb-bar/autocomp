@@ -16,7 +16,7 @@ from pathlib import Path
 
 from autocomp.search.code_repo import CodeCandidate
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def parse_run_config(dirname: str, run_dir: Path = None) -> dict:
@@ -180,34 +180,47 @@ def ingest_run(run_dir: Path) -> dict | None:
 
         eval_results = load_eval_results(run_dir, iteration)
 
-        beam_codes = {hash(c["code"]) for c in beam if c["code"]}
-        beam_scores = {c["score"] for c in beam if c["score"] is not None}
+        beam_score_counts = {}
+        for cand in beam:
+            score = cand.get("score")
+            if score is not None:
+                beam_score_counts[score] = beam_score_counts.get(score, 0) + 1
 
+        generated = []
         failed = []
         for er in eval_results:
             correct = er.get("correct", False)
             latency = er.get("latency")
-            if not correct:
-                failed.append({
-                    "correct": False,
-                    "score": None,
-                    "plan_snippet": er.get("plan_snippet", ""),
-                    "error_summary": (er.get("stderr") or "")[:200],
-                    "model": er.get("model", ""),
-                })
-            elif latency is not None and latency not in beam_scores:
-                failed.append({
-                    "correct": True,
-                    "score": latency,
-                    "plan_snippet": er.get("plan_snippet", ""),
-                    "error_summary": None,
-                    "model": er.get("model", ""),
-                    "why_rejected": f"score {latency:.3f} ms not in top beam",
-                })
+            kept = False
+            why_rejected = None
+
+            if correct and latency is not None and beam_score_counts.get(latency, 0) > 0:
+                kept = True
+                beam_score_counts[latency] -= 1
+            elif correct and latency is not None:
+                why_rejected = f"score {latency:.3f} ms not in top beam"
+
+            item = {
+                "correct": bool(correct),
+                "kept": kept,
+                "score": latency if correct and latency is not None else None,
+                "plan_snippet": er.get("plan_snippet", ""),
+                "error_summary": None if correct else (er.get("stderr") or "")[:200],
+                "model": er.get("model", ""),
+            }
+            if why_rejected is not None:
+                item["why_rejected"] = why_rejected
+            generated.append(item)
+
+            if not correct or not kept:
+                failed_item = dict(item)
+                failed_item.pop("kept", None)
+                failed.append(failed_item)
 
         iterations_data.append({
             "iter": iteration,
             "beam": beam,
+            "generated": generated,
             "failed": failed,
         })
 

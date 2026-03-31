@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, Fragment } from "react";
-import type { RunData, RunIndexEntry, BeamCandidate, FailedCandidate } from "./lib/types";
+import type { RunData, RunIndexEntry, BeamCandidate, FailedCandidate, GeneratedImplementation } from "./lib/types";
 import { formatModel } from "./lib/format";
 import ScoreChart from "./components/ScoreChart";
 import BeamTree from "./components/BeamTree";
@@ -35,7 +35,7 @@ function MetaBadge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function FailedItem({ item }: { item: FailedCandidate }) {
+function GeneratedItem({ item }: { item: GeneratedImplementation }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = (item.plan_snippet && item.plan_snippet.length > 80)
     || (item.error_summary && item.error_summary.length > 100);
@@ -47,7 +47,7 @@ function FailedItem({ item }: { item: FailedCandidate }) {
         className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-stone-100 rounded transition-colors"
       >
         <span className="flex-shrink-0 mt-px">
-          {!item.correct ? <span className="text-red-500">✗</span> : <span className="text-amber-500">~</span>}
+          {!item.correct ? <span className="text-red-500">✗</span> : item.kept ? <span className="text-emerald-500">✓</span> : <span className="text-amber-500">~</span>}
         </span>
         <span className="flex-1 min-w-0">
           {item.plan_snippet && (
@@ -68,6 +68,11 @@ function FailedItem({ item }: { item: FailedCandidate }) {
           )}
         </span>
         <span className="flex-shrink-0 flex items-center gap-2 text-stone-400">
+          {item.kept && (
+            <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+              kept
+            </span>
+          )}
           {item.score !== null && <span>{item.score.toFixed(3)}</span>}
           {item.model && <span className="text-stone-300">{formatModel(item.model)}</span>}
           {hasDetails && <span className="text-[10px]">{expanded ? "▾" : "▸"}</span>}
@@ -107,7 +112,7 @@ export default function App() {
   const [selected, setSelected] = useState<BeamCandidate | null>(null);
   const [diffOpen, setDiffOpen] = useState(true);
   const [summarizing, setSummarizing] = useState(false);
-  const [showFailed, setShowFailed] = useState<number | null>(null);
+  const [showGenerated, setShowGenerated] = useState<number | null>(null);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -169,6 +174,26 @@ export default function App() {
   const [diffAncestor, setDiffAncestor] = useState<string | null>(null);
 
   const effectiveDiffAncestor = ancestorChain.find((a) => a.id === diffAncestor) ?? ancestorChain[0] ?? null;
+
+  const generatedForIteration = (iteration: RunData["iterations"][number]): GeneratedImplementation[] => {
+    if (iteration.generated) return iteration.generated;
+
+    const kept = iteration.beam.map((candidate) => ({
+      correct: true,
+      kept: true,
+      score: candidate.score,
+      plan_snippet: candidate.plan ?? "",
+      error_summary: null,
+      model: candidate.code_model ?? candidate.plan_model ?? "",
+    }));
+
+    const rejected = iteration.failed.map((candidate: FailedCandidate) => ({
+      ...candidate,
+      kept: false,
+    }));
+
+    return [...kept, ...rejected];
+  };
 
   const handleCandidateSelect = (candidate: BeamCandidate | null) => {
     setSelected(candidate);
@@ -414,29 +439,35 @@ export default function App() {
         </section>
 
         <section className="bg-white border border-stone-200 rounded-lg p-5 mb-6">
-          <h2 className="text-sm font-medium text-stone-500 mb-3">Failed / Rejected Attempts</h2>
+          <h2 className="text-sm font-medium text-stone-500 mb-3">Generated Implementations</h2>
           <div className="space-y-1">
-            {run.iterations.filter((it) => it.failed.length > 0).map((it) => (
+            {run.iterations
+              .map((it) => ({ it, generated: generatedForIteration(it) }))
+              .filter(({ generated }) => generated.length > 0)
+              .map(({ it, generated }) => {
+                const correctCount = generated.filter((item) => item.correct).length;
+                const failedCount = generated.length - correctCount;
+                return (
               <div key={it.iter}>
-                <button onClick={() => setShowFailed(showFailed === it.iter ? null : it.iter)}
+                <button onClick={() => setShowGenerated(showGenerated === it.iter ? null : it.iter)}
                   className="w-full text-left px-3 py-2 rounded hover:bg-stone-50 flex items-center justify-between text-sm">
                   <span className="font-mono text-stone-600">Iter {it.iter}</span>
                   <span className="text-stone-400 text-xs font-mono">
-                    {it.beam.length} survived / {it.failed.length} rejected
-                    <span className="ml-2">{showFailed === it.iter ? "▾" : "▸"}</span>
+                    {correctCount} correct / {failedCount} failed / {generated.length} total
+                    <span className="ml-2">{showGenerated === it.iter ? "▾" : "▸"}</span>
                   </span>
                 </button>
-                {showFailed === it.iter && (
+                {showGenerated === it.iter && (
                   <div className="ml-4 mt-1 mb-2 space-y-1.5">
-                    {it.failed.map((f, fi) => (
-                      <FailedItem key={fi} item={f} />
+                    {generated.map((item, index) => (
+                      <GeneratedItem key={index} item={item} />
                     ))}
                   </div>
                 )}
               </div>
-            ))}
-            {run.iterations.filter((it) => it.failed.length > 0).length === 0 && (
-              <p className="text-xs text-stone-400 font-mono px-3 py-2">No failed attempt data available</p>
+            );})}
+            {run.iterations.every((it) => generatedForIteration(it).length === 0) && (
+              <p className="text-xs text-stone-400 font-mono px-3 py-2">No generated implementation data available</p>
             )}
           </div>
         </section>
