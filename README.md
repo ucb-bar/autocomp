@@ -1,8 +1,10 @@
 <p align="center">
-  <img alt="Autocomp" src="img/autocomp_icon.svg" width="128">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/autocomp_logo_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="img/autocomp_logo.svg">
+    <img alt="Autocomp" src="img/autocomp_logo.svg" width="420">
+  </picture>
 </p>
-
-<h1 align="center">Autocomp</h1>
 
 <h3 align="center">
 Optimize any AI kernel, anywhere.
