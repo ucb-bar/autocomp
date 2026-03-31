@@ -6,10 +6,8 @@
     <source media="(prefers-color-scheme: light)" srcset="img/autocomp_logo.svg">
     <img alt="Autocomp" src="img/autocomp_logo.svg" width="420">
   </picture>
-</p>
-
-<p align="center">
-<strong>Optimize any AI kernel, anywhere.</strong>
+  <br>
+  <strong>Optimize any AI kernel, anywhere.</strong>
 </p>
 
 <p align="center">
