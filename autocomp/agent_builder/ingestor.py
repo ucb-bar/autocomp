@@ -271,7 +271,21 @@ class WebpageLoader(SourceLoader):
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Remove script/style/nav elements
+            # Discover links BEFORE stripping nav (sidebar links are
+            # the primary navigation on Sphinx/ReadTheDocs sites).
+            if depth < max_depth:
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    abs_url = urljoin(current_url, href)
+                    parsed = urlparse(abs_url)
+                    abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    if parsed.netloc != base_domain or abs_url in visited:
+                        continue
+                    if not parsed.path.startswith(base_path):
+                        continue
+                    queue.append((abs_url, depth + 1))
+
+            # Remove script/style/nav elements for text extraction
             for tag in soup(["script", "style", "nav", "footer", "header"]):
                 tag.decompose()
 
@@ -286,19 +300,6 @@ class WebpageLoader(SourceLoader):
                 indent = "  " * (level - 1)
                 headings.append(f"{indent}{h.get_text(strip=True)}")
             headings_by_url[current_url] = headings
-
-            # Follow links under the same path prefix
-            if depth < max_depth:
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    abs_url = urljoin(current_url, href)
-                    parsed = urlparse(abs_url)
-                    abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    if parsed.netloc != base_domain or abs_url in visited:
-                        continue
-                    if not parsed.path.startswith(base_path):
-                        continue
-                    queue.append((abs_url, depth + 1))
 
         logger.info("WebpageLoader: crawled %d pages (content from %d) for %s",
                      len(visited), len(content), url)
