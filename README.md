@@ -160,7 +160,7 @@ Keys can be omitted if not needed. On startup, Autocomp logs which keys are avai
 
 **Option 1: Google Cloud (Vertex AI).** Install the Google Cloud CLI as described at https://docs.cloud.google.com/sdk/docs/install-sdk#linux. Run `gcloud auth application-default login` and set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
 
-**Option 2: Google AI Studio (easiest).** Get an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set `GOOGLE_API_KEY`.
+**Option 2: Google AI Studio.** Get an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set `GOOGLE_API_KEY`.
 
 If both Vertex AI credentials and `GOOGLE_API_KEY` are set, Vertex AI is used.
 
