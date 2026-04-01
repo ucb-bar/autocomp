@@ -18,41 +18,66 @@
 
 It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **NVIDIA GPUs**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and the **RISC-V Vector Extension**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
-Under the hood, Autocomp runs iterative beam search — planning optimization strategies, implementing them, evaluating real performance, and keeping only the winners. Each round applies a new optimization to the code.
-
 <p align="center">
 <a href="https://arxiv.org/abs/2505.18574"><b>📚 Read the paper</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<b>✏️ Authors:</b> <a href="https://charleshong3.github.io/">Charles Hong</a>, <a href="https://x.com/sahilb17">Sahil Bhatia</a>, <a href="https://people.eecs.berkeley.edu/~akcheung/">Alvin Cheung</a>, <a href="https://people.eecs.berkeley.edu/~ysshao/">Yakun Sophia Shao</a> (UC Berkeley)
 </p>
 
-### Recent Updates
+## 🚀 Quick Start
 
-**(3/25/2026)** Added support for structured-output code edits in the code implementation phase.
+Autocomp's workflow is:
 
-**(3/17/2026)** Added preliminary TPU support and enhanced Autocomp's code translation capabilities.
+1. Pick your hardware target:
+   - Choose an optimization agent (or [build your own](#-agent-builder)).
+   - Set up an evaluation backend.
+2. Configure one or more LLMs.
+3. Edit `autocomp/search/run_search.py` with your settings.
+4. Run `python -m autocomp.search.run_search`.
 
-**(3/13/2026)** Added the **Agent Builder** for automatically creating hardware-specific LLM agents from documentation sources.
+For example, a Trainium run might look like this:
+
+```python
+# autocomp/search/run_search.py
+backend_name = "trn"
+agent_name = "built:trn-nki1"
+hw_config = TrnHardwareConfig("trn1.2xlarge")
+prob_type = "trn-tutorial"
+prob_id = 2
+models = ["openai::gpt-5.2"]
+```
+
+Then run:
+
+```bash
+python -m autocomp.search.run_search
+```
+
+Keep reading for more on picking your hardware target, setting up your backend, configuring LLM providers, and tuning the search.
 
 # ⚙️ Setup
 
-## Hardware Target Setup
+## Hardware Targets
 
-Autocomp can currently optimize code for the following hardware targets:
-- AWS Trainium ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) — uses a [built agent](autocomp/agent_builder/README.md) (`built:trn-nki1`)
-- Google TPU ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) — uses a [built agent](autocomp/agent_builder/README.md) (`built:tpu-v6e`)
-- Gemmini ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md))
-- CUDA via KernelBench ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))
-- CUDA via GPU MODE ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md))
+Each hardware target requires two things: an **optimization agent** that knows how to optimize code for that target, and an **evaluation backend** — the toolchain that compiles and benchmarks code on it. You also provide a **hardware config** (`hw_config`) that describes your specific hardware instance (e.g., `TrnHardwareConfig("trn1.2xlarge")`). The table below shows the supported targets and the agents/backends available for each.
 
-> **Note:** Built agents are the recommended path for new hardware targets (e.g., `built:trn-nki1` for Trainium, `built:tpu-v6e` for TPU). These are created by the Agent Builder and stored in `autocomp/agent_builder/.built/` by default. Set `agent_name = "built:<name>"` in `run_search.py` to use them. Legacy handcrafted agents in `autocomp/agents/` are still available for some targets.
+| Hardware target | Optimization agent(s) | Evaluation backend(s) |
+|---|---|---|
+| AWS Trainium | `built:trn-nki1` (Trainium 1) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
+| Google TPU | `built:tpu-v6e` (TPU v6e) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) |
+| Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
+| NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md)), `gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
 
-For instructions on adding a new hardware target, see [ADDING_HARDWARE_SUPPORT.md](ADDING_HARDWARE_SUPPORT.md).
+For instructions on adding full codebase support for a new hardware target (eval backend, config class, etc.), see [ADDING_HARDWARE_SUPPORT.md](ADDING_HARDWARE_SUPPORT.md).
 
-### 🏗️ Agent Builder (Recommended for New Hardware Targets)
+### 🧠 Optimization Agents
 
-The recommended way to add a new agent is with the **Agent Builder**, which automatically creates a hardware-specific agent from documentation sources (local directories, PDFs, and webpages):
+Optimization agents decide what transformations to try and how to implement them. In `run_search.py`, this is controlled by `agent_name`. Each agent is designed for a specific hardware target — see the table above for the right agent for each target. We recommend using the Agent Builder as the fastest way to set up a complete agent from your hardware's documentation.
+
+#### 🏗️ Agent Builder
+
+Want to create a new agent? The **[Agent Builder](autocomp/agent_builder/README.md)** automatically generates hardware-specific optimization agents from documentation sources such as local directories, PDFs, and webpages. Built agents are stored in `autocomp/agent_builder/.built/` and selected with `agent_name = "built:<name>"`. Legacy handcrafted agents in `autocomp/agents/` (e.g., `gemmini`, `cuda`) are also available for some targets.
 
 ```bash
 pip install "autocomp[agent-builder]"
@@ -63,7 +88,7 @@ python -m autocomp.agent_builder.run_agent_builder \
     --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
 ```
 
-For detailed usage, CLI options, Python API, and output format, see [Agent Builder documentation](autocomp/agent_builder/README.md).
+For detailed usage, CLI options, Python API, and output format, see the [Agent Builder documentation](autocomp/agent_builder/README.md).
 
 ## LLM Setup
 
@@ -146,9 +171,7 @@ Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All o
 ```python
 models = [
     "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",  # Claude (Anthropic adapter)
-    "aws::zai.glm-4.7",                                 # GLM 4.7
-    "aws::deepseek.v3.2",                               # DeepSeek-V3.2
-    "aws::moonshotai.kimi-k2.5",                        # Kimi K2.5
+    "aws::zai.glm-5",                                   # GLM 5
 ]
 ```
 
@@ -156,28 +179,28 @@ By default the `us-west-2` region is used. Set the `AWS_REGION` environment vari
 
 ## 🚀 Usage
 
-`autocomp/search/run_search.py` is the entry point for running Autocomp optimization. Various parameters such as hardware target, models used, beam size, number of plans, number of code implementations, dropout, etc. can be configured here.
+`autocomp/search/run_search.py` is the entry point for running Autocomp optimization.
 
 ```bash
 python -m autocomp.search.run_search
 ```
 
-Notable parameters:
+The most important parameters are:
 
-**Target & Environment**
-- `backend_name`: The hardware target to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
-- `agent_name`: The LLM agent type to use. For most targets, use a built agent: `"built:<name>"` (e.g., `"built:trn-nki1"` for Trainium, `"built:tpu-v6e"` for TPU). See the [Agent Builder docs](autocomp/agent_builder/README.md). Legacy handcrafted agents are also available for some targets (`trn`, `gemmini`, `cuda`).
+**Hardware Target**
 - `hw_config`: A hardware configuration object describing the target hardware. Examples:
   - `TrnHardwareConfig("trn1.2xlarge")`
   - `TpuHardwareConfig("v6e-1")`
   - `GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)`
   - `CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")`
-- `simulator`: The evaluation method to use, if multiple are supported.
-  - For Trainium, doesn't matter (put `None`)
-  - For TPU, doesn't matter (put `None`)
+
+**Evaluation Backend**
+- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
+- `simulator`: The evaluation method to use, if the backend supports multiple. For all others, put `None`.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
-  - For CUDA/KernelBench, doesn't matter (put `None`)
   - For CUDA/GPU MODE, `gpumode-local` or `gpumode-cli`
+
+**Benchmark**
 - `prob_type`: The problem type to use.
   - For Trainium, `trn-tutorial` or `trn-advanced`.
   - For TPU, `tpu`, `jaxbench-pallas`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
@@ -185,6 +208,9 @@ Notable parameters:
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
 - `prob_id`: The problem ID to use.
+
+**Optimization Agent**
+- `agent_name`: The optimization agent to use. See the [table above](#hardware-targets) for the right agent for each target.
 
 **Models**
 - `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.2"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
@@ -266,6 +292,12 @@ WANDB_MODE=disabled pytest
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
 
 ## 📝 Changelog
+
+**(3/25/2026)** Added support for structured-output code edits in the code implementation phase.
+
+**(3/17/2026)** Added preliminary TPU support and enhanced Autocomp's code translation capabilities.
+
+**(3/13/2026)** Added the **Agent Builder** for automatically creating hardware-specific LLM agents from documentation sources.
 
 **(1/22/2026)** Reorganized repo structure to make it easier to add a new hardware target.
 
