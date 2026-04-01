@@ -10,11 +10,14 @@ from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
 from autocomp.backend.eval_backend import EvalBackend
+
 # Register LLM agents
 from autocomp.agents.gemmini.gemmini_agent import GemminiLLMAgent
 from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
-from autocomp.agents.trn.trn_agent import TrnLLMAgent
+from autocomp.agents.trn_nki1.trn_nki1_agent import TrnNki1LLMAgent
+from autocomp.agents.trn_nki2.trn_nki2_agent import TrnNki2LLMAgent
 from autocomp.agent_builder.built_agent import BuiltLLMAgent
+
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -23,14 +26,31 @@ from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.backend.jaxbench.jaxbench_eval import JaxBenchEvalBackend
+
 # ... register more eval backends here ...
 # Hardware configs
-from autocomp.hw_config import CudaHardwareConfig, GemminiHardwareConfig, TrnHardwareConfig, TpuHardwareConfig  # noqa: F401 — re-exported for backwards compat
+from autocomp.hw_config import (
+    CudaHardwareConfig,
+    GemminiHardwareConfig,
+    TrnHardwareConfig,
+    TpuHardwareConfig,
+)  # noqa: F401 — re-exported for backwards compat
 
 
-def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, prob: Prob, models: list, code_models: list = None, menu_strategy: str = None, fine_grained_isa: bool = False, example_rate: float = 0.0, cache_dir=None):
+def create_backend_and_agents(
+    backend_name: str,
+    agent_name: str,
+    hw_config,
+    prob: Prob,
+    models: list,
+    code_models: list = None,
+    menu_strategy: str = None,
+    fine_grained_isa: bool = False,
+    example_rate: float = 0.0,
+    cache_dir=None,
+):
     """Create eval backend and agent ensembles.
-    
+
     Args:
         backend_name: Which eval backend to use.
         agent_name: Which agent type. Defaults based on backend_name (kernelbench/gpumode -> cuda).
@@ -55,37 +75,106 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         eval_backend = JaxBenchEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
-    
+
     # Create agents
     if agent_name == "cuda":
         agent = LLMEnsemble([CudaLLMAgent(m, hw_config, eval_backend) for m in models])
-        code_agent = LLMEnsemble([CudaLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+        code_agent = (
+            LLMEnsemble([CudaLLMAgent(m, hw_config, eval_backend) for m in code_models])
+            if code_models
+            else None
+        )
     elif agent_name == "gemmini":
-        agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, eval_backend) for m in models])
-        code_agent = LLMEnsemble([GemminiLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
-    elif agent_name == "trn":
-        agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in models])
-        code_agent = LLMEnsemble([TrnLLMAgent(m, hw_config, eval_backend) for m in code_models]) if code_models else None
+        agent = LLMEnsemble(
+            [GemminiLLMAgent(m, hw_config, eval_backend) for m in models]
+        )
+        code_agent = (
+            LLMEnsemble(
+                [GemminiLLMAgent(m, hw_config, eval_backend) for m in code_models]
+            )
+            if code_models
+            else None
+        )
+    elif agent_name == "trn" or agent_name == "trn-nki1":
+        agent = LLMEnsemble(
+            [TrnNki1LLMAgent(m, hw_config, eval_backend) for m in models]
+        )
+        code_agent = (
+            LLMEnsemble(
+                [TrnNki1LLMAgent(m, hw_config, eval_backend) for m in code_models]
+            )
+            if code_models
+            else None
+        )
+    elif agent_name == "trn-nki2":
+        agent = LLMEnsemble(
+            [TrnNki2LLMAgent(m, hw_config, eval_backend) for m in models]
+        )
+        code_agent = (
+            LLMEnsemble(
+                [TrnNki2LLMAgent(m, hw_config, eval_backend) for m in code_models]
+            )
+            if code_models
+            else None
+        )
     elif agent_name.startswith("built:") or Path(agent_name).is_dir():
         # "built:<name>" resolves to .built/<name>/; direct paths also accepted
         _BUILT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built"
         if agent_name.startswith("built:"):
-            built_name = agent_name[len("built:"):]
+            built_name = agent_name[len("built:") :]
             config_dir = _BUILT_DIR / built_name
         else:
             config_dir = Path(agent_name)
         if not config_dir.is_dir():
-            available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
+            available = (
+                [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")]
+                if _BUILT_DIR.is_dir()
+                else []
+            )
             raise ValueError(
                 f"Built agent config not found at '{config_dir}'. "
                 f"Available: {available}"
             )
         logger.info("Using built agent from %s", config_dir)
-        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in models])
-        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in code_models]) if code_models else None
+        agent = LLMEnsemble(
+            [
+                BuiltLLMAgent(
+                    m,
+                    config_dir,
+                    hw_config,
+                    eval_backend,
+                    menu_strategy,
+                    fine_grained_isa=fine_grained_isa,
+                    example_rate=example_rate,
+                    cache_dir=cache_dir,
+                )
+                for m in models
+            ]
+        )
+        code_agent = (
+            LLMEnsemble(
+                [
+                    BuiltLLMAgent(
+                        m,
+                        config_dir,
+                        hw_config,
+                        eval_backend,
+                        menu_strategy,
+                        fine_grained_isa=fine_grained_isa,
+                        example_rate=example_rate,
+                        cache_dir=cache_dir,
+                    )
+                    for m in code_models
+                ]
+            )
+            if code_models
+            else None
+        )
     else:
-        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
-    
+        raise ValueError(
+            f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory."
+        )
+
     return eval_backend, agent, code_agent
 
 
@@ -95,14 +184,16 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
         return prob.sol_file.read_text()
 
     prob_type, prob_id = prob.prob_type, prob.prob_id
-    
+
     if backend_name == "kernelbench":
         if "kb-" in prob_type:
             level_str = prob_type.split("-")[1]
             kb_level_dir = pathlib.Path(KERNELBENCH_DIR) / "KernelBench" / level_str
             matches = list(kb_level_dir.glob(f"{prob_id}_*.py"))
             if not matches:
-                raise FileNotFoundError(f"No file matching {prob_id}_*.py in {kb_level_dir}")
+                raise FileNotFoundError(
+                    f"No file matching {prob_id}_*.py in {kb_level_dir}"
+                )
             with open(matches[0]) as f:
                 return f.read().replace("Model", "ModelNew")
     elif backend_name == "gpumode":
@@ -114,7 +205,9 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             return f.read()
     elif backend_name == "gemmini":
         if "admm" in prob_type:
-            with open(SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c") as f:
+            with open(
+                SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
+            ) as f:
                 return f.read()
         else:
             with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
@@ -140,6 +233,7 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             with open(matches[0]) as f:
                 return f.read()
         from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
+
         return extract_workload_code(prob)
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
@@ -165,40 +259,51 @@ class SearchStrategy:
     """
     Base class for different search strategies.
     """
-    def __init__(self, 
-                 output_dir: pathlib.Path,
-                 eval_backend: EvalBackend,
-                 agent: LLMEnsemble,
-                 orig_code: str,
-                 prob: Prob,
-                 metric: str,
-                 simulator: str,
-                 give_score_feedback: float,
-                 give_util_feedback: float,
-                 give_hw_feedback: float,
-                 include_ancestors: bool,
-                 plan_icl_examples: bool,
-                 code_icl_examples: bool,
-                 dropout_menu_options: float,
-                 prevent_duplicate_level: int,
-                 translate_iters: int,
-                 translate_perf_threshold: float,
-                 translate_drop_original: bool,
-                 translate_score: bool,
-                 code_agent: LLMEnsemble = None,
-                 early_stop_iters: int = 0,
-                 early_stop_threshold: float = 1.0,
-                 resume_from: str | pathlib.Path | None = None,
-                 use_edits: bool = False,
-               ):
+
+    def __init__(
+        self,
+        output_dir: pathlib.Path,
+        eval_backend: EvalBackend,
+        agent: LLMEnsemble,
+        orig_code: str,
+        prob: Prob,
+        metric: str,
+        simulator: str,
+        give_score_feedback: float,
+        give_util_feedback: float,
+        give_hw_feedback: float,
+        include_ancestors: bool,
+        plan_icl_examples: bool,
+        code_icl_examples: bool,
+        dropout_menu_options: float,
+        prevent_duplicate_level: int,
+        translate_iters: int,
+        translate_perf_threshold: float,
+        translate_drop_original: bool,
+        translate_score: bool,
+        code_agent: LLMEnsemble = None,
+        early_stop_iters: int = 0,
+        early_stop_threshold: float = 1.0,
+        resume_from: str | pathlib.Path | None = None,
+        use_edits: bool = False,
+    ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.agent = agent  # The agent used to propose optimizations (planning)
-        self.code_agent = code_agent if code_agent is not None else agent  # The agent used for code implementation
+        self.code_agent = (
+            code_agent if code_agent is not None else agent
+        )  # The agent used for code implementation
         self.use_edits = use_edits
         self.prob = prob
         self.problem = prob.name if hasattr(prob, "name") else str(prob)
-        self.plan_models = sorted({a.llm_client.provider + "::" + a.llm_client.model for a in self.agent.llms})
-        self.code_models = sorted({a.llm_client.provider + "::" + a.llm_client.model for a in self.code_agent.llms})
+        self.plan_models = sorted(
+            {a.llm_client.provider + "::" + a.llm_client.model for a in self.agent.llms}
+        )
+        self.code_models = sorted(
+            {
+                a.llm_client.provider + "::" + a.llm_client.model
+                for a in self.code_agent.llms
+            }
+        )
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.eval_backend = eval_backend
@@ -228,22 +333,31 @@ class SearchStrategy:
             resume_dir = pathlib.Path(resume_from)
             src_dir = _find_latest_candidates_dir(resume_dir)
             if src_dir is None:
-                raise ValueError(f"No candidates-iter-* directories found in {resume_dir}")
+                raise ValueError(
+                    f"No candidates-iter-* directories found in {resume_dir}"
+                )
             logger.info("Resuming from %s", src_dir)
             import shutil
+
             for f in src_dir.glob("candidate_*.txt"):
                 shutil.copy2(f, save_dir / f.name)
             num_cands_loaded = self.repository.load_candidates(0, save_dir)
             if num_cands_loaded == 0:
                 raise ValueError(f"No candidates loaded from {src_dir}")
-            logger.info("Loaded %d candidates from previous run %s", num_cands_loaded, src_dir)
+            logger.info(
+                "Loaded %d candidates from previous run %s", num_cands_loaded, src_dir
+            )
         else:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
-            self.evaluate_candidates([orig_code_candidate], self.metric) # Evaluate the initial code
+            self.evaluate_candidates(
+                [orig_code_candidate], self.metric
+            )  # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
                 raise ValueError("Initial code is incorrect.")
             self.add_feedback([orig_code_candidate])
-            self.repository.add_candidates([orig_code_candidate], 0)  # Add the initial code as the first candidate
+            self.repository.add_candidates(
+                [orig_code_candidate], 0
+            )  # Add the initial code as the first candidate
             self.repository.save_candidates(0, save_dir)
         initial_code_candidates: list[CodeCandidate] = self.repository.get_candidates(0)
         logger.info("Initial code scores:")
@@ -255,34 +369,56 @@ class SearchStrategy:
     def _save_run_metadata(self):
         """Save run configuration metadata to a JSON file in the output directory."""
         serializable = (str, int, float, bool, list, tuple, type(None))
-        metadata = {k: v for k, v in vars(self).items()
-                    if not k.startswith("_") and isinstance(v, serializable)}
+        metadata = {
+            k: v
+            for k, v in vars(self).items()
+            if not k.startswith("_") and isinstance(v, serializable)
+        }
         try:
             with open(self.output_dir / "run_metadata.json", "w") as f:
                 json.dump(metadata, f, indent=2, default=str)
         except Exception as e:
             logger.warning("Failed to save run metadata: %s", e)
 
-    def propose_optimizations_iter(self, candidates: list[CodeCandidate], num_plans: int) -> list[CodeCandidate]:
+    def propose_optimizations_iter(
+        self, candidates: list[CodeCandidate], num_plans: int
+    ) -> list[CodeCandidate]:
         """
         Use the LLM to propose new optimization plans for the given code.
         """
         raise NotImplementedError
-    
-    def evaluate_candidates(self, candidates: list[CodeCandidate], metric: str, cur_iter: int=None, save_dir: pathlib.Path=None) -> list[CodeCandidate]:
+
+    def evaluate_candidates(
+        self,
+        candidates: list[CodeCandidate],
+        metric: str,
+        cur_iter: int = None,
+        save_dir: pathlib.Path = None,
+    ) -> list[CodeCandidate]:
         """
         Evaluate the candidates based on the provided optimization metric
         and update their scores.
         """
         # Load stats if they already exist in the save_dir
-        if save_dir is not None and save_dir.exists() and all((save_dir / f"code_{i}_result.txt").exists() for i in range(len(candidates))):
-            logger.info(f"Loading cached evaluation results for all {len(candidates)} candidates from {save_dir}")
+        if (
+            save_dir is not None
+            and save_dir.exists()
+            and all(
+                (save_dir / f"code_{i}_result.txt").exists()
+                for i in range(len(candidates))
+            )
+        ):
+            logger.info(
+                f"Loading cached evaluation results for all {len(candidates)} candidates from {save_dir}"
+            )
             per_cand_stats = []
             for i in range(len(candidates)):
                 with open(save_dir / f"code_{i}_result.txt", "r") as f:
                     per_cand_stats.append(json.load(f))
         else:
-            per_cand_stats = self.eval_backend.evaluate_code(self.prob, [candidate.code for candidate in candidates], self.simulator)
+            per_cand_stats = self.eval_backend.evaluate_code(
+                self.prob, [candidate.code for candidate in candidates], self.simulator
+            )
 
             # Save stats
             if save_dir is not None:
@@ -292,13 +428,21 @@ class SearchStrategy:
                     with open(save_dir / f"code_{cand_i}_result_full.txt", "w") as f:
                         f.write(str(stats).replace("\\n", "\n"))
                         if candidates[cand_i].parent is not None:
-                            f.write("\nPrev latency: "+str(candidates[cand_i].parent.score)+"\n")
+                            f.write(
+                                "\nPrev latency: "
+                                + str(candidates[cand_i].parent.score)
+                                + "\n"
+                            )
                         if stats["correct"]:
-                            f.write("New latency: "+ str(stats[metric]) +"\n")
+                            f.write("New latency: " + str(stats[metric]) + "\n")
                         else:
                             f.write("New latency: N/A\n")
-                        f.write("Plan: " + candidates[cand_i].plan.replace("\\n", "\n") +"\n")
-                        f.write("\n"+repr(candidates[cand_i]))
+                        f.write(
+                            "Plan: "
+                            + candidates[cand_i].plan.replace("\\n", "\n")
+                            + "\n"
+                        )
+                        f.write("\n" + repr(candidates[cand_i]))
 
         for cand_i, stats in enumerate(per_cand_stats):
             if stats["correct"]:
@@ -318,16 +462,24 @@ class SearchStrategy:
         if self.give_hw_feedback <= 0:
             return candidates
         for cand_i in range(len(candidates)):
-            if candidates[cand_i].hw_feedback: # If already has feedback, skip
+            if candidates[cand_i].hw_feedback:  # If already has feedback, skip
                 continue
-            feedback_per_cand = self.eval_backend.get_hw_feedback(self.prob, [candidates[cand_i].code])
+            feedback_per_cand = self.eval_backend.get_hw_feedback(
+                self.prob, [candidates[cand_i].code]
+            )
             feedback = feedback_per_cand[0]
             if feedback:
                 logger.debug("Adding feedback to candidate %d: %s", cand_i, feedback)
                 candidates[cand_i].update_hw_feedback(feedback)
         return candidates
 
-    def filter_code_candidates(self, code_candidates: list[CodeCandidate], num_to_keep: int | None = None, cur_iter: int = 0, num_iters: int = 0) -> list:
+    def filter_code_candidates(
+        self,
+        code_candidates: list[CodeCandidate],
+        num_to_keep: int | None = None,
+        cur_iter: int = 0,
+        num_iters: int = 0,
+    ) -> list:
         """
         Filter and return the top N code candidates based on their score.
         If N (num_to_keep) is not provided, will return all candidates with a higher score than their parent.
@@ -349,13 +501,14 @@ class SearchStrategy:
                 else:
                     if c.score < c.parent.score * keep_factor:
                         if c.score >= c.parent.score:
-                            logger.debug(f"Keep factor used at iter {cur_iter}, candidate\n{c}")
+                            logger.debug(
+                                f"Keep factor used at iter {cur_iter}, candidate\n{c}"
+                            )
                         cur_candidates.append(c)
         else:
             cur_candidates = []
             use_translation_sort = (
-                self.translate_score
-                and cur_iter <= self.translate_iters
+                self.translate_score and cur_iter <= self.translate_iters
             )
             if use_translation_sort:
                 code_candidates.sort(
@@ -372,7 +525,9 @@ class SearchStrategy:
                 if not use_translation_sort:
                     # Don't keep any candidates with a score same or higher than their parent
                     if cand.score >= cand.parent.score * keep_factor:
-                        logger.debug(f"Working candidate has score {cand.score} >= parent score {cand.parent.score}.")
+                        logger.debug(
+                            f"Working candidate has score {cand.score} >= parent score {cand.parent.score}."
+                        )
                         logger.debug(f"Candidate plan:\n{cand.plan}")
                         logger.debug(f"Candidate code:\n{cand.code}")
                         continue
@@ -383,24 +538,34 @@ class SearchStrategy:
                     for already_in_cand in cur_candidates:
                         if dont_add == True:
                             break
-                        if (cand.parent == already_in_cand.parent) and (cand.plan == already_in_cand.plan):
+                        if (cand.parent == already_in_cand.parent) and (
+                            cand.plan == already_in_cand.plan
+                        ):
                             dont_add = True
                             break
                         already_in_parent_cand = already_in_cand.parent
                         while already_in_parent_cand is not None:
-                            if (cand==already_in_parent_cand or cand.parent == already_in_parent_cand) and (already_in_parent_cand.parent is not None):
+                            if (
+                                cand == already_in_parent_cand
+                                or cand.parent == already_in_parent_cand
+                            ) and (already_in_parent_cand.parent is not None):
                                 dont_add = True
                                 break
                             already_in_parent_cand = already_in_parent_cand.parent
                 elif self.prevent_duplicate_level == 1:
                     # Don't keep any candidates with same parent as one already in the list, unless that parent is the root candidate
                     for already_in_cand in cur_candidates:
-                        if cand.parent == already_in_cand.parent and cand.parent.parent is not None:
+                        if (
+                            cand.parent == already_in_cand.parent
+                            and cand.parent.parent is not None
+                        ):
                             dont_add = True
                 else:
                     # Don't keep any candidates with same parent and plan as one already in the list (the one already in the list is equal or better)
                     for already_in_cand in cur_candidates:
-                        if (cand.parent == already_in_cand.parent) and (cand.plan == already_in_cand.plan):
+                        if (cand.parent == already_in_cand.parent) and (
+                            cand.plan == already_in_cand.plan
+                        ):
                             dont_add = True
 
                 if not dont_add:
@@ -430,23 +595,34 @@ class SearchStrategy:
         if ratio >= self.early_stop_threshold:
             logger.info(
                 "Early stopping: no improvement over %d iters (ratio %.4f >= %.4f)",
-                self.early_stop_iters, ratio, self.early_stop_threshold,
+                self.early_stop_iters,
+                ratio,
+                self.early_stop_threshold,
             )
             return True
         return False
+
 
 class ExhaustiveSearchStrategy(SearchStrategy):
     """
     Tries every optimization menu option exhaustively, generating plans and
     implementations in parallel batches.
     """
-    def __init__(self, *args, plans_per_option: int = 1, num_code_candidates: int = 1, **kwargs):
+
+    def __init__(
+        self, *args, plans_per_option: int = 1, num_code_candidates: int = 1, **kwargs
+    ):
         self.plans_per_option = plans_per_option
         self.num_code_candidates = num_code_candidates
         super().__init__(*args, **kwargs)
 
-    def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path,
-                                   cur_iter: int = None, num_iters: int = None) -> list[CodeCandidate]:
+    def propose_optimizations_iter(
+        self,
+        parent_candidates: list[CodeCandidate],
+        save_dir: pathlib.Path,
+        cur_iter: int = None,
+        num_iters: int = None,
+    ) -> list[CodeCandidate]:
         menu_options = list(range(1, len(self.agent.get_opt_menu_options()) + 1))
 
         duplicated_candidates: list[CodeCandidate] = []
@@ -485,7 +661,11 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             cur_cand_idx = i - 1
             current_candidates = self.repository.get_candidates(cur_cand_idx)
             while len(current_candidates) == 0:
-                logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx - 1)
+                logger.warning(
+                    "No candidates found for iteration %d. Trying candidates from iteration %d.",
+                    cur_cand_idx,
+                    cur_cand_idx - 1,
+                )
                 cur_cand_idx -= 1
                 current_candidates = self.repository.get_candidates(cur_cand_idx)
 
@@ -499,7 +679,9 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             # Step 1: Propose optimizations for each candidate x each menu option
             save_dir = self.output_dir / f"generated-plans-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
-            plan_only_candidates = self.propose_optimizations_iter(current_candidates, save_dir, cur_iter=i, num_iters=iterations)
+            plan_only_candidates = self.propose_optimizations_iter(
+                current_candidates, save_dir, cur_iter=i, num_iters=iterations
+            )
             logger.info(f"Proposed {len(plan_only_candidates)} new optimizations.")
 
             # Step 2: Generate code implementations in parallel
@@ -508,31 +690,47 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             save_strs = [f"plan{p_i}" for p_i in range(len(plan_only_candidates))]
             if self.use_edits:
                 impl_candidates = self.code_agent.implement_code_edits_parallel(
-                    plan_only_candidates, self.num_code_candidates, save_dir,
-                    save_strs=save_strs, prob=self.prob,
+                    plan_only_candidates,
+                    self.num_code_candidates,
+                    save_dir,
+                    save_strs=save_strs,
+                    prob=self.prob,
                 )
             else:
                 impl_candidates = self.code_agent.implement_code_parallel(
-                    plan_only_candidates, self.num_code_candidates, save_dir,
-                    save_strs=save_strs, prob=self.prob,
+                    plan_only_candidates,
+                    self.num_code_candidates,
+                    save_dir,
+                    save_strs=save_strs,
+                    prob=self.prob,
                 )
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
             # Step 3: Evaluate the generated implementations
             save_dir = self.output_dir / f"eval-results-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
-            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
+            evaluated_code_candidates = self.evaluate_candidates(
+                impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir
+            )
             logger.info(f"Evaluated {len(evaluated_code_candidates)} implementations.")
 
             # Step 4: Filter and rank the implementations
-            improving_candidates = self.filter_code_candidates(evaluated_code_candidates, cur_iter=i, num_iters=iterations)
-            candidates_for_next_iter = self.filter_code_candidates(improving_candidates, num_to_keep=1, cur_iter=i, num_iters=iterations)
+            improving_candidates = self.filter_code_candidates(
+                evaluated_code_candidates, cur_iter=i, num_iters=iterations
+            )
+            candidates_for_next_iter = self.filter_code_candidates(
+                improving_candidates, num_to_keep=1, cur_iter=i, num_iters=iterations
+            )
 
             # Step 5: Save the improving candidates and update the repository
             self.repository.add_candidates(improving_candidates, "improving")
             self.repository.add_candidates(candidates_for_next_iter, i)
-            logger.info(f"Filtered down to {len(candidates_for_next_iter)} code candidates.")
-            logger.info(f"Saved {len(improving_candidates)} improving code candidates to repository.")
+            logger.info(
+                f"Filtered down to {len(candidates_for_next_iter)} code candidates."
+            )
+            logger.info(
+                f"Saved {len(improving_candidates)} improving code candidates to repository."
+            )
 
             # Step 6: Save the latest candidates to disk
             save_dir = self.output_dir / f"candidates-iter-{i}"
@@ -542,46 +740,49 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
 
+
 class BeamSearchStrategy(SearchStrategy):
     """
     Selects the top-N candidates based on their ranking (beam width search).
     """
-    def __init__(self,
-                 output_dir: pathlib.Path,
-                 eval_backend: EvalBackend,
-                 agent: LLMEnsemble,
-                 orig_code: str,
-                 prob: Prob,
-                 metric: str,
-                 simulator: str,
-                 give_score_feedback: float,
-                 give_util_feedback: float,
-                 give_hw_feedback: float,
-                 include_ancestors: bool,
-                 plan_icl_examples: bool,
-                 code_icl_examples: bool,
-                 num_analyses: int,
-                 num_plan_candidates: int,
-                 num_code_candidates: int,
-                 beam_size: int,
-                 num_pairs_to_combine: int,
-                 num_gen_per_combine: int,
-                 dropout_menu_options: float,
-                 trigger_exhaustive_threshold: float,
-                 trigger_exhaustive_iters: int,
-                 start_exhaustive_iters: int,
-                 prevent_duplicate_level: int,
-                 reimplement_failed: bool,
-                 translate_iters: int,
-                 translate_perf_threshold: float,
-                 translate_drop_original: bool,
-                 translate_score: bool,
-                 code_agent: LLMEnsemble = None,
-                 early_stop_iters: int = 0,
-                 early_stop_threshold: float = 1.0,
-                 resume_from: str | pathlib.Path | None = None,
-                 use_edits: bool = False,
-                ):
+
+    def __init__(
+        self,
+        output_dir: pathlib.Path,
+        eval_backend: EvalBackend,
+        agent: LLMEnsemble,
+        orig_code: str,
+        prob: Prob,
+        metric: str,
+        simulator: str,
+        give_score_feedback: float,
+        give_util_feedback: float,
+        give_hw_feedback: float,
+        include_ancestors: bool,
+        plan_icl_examples: bool,
+        code_icl_examples: bool,
+        num_analyses: int,
+        num_plan_candidates: int,
+        num_code_candidates: int,
+        beam_size: int,
+        num_pairs_to_combine: int,
+        num_gen_per_combine: int,
+        dropout_menu_options: float,
+        trigger_exhaustive_threshold: float,
+        trigger_exhaustive_iters: int,
+        start_exhaustive_iters: int,
+        prevent_duplicate_level: int,
+        reimplement_failed: bool,
+        translate_iters: int,
+        translate_perf_threshold: float,
+        translate_drop_original: bool,
+        translate_score: bool,
+        code_agent: LLMEnsemble = None,
+        early_stop_iters: int = 0,
+        early_stop_threshold: float = 1.0,
+        resume_from: str | pathlib.Path | None = None,
+        use_edits: bool = False,
+    ):
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
         self.num_code_candidates = num_code_candidates
@@ -592,7 +793,32 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
         self.reimplement_failed = reimplement_failed
-        super().__init__(output_dir, eval_backend, agent, orig_code, prob, metric, simulator, give_score_feedback, give_util_feedback, give_hw_feedback, include_ancestors, plan_icl_examples, code_icl_examples, dropout_menu_options, prevent_duplicate_level, translate_iters, translate_perf_threshold, translate_drop_original, translate_score, code_agent=code_agent, early_stop_iters=early_stop_iters, early_stop_threshold=early_stop_threshold, resume_from=resume_from, use_edits=use_edits)
+        super().__init__(
+            output_dir,
+            eval_backend,
+            agent,
+            orig_code,
+            prob,
+            metric,
+            simulator,
+            give_score_feedback,
+            give_util_feedback,
+            give_hw_feedback,
+            include_ancestors,
+            plan_icl_examples,
+            code_icl_examples,
+            dropout_menu_options,
+            prevent_duplicate_level,
+            translate_iters,
+            translate_perf_threshold,
+            translate_drop_original,
+            translate_score,
+            code_agent=code_agent,
+            early_stop_iters=early_stop_iters,
+            early_stop_threshold=early_stop_threshold,
+            resume_from=resume_from,
+            use_edits=use_edits,
+        )
         self.init_wandb()
 
     def filter_opt_candidates(self, opt_candidates: list) -> list:
@@ -600,18 +826,29 @@ class BeamSearchStrategy(SearchStrategy):
         Filter and return the top N optimization candidates based on their score.
         """
         opt_candidates.sort(key=lambda c: c.score, reverse=True)
-        return opt_candidates[:self.num_opts]
+        return opt_candidates[: self.num_opts]
 
     def select_candidates(self, candidates: list, num_select: int) -> list:
         return candidates[:num_select]  # Select the top-N candidates
 
-    def propose_optimizations_iter(self, parent_candidates: list[CodeCandidate], save_dir: pathlib.Path, cur_iter: int, num_iters: int,
-                                   exhaustive: bool = False, translate: bool = False) -> list[CodeCandidate]:
+    def propose_optimizations_iter(
+        self,
+        parent_candidates: list[CodeCandidate],
+        save_dir: pathlib.Path,
+        cur_iter: int,
+        num_iters: int,
+        exhaustive: bool = False,
+        translate: bool = False,
+    ) -> list[CodeCandidate]:
         """
         Propose a plan for each optimization in the menu.
         Returns a list of plan strings, one for each optimization in the menu.
         """
-        prompt_end = f"Remember that this is phase {cur_iter} out of {num_iters} optimization phases." if not translate else f"Remember that this is translation phase {cur_iter} out of {self.translate_iters} translation phases."
+        prompt_end = (
+            f"Remember that this is phase {cur_iter} out of {num_iters} optimization phases."
+            if not translate
+            else f"Remember that this is translation phase {cur_iter} out of {self.translate_iters} translation phases."
+        )
 
         save_strs = []
         for parent_i, parent_candidate in enumerate(parent_candidates):
@@ -619,11 +856,11 @@ class BeamSearchStrategy(SearchStrategy):
             save_strs.append(save_str)
         kwargs = {
             "candidate_lst": parent_candidates,
-            "num_plans": self.num_plan_candidates, 
-            "save_dir": save_dir, 
-            "save_strs": save_strs, 
+            "num_plans": self.num_plan_candidates,
+            "save_dir": save_dir,
+            "save_strs": save_strs,
             "prob": self.prob,
-            "prompt_end": prompt_end, 
+            "prompt_end": prompt_end,
             "shuffle_opts": False,
             "give_score_feedback": self.give_score_feedback,
             "give_util_feedback": self.give_util_feedback,
@@ -636,10 +873,14 @@ class BeamSearchStrategy(SearchStrategy):
             "translate": translate,
         }
         if exhaustive:
-            # A bit of a hack: make a list pointing many times to each parent candidate so we can 
+            # A bit of a hack: make a list pointing many times to each parent candidate so we can
             # use propose_optimizations_parallel to parallelize requests for different menu options
-            kwargs["num_plans"] = len(self.agent.llms) # Exhaustive on each LLM in the ensemble
-            menu_options_lst = list(range(1, len(self.agent.get_opt_menu_options())+1))
+            kwargs["num_plans"] = len(
+                self.agent.llms
+            )  # Exhaustive on each LLM in the ensemble
+            menu_options_lst = list(
+                range(1, len(self.agent.get_opt_menu_options()) + 1)
+            )
             duplicated_parent_candidates: list[CodeCandidate] = []
             duplicated_save_strs: list[str] = []
             duplicated_force_opt_menu: list[int] = []
@@ -651,17 +892,25 @@ class BeamSearchStrategy(SearchStrategy):
             kwargs["candidate_lst"] = duplicated_parent_candidates
             kwargs["save_strs"] = duplicated_save_strs
             kwargs["force_opt_menu_lst"] = duplicated_force_opt_menu
-        
+
         plan_only_candidates = self.agent.propose_optimizations_parallel(**kwargs)
         return plan_only_candidates
 
-    def combine_parents(self, parent_candidates: list[CodeCandidate], num_pairs: int, num_to_gen: int, save_dir: pathlib.Path) -> list[CodeCandidate]:
+    def combine_parents(
+        self,
+        parent_candidates: list[CodeCandidate],
+        num_pairs: int,
+        num_to_gen: int,
+        save_dir: pathlib.Path,
+    ) -> list[CodeCandidate]:
         """
         Combine the code of each pair of parent candidates.
         """
         # Choose N pairs of parents to combine
         pairs = set()
-        while len(pairs) < num_pairs and (len(pairs) < (len(parent_candidates) * (len(parent_candidates) - 1) // 2)):
+        while len(pairs) < num_pairs and (
+            len(pairs) < (len(parent_candidates) * (len(parent_candidates) - 1) // 2)
+        ):
             i, j = random.sample(range(len(parent_candidates)), 2)
             if (i, j) not in pairs and (j, i) not in pairs:
                 pairs.add((i, j))
@@ -671,7 +920,13 @@ class BeamSearchStrategy(SearchStrategy):
         for i, j in pairs:
             parent_i = parent_candidates[i]
             parent_j = parent_candidates[j]
-            this_pair_combined_candidates = self.code_agent.combine_candidates([parent_i, parent_j], num_to_gen, save_dir, save_str=f"{i}_{j}", prob=self.prob)
+            this_pair_combined_candidates = self.code_agent.combine_candidates(
+                [parent_i, parent_j],
+                num_to_gen,
+                save_dir,
+                save_str=f"{i}_{j}",
+                prob=self.prob,
+            )
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
@@ -683,18 +938,26 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info(f"Iteration {i} of {cur_word}:")
 
             # Get current candidates (use initial code if it's the first iteration)
-            cur_cand_idx = i-1
+            cur_cand_idx = i - 1
             current_candidates = self.repository.get_candidates(cur_cand_idx)
             while len(current_candidates) == 0:
-                logger.warning("No candidates found for iteration %d. Trying candidates from iteration %d.", cur_cand_idx, cur_cand_idx-1)
+                logger.warning(
+                    "No candidates found for iteration %d. Trying candidates from iteration %d.",
+                    cur_cand_idx,
+                    cur_cand_idx - 1,
+                )
                 cur_cand_idx -= 1
                 current_candidates = self.repository.get_candidates(cur_cand_idx)
 
             cur_cand_scores = [cand.score for cand in current_candidates]
             best_loss = min(cur_cand_scores)
-            wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-                "best-loss": best_loss,
-            }})
+            wandb.log(
+                {
+                    f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
+                        "best-loss": best_loss,
+                    }
+                }
+            )
             losses.append(best_loss)
 
             if self.should_early_stop(losses, i):
@@ -712,13 +975,23 @@ class BeamSearchStrategy(SearchStrategy):
             save_dir.mkdir(parents=True, exist_ok=True)
             # If we don't improve by trigger_exhaustive_threshold for trigger_exhaustive_iters, do exhaustive
             exhaustive = False
-            if len(losses) >= self.trigger_exhaustive_iters+1:
-                if (losses[i-1] / losses[i-self.trigger_exhaustive_iters-1]) >= self.trigger_exhaustive_threshold:
+            if len(losses) >= self.trigger_exhaustive_iters + 1:
+                if (
+                    losses[i - 1] / losses[i - self.trigger_exhaustive_iters - 1]
+                ) >= self.trigger_exhaustive_threshold:
                     exhaustive = True
-            exhaustive = exhaustive or (i <= self.start_exhaustive_iters) # or if we are in the first start_exhaustive_iters iterations
-            translate = (i <= self.translate_iters)
-            plan_only_candidates = self.propose_optimizations_iter(current_candidates, save_dir, i, iterations, 
-                                                                   exhaustive=exhaustive, translate=translate)
+            exhaustive = exhaustive or (
+                i <= self.start_exhaustive_iters
+            )  # or if we are in the first start_exhaustive_iters iterations
+            translate = i <= self.translate_iters
+            plan_only_candidates = self.propose_optimizations_iter(
+                current_candidates,
+                save_dir,
+                i,
+                iterations,
+                exhaustive=exhaustive,
+                translate=translate,
+            )
             logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
 
             # Step 2: Generate code candidates for each optimization plan
@@ -729,70 +1002,138 @@ class BeamSearchStrategy(SearchStrategy):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
             if self.use_edits:
-                impl_candidates = self.code_agent.implement_code_edits_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
+                impl_candidates = self.code_agent.implement_code_edits_parallel(
+                    plan_only_candidates,
+                    self.num_code_candidates,
+                    save_dir,
+                    save_strs=save_strs,
+                    code_icl_examples=self.code_icl_examples,
+                    prob=self.prob,
+                )
             else:
-                impl_candidates = self.code_agent.implement_code_parallel(plan_only_candidates, self.num_code_candidates, save_dir, save_strs=save_strs, code_icl_examples=self.code_icl_examples, prob=self.prob)
+                impl_candidates = self.code_agent.implement_code_parallel(
+                    plan_only_candidates,
+                    self.num_code_candidates,
+                    save_dir,
+                    save_strs=save_strs,
+                    code_icl_examples=self.code_icl_examples,
+                    prob=self.prob,
+                )
             logger.info(f"Generated {len(impl_candidates)} implementations.")
 
-            if len(current_candidates) > 1 and self.num_pairs_to_combine > 0 and self.num_gen_per_combine > 0:
+            if (
+                len(current_candidates) > 1
+                and self.num_pairs_to_combine > 0
+                and self.num_gen_per_combine > 0
+            ):
                 # Try combining parents
                 save_dir = self.output_dir / f"combined-code-iter-{i}"
                 save_dir.mkdir(parents=True, exist_ok=True)
-                combined_candidates = self.combine_parents(current_candidates, self.num_pairs_to_combine, self.num_gen_per_combine, save_dir)
+                combined_candidates = self.combine_parents(
+                    current_candidates,
+                    self.num_pairs_to_combine,
+                    self.num_gen_per_combine,
+                    save_dir,
+                )
                 impl_candidates.extend(combined_candidates)
 
             # Step 3: Evaluate the generated implementations
             save_dir = self.output_dir / f"eval-results-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
-            evaluated_code_candidates = self.evaluate_candidates(impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
+            evaluated_code_candidates = self.evaluate_candidates(
+                impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir
+            )
             logger.info(f"Evaluated {len(evaluated_code_candidates)} implementations.")
 
             # Step 3.5: Reimplement failed implementations
             if self.reimplement_failed:
-                failed_candidates = [c for c in evaluated_code_candidates if c.score == float("inf") and (c.stdout or c.stderr)]
+                failed_candidates = [
+                    c
+                    for c in evaluated_code_candidates
+                    if c.score == float("inf") and (c.stdout or c.stderr)
+                ]
                 if len(failed_candidates) > 0:
-                    logger.info(f"Found {len(failed_candidates)} failed implementations with error output. Attempting to reimplement...")
+                    logger.info(
+                        f"Found {len(failed_candidates)} failed implementations with error output. Attempting to reimplement..."
+                    )
                     save_dir = self.output_dir / f"reimplemented-code-iter-{i}"
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    save_strs = [f"failed_{idx}" for idx in range(len(failed_candidates))]
-                    reimplemented_candidates = self.code_agent.reimplement_failed_code_parallel(failed_candidates, 1, save_dir, save_strs=save_strs, prob=self.prob)
-                    logger.info(f"Generated {len(reimplemented_candidates)} reimplementations.")
-                    
+                    save_strs = [
+                        f"failed_{idx}" for idx in range(len(failed_candidates))
+                    ]
+                    reimplemented_candidates = (
+                        self.code_agent.reimplement_failed_code_parallel(
+                            failed_candidates,
+                            1,
+                            save_dir,
+                            save_strs=save_strs,
+                            prob=self.prob,
+                        )
+                    )
+                    logger.info(
+                        f"Generated {len(reimplemented_candidates)} reimplementations."
+                    )
+
                     # Evaluate the reimplementations
                     save_dir = self.output_dir / f"eval-reimplemented-results-iter-{i}"
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    reimplemented_evaluated = self.evaluate_candidates(reimplemented_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir)
-                    logger.info(f"Evaluated {len(reimplemented_evaluated)} reimplementations.")
-                    
+                    reimplemented_evaluated = self.evaluate_candidates(
+                        reimplemented_candidates,
+                        metric=self.metric,
+                        cur_iter=i,
+                        save_dir=save_dir,
+                    )
+                    logger.info(
+                        f"Evaluated {len(reimplemented_evaluated)} reimplementations."
+                    )
+
                     # Add successful reimplementations to the evaluated list
                     evaluated_code_candidates.extend(reimplemented_evaluated)
 
             # Step 3.75: Score translation completeness during translate iters
             if translate and self.translate_score:
-                correct_candidates = [c for c in evaluated_code_candidates if c.score != float("inf")]
+                correct_candidates = [
+                    c for c in evaluated_code_candidates if c.score != float("inf")
+                ]
                 if correct_candidates:
                     original_code = self.repository.get_candidates(0)[0].code
-                    scores = self.agent.score_translation_completeness(original_code, correct_candidates, prob=self.prob)
+                    scores = self.agent.score_translation_completeness(
+                        original_code, correct_candidates, prob=self.prob
+                    )
                     for cand, ts in zip(correct_candidates, scores):
                         cand.translation_score = ts
                     logger.info(
                         "Translation scores: %s",
-                        [(f"{c.translation_score:.1f}", f"{c.score:.4f}") for c in correct_candidates],
+                        [
+                            (f"{c.translation_score:.1f}", f"{c.score:.4f}")
+                            for c in correct_candidates
+                        ],
                     )
 
             # Step 4: Filter and rank the implementations
-            improving_candidates = self.filter_code_candidates(evaluated_code_candidates, cur_iter=i, num_iters=iterations)
+            improving_candidates = self.filter_code_candidates(
+                evaluated_code_candidates, cur_iter=i, num_iters=iterations
+            )
             cands_to_filter = improving_candidates + current_candidates
             if self.translate_drop_original and i == self.translate_iters:
                 cands_to_filter = [c for c in cands_to_filter if c.parent is not None]
-            candidates_for_next_iter = self.filter_code_candidates(cands_to_filter, num_to_keep=self.beam_size, cur_iter=i, num_iters=iterations)
+            candidates_for_next_iter = self.filter_code_candidates(
+                cands_to_filter,
+                num_to_keep=self.beam_size,
+                cur_iter=i,
+                num_iters=iterations,
+            )
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
             # Step 5: Save the improving candidates and update the repository
             self.repository.add_candidates(improving_candidates, "improving")
             self.repository.add_candidates(candidates_for_next_iter, i)
-            logger.info(f"Filtered down to {len(candidates_for_next_iter)} code candidates.")
-            logger.info(f"Saved {len(improving_candidates)} improving code candidates to repository.")
+            logger.info(
+                f"Filtered down to {len(candidates_for_next_iter)} code candidates."
+            )
+            logger.info(
+                f"Saved {len(improving_candidates)} improving code candidates to repository."
+            )
 
             # Step 6: Save the latest candidates to disk
             save_dir = self.output_dir / f"candidates-iter-{i}"
@@ -805,6 +1146,10 @@ class BeamSearchStrategy(SearchStrategy):
         else:
             last_iter = len(self.repository.candidates_per_iteration) - 1
             last_iter_cands = self.repository.get_candidates(last_iter)
-            wandb.log({f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-                "best-loss": min([cand.score for cand in last_iter_cands]),
-            }})
+            wandb.log(
+                {
+                    f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
+                        "best-loss": min([cand.score for cand in last_iter_cands]),
+                    }
+                }
+            )
