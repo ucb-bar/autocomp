@@ -135,7 +135,7 @@ function openPanel(context: vscode.ExtensionContext, dataDir: string) {
         const runsJson = path.join(dataDir, "runs.json");
         try {
           const raw = JSON.parse(fs.readFileSync(runsJson, "utf-8"));
-          const EXPECTED_SCHEMA = 1;
+          const EXPECTED_SCHEMA = 2;
           let data: unknown[];
           if (Array.isArray(raw)) {
             data = raw;

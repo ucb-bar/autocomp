@@ -5,7 +5,6 @@ Usage:
 
 Configure the parameters in the `main()` function below.
 """
-
 import pathlib
 import random
 
@@ -29,30 +28,26 @@ def main():
     # ------------------------------------------------------------------
     # Target & environment
     # ------------------------------------------------------------------
-    backend_name = (
-        "trn"  # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
-    )
-    agent_name = "trn-nki2"  # NKI 0.2.0 agent
-    simulator = (
-        None  # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
-    )
-    hw_config = TrnHardwareConfig("trn2.3xlarge")
+    backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
+    agent_name = "built:trn1-nki1"   # "gemmini", "trn", "cuda", "built:<name>", or path
+    simulator = None                # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
+    # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
+    # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
+    # hw_config = TpuHardwareConfig("v6e-1")
 
-    prob_type = "trn-internal"  # Internal NKI kernels for optimization
-    prob_id = 5  # 5=fft256, 6=mamba_scan, 4=trimul (change per run)
+    prob_type = "trn-tutorial"      # see README.md or sols/ for available problems
+    prob_id = 2
 
     # ------------------------------------------------------------------
-    # Models -- Bedrock-only ensemble via IAM role
+    # Models
     # ------------------------------------------------------------------
-    # Format: "aws::MODEL_ID" routes to Bedrock (Claude via AnthropicBedrock,
-    # others via Converse API). No external API keys needed -- uses IAM role.
-    # Claude models need "us." cross-region inference profile prefix.
-    # Set AWS_REGION=us-east-1 for broadest model availability.
+    # Format: "provider::model" (openai, anthropic, together, aws, gcp, vllm)
     models = [
-        "aws::us.anthropic.claude-sonnet-4-20250514-v1:0",
-        "aws::us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        "aws::us.meta.llama4-maverick-17b-instruct-v1:0",
-        "aws::mistral.mistral-large-3-675b-instruct",
+        "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "aws::zai.glm-4.7",
+        "aws::deepseek.v3.2",
+        "aws::moonshotai.kimi-k2.5",
     ]
     code_models = None  # None = same as planning models
 
@@ -61,12 +56,12 @@ def main():
     # ------------------------------------------------------------------
     search_strategy = "beam"
     metric = "latency"
-    iterations = 8  # Production: 8 iterations for meaningful optimization
+    iterations = 8
     num_plan_candidates = 4
     num_code_candidates = 2
-    beam_size = 4  # Production: wider beam for better exploration
+    beam_size = 4
     dropout_menu_options = 0.25
-    early_stop_iters = 0  # 0 = disabled
+    early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
     resume_from = ""
 
@@ -87,7 +82,7 @@ def main():
     # ------------------------------------------------------------------
     # Built-agent options
     # ------------------------------------------------------------------
-    menu_strategy = "one-shot"  # None (static menu) or "one-shot"
+    menu_strategy = "one-shot"      # None (static menu) or "one-shot"
     fine_grained_isa = True
     example_rate = 0.25
 
@@ -106,9 +101,7 @@ def main():
     trigger_exhaustive_threshold = 1
     trigger_exhaustive_iters = 20
     start_exhaustive_iters = 0
-    prevent_duplicate_level = (
-        0  # 0: same parent+plan, 1: same parent, 2: any shared ancestor
-    )
+    prevent_duplicate_level = 0     # 0: same parent+plan, 1: same parent, 2: any shared ancestor
     random.seed(1111)
 
     # ------------------------------------------------------------------
@@ -122,20 +115,12 @@ def main():
     # Build output directory & start logging
     # ------------------------------------------------------------------
     built_menu_strategy_enum = {None: 0, "one-shot": 1}
-    clean_agent_name = (
-        pathlib.Path(agent_name).name if "/" in agent_name else agent_name
-    )
+    clean_agent_name = pathlib.Path(agent_name).name if "/" in agent_name else agent_name
     output_str = f"{clean_agent_name}"
     output_str += f"_{prob_type}_{prob_id}_{search_strategy}_iters{iterations}"
     if simulator is not None:
         output_str += f"_{simulator}"
-    hw_desc = (
-        hw_config.get_hw_description()
-        .replace(" ", "")
-        .replace("(", "_")
-        .replace(")", "")
-        .replace(",", "_")
-    )
+    hw_desc = hw_config.get_hw_description().replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_")
     output_str += f"_{hw_desc}"
     for model in models:
         output_str += f"_{model[-20:]}"
@@ -187,7 +172,6 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import autocomp.common.my_logging
-
     autocomp.common.my_logging.move_log(output_dir)
     logger.info("Output directory: %s", output_dir)
 
@@ -197,26 +181,14 @@ def main():
     prob = Prob(prob_type, prob_id)
     initial_code = load_initial_code(backend_name, prob)
     eval_backend, agent, code_agent = create_backend_and_agents(
-        backend_name,
-        agent_name,
-        hw_config,
-        prob,
-        models,
-        code_models,
-        menu_strategy=menu_strategy,
-        fine_grained_isa=fine_grained_isa,
-        example_rate=example_rate,
-        cache_dir=output_dir,
+        backend_name, agent_name, hw_config, prob, models, code_models,
+        menu_strategy=menu_strategy, fine_grained_isa=fine_grained_isa,
+        example_rate=example_rate, cache_dir=output_dir,
     )
 
     common_kwargs = dict(
-        output_dir=output_dir,
-        eval_backend=eval_backend,
-        agent=agent,
-        orig_code=initial_code,
-        prob=prob,
-        metric=metric,
-        simulator=simulator,
+        output_dir=output_dir, eval_backend=eval_backend, agent=agent,
+        orig_code=initial_code, prob=prob, metric=metric, simulator=simulator,
         give_score_feedback=give_score_feedback,
         give_util_feedback=give_util_feedback,
         give_hw_feedback=give_hw_feedback,

@@ -115,7 +115,7 @@ A built agent produces the following files in `.built/<agent_name>/`:
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
-A reference example is available at `.built/trn-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html)).
+A reference example is available at `.built/trn1-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html)).
 
 ## How It Works
 

@@ -34,11 +34,12 @@ IMPL_TIMEOUT = int(os.getenv("AUTOCOMP_JAXBENCH_IMPL_TIMEOUT", "120"))
 def _load_module(path: str, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-def _eval_impl(impl_path: str, inputs, ref_out):
+def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
     """Evaluate a single implementation. Returns a result dict."""
     result = {"correct": False, "latency": None, "error": ""}
 
@@ -59,7 +60,7 @@ def _eval_impl(impl_path: str, inputs, ref_out):
             impl_out = impl_fn(*inputs)
             jax.block_until_ready(impl_out)
 
-        if not jnp.allclose(ref_out, impl_out, atol=ATOL, rtol=RTOL):
+        if not jnp.allclose(ref_out, impl_out, atol=atol, rtol=rtol):
             max_diff = float(jnp.max(jnp.abs(ref_out - impl_out)))
             result["error"] = f"correctness check failed (max_diff={max_diff:.6f})"
             return result
@@ -107,7 +108,10 @@ def _eval_worker(impl_path, workload_path, result_queue):
             return
         ref_out = ref_fn(*inputs)
         jax.block_until_ready(ref_out)
-        result = _eval_impl(impl_path, inputs, ref_out)
+        cfg = getattr(ref_mod, "CONFIG", {})
+        atol = cfg.get("atol", ATOL)
+        rtol = cfg.get("rtol", RTOL)
+        result = _eval_impl(impl_path, inputs, ref_out, atol=atol, rtol=rtol)
     except Exception:
         result = {"correct": False, "latency": None, "error": traceback.format_exc()}
     result_queue.put(result)

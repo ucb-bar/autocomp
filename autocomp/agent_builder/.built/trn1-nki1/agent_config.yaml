@@ -1,4 +1,4 @@
-agent_name: trn-nki1
+agent_name: trn1-nki1
 version: '1.0'
 built_at: '2026-03-16T05:42:10+00:00'
 build:
@@ -16,4 +16,4 @@ build:
     url: https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html
     max_depth: 3
     max_pages: 250
-description: Auto-generated agent config for trn-nki1
+description: Auto-generated agent config for trn1-nki1

@@ -809,8 +809,8 @@ class BuiltLLMAgent(LLMAgent):
             "You MUST respond with ONLY a JSON object in this exact format:\n"
             '{"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
             "Rules for edits:\n"
-            "- Each old_str must be an EXACT substring that appears exactly once in the current code.\n"
-            "- Include enough context in old_str to be unambiguous (at least 2-3 surrounding lines).\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
             "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
             "- Do NOT output anything outside the JSON object.\n"
         )
