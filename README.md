@@ -31,7 +31,7 @@ Autocomp's workflow is:
    - Set up an evaluation backend.
 2. Configure one or more LLMs.
 3. Edit `autocomp/search/run_search.py` with your settings.
-4. Run `python -m autocomp.search.run_search`.
+4. Run search.
 
 For example, a Trainium run might look like this:
 
