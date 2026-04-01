@@ -15,7 +15,7 @@ from autocomp.hw_config.trn_config import TrnHardwareConfig
 from autocomp.search.search import BeamSearchStrategy
 
 
-BUILT_AGENT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built" / "trn-nki1"
+BUILT_AGENT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built" / "trn1-nki1"
 
 
 @pytest.fixture

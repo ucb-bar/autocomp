@@ -38,7 +38,7 @@ For example, a Trainium run might look like this:
 ```python
 # autocomp/search/run_search.py
 backend_name = "trn"
-agent_name = "built:trn-nki1"
+agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
 prob_type = "trn-tutorial"
 prob_id = 2
@@ -61,7 +61,7 @@ Each hardware target requires two things: an **optimization agent** that knows h
 
 | Hardware target | Optimization agent(s) | Evaluation backend(s) |
 |---|---|---|
-| AWS Trainium | `built:trn-nki1` (Trainium 1) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
+| AWS Trainium | `built:trn1-nki1` (Trainium 1) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
 | Google TPU | `built:tpu-v6e` (TPU v6e) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
 | NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md)), `gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
