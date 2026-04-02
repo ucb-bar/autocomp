@@ -33,7 +33,7 @@ LARGE_NEG = -9.984e3  # Initial max value (within bf16 range, safe for fp32)
 
 
 @nki.jit
-def fp32_exp_attention(q, k, v, scale: float = 1.0):
+def test(q, k, v, scale: float = 1.0):
     """Flash attention with fp32 softmax (non-causal).
 
     Args:

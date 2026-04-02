@@ -19,7 +19,7 @@ TILE_M = 512  # moving free = J
 
 
 @nki.jit
-def trimul_gemm_nki(a_ki, b_kj):
+def test(a_ki, b_kj):
     """Single-channel GEMM: result[i,j] = sum_k a[k,i]^T * b[k,j]
 
     Args:

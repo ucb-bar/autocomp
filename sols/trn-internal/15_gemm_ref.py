@@ -30,7 +30,7 @@ TILE_N = 512  # nl.tile_size.gemm_moving_fmax — moving free dim
 
 
 @nki.jit
-def nki_matmul_kernel(a_t_hbm, b_hbm):
+def test(a_t_hbm, b_hbm):
     """Tiled GEMM: C[M,N] = A[M,K] @ B[K,N].
 
     Args:

@@ -19,7 +19,7 @@ P_MAX = 128
 
 
 @nki.jit
-def deltanet_recurrent_fwd(
+def test(
     query: nl.ndarray,  # (S, 128) float32
     key: nl.ndarray,  # (S, 128) float32
     value: nl.ndarray,  # (S, 128) float32
