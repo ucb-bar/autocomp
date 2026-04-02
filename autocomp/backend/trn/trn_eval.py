@@ -18,6 +18,179 @@ COMBINED_RESULTS_MARKER = "===COMBINED_RESULTS==="
 _NRT_HELPER_PATH = pathlib.Path(__file__).parent / "nrt_helper.py"
 
 
+def _test_is_nki_v1(test_code: str) -> bool:
+    """Detect if a test file uses NKI v1 (neuronxcc.nki / baremetal) style.
+
+    NKI v1 tests: ``import neuronxcc.nki as nki`` and pass numpy arrays.
+    NKI v2 tests: ``import nki`` and use torch/XLA tensors.
+    """
+    for line in test_code.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("import neuronxcc.nki") or stripped.startswith("from neuronxcc.nki"):
+            return True
+    return False
+
+
+def _ensure_platform_override():
+    """Auto-set NEURON_PLATFORM_TARGET_OVERRIDE from EC2 IMDS if not already set."""
+    if os.environ.get("NEURON_PLATFORM_TARGET_OVERRIDE"):
+        return
+    try:
+        import urllib.request
+        tok_req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "30"},
+        )
+        token = urllib.request.urlopen(tok_req, timeout=2).read().decode().strip()
+        req = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-type",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        instance_type = urllib.request.urlopen(req, timeout=2).read().decode().strip()
+        platform = instance_type.split(".")[0]
+        os.environ["NEURON_PLATFORM_TARGET_OVERRIDE"] = platform
+        logger.info(f"Auto-detected platform={platform} from instance={instance_type}")
+    except Exception:
+        logger.warning("Could not auto-detect NEURON_PLATFORM_TARGET_OVERRIDE from IMDS")
+
+
+_ensure_platform_override()
+
+
+# Template for the __main__ block injected into NKI v2 test scripts.
+# Placeholder __REF_FUNC__ is replaced at runtime.
+_NKI_V2_MAIN_TEMPLATE = '''
+if __name__ == "__main__":
+    import os
+    import time
+    import hashlib
+    import torch
+    import torch_xla
+    from torch_xla.core import xla_model as xm
+
+    import json as _json
+    from nki.compiler.backends.neuron.TraceKernel import TraceKernel
+    from nki._version import _version_identifier
+    _orig_specialize = TraceKernel.specialize_and_call
+    _trace_cache = {}
+
+    def _patched_specialize(self, boundargs, output_path_prefix=None):
+        import tempfile as _tf, inspect as _inspect
+        fn = getattr(self.func, "__name__", "kernel")
+        sk = "".join(str(a.shape) + "_" for a in boundargs.args if hasattr(a, "shape"))
+        try:
+            src = _inspect.getsource(self.func)
+        except (OSError, TypeError):
+            src = ""
+        cache_key = hashlib.md5(f"{fn}_{sk}_{src}".encode()).hexdigest()[:12]
+
+        if cache_key in _trace_cache:
+            cached = _trace_cache[cache_key]
+            self.klir_binary = cached["klir_binary"]
+            return cached["result"]
+
+        klir_dir = os.path.join(_tf.gettempdir(), "klir_binaries", f"{fn}_{cache_key}")
+        klir_file = os.path.join(klir_dir, f"{fn}.klir")
+        meta_file = os.path.join(klir_dir, f"{fn}_metadata.json")
+
+        if os.path.exists(klir_file) and os.path.exists(meta_file):
+            with open(meta_file, "r") as mf:
+                metadata = _json.load(mf)
+            inputs = metadata.get("inputs", [])
+            outputs = metadata.get("outputs", [])
+            shared = metadata.get("sharedConstants", [])
+            klir_binary = {
+                "binary": klir_file,
+                "input_names": [i["name"] for i in inputs] + [c["name"] for c in shared],
+                "output_names": [o["name"] for o in outputs],
+                "version_identifier": _version_identifier,
+            }
+            self.klir_binary = klir_binary
+            result = (0, klir_file, metadata)
+            _trace_cache[cache_key] = {"klir_binary": klir_binary, "result": result}
+            return result
+
+        result = _orig_specialize(self, boundargs, output_path_prefix=cache_key)
+        _, klir_path, metadata = result
+
+        os.makedirs(klir_dir, exist_ok=True)
+        with open(meta_file, "w") as mf:
+            _json.dump(metadata, mf)
+
+        _trace_cache[cache_key] = {"klir_binary": self.klir_binary, "result": result}
+        return result
+
+    TraceKernel.specialize_and_call = _patched_specialize
+
+    test_result = test_nki(__REF_FUNC__, test)
+    if not test_result:
+        print("Test failed")
+        exit(1)
+    else:
+        print("Test passed")
+
+    class _LatencyResult:
+        def __init__(self, times_us):
+            self._times = sorted(times_us)
+        def get_latency_percentile(self, pct):
+            idx = int(len(self._times) * pct / 100.0)
+            idx = min(idx, len(self._times) - 1)
+            return self._times[idx]
+
+    class _BenchmarkResult:
+        def __init__(self, times_us):
+            self.nc_latency = _LatencyResult(times_us)
+
+    class _BenchmarkWrapper:
+        def __init__(self, func, warmup, iters):
+            self._func = func
+            self._warmup = warmup
+            self._iters = iters
+            self.benchmark_result = None
+
+        def __call__(self, *args, **kwargs):
+            device = torch_xla.device()
+            for _w in range(max(self._warmup, 4)):
+                _out = self._func(*args, **kwargs)
+                xm.mark_step()
+            xm.wait_device_ops()
+
+            _num_iters = max(self._iters, 10)
+            times_us = []
+            for _i in range(_num_iters):
+                xm.wait_device_ops()
+                _t0 = time.perf_counter()
+                _out = self._func(*args, **kwargs)
+                xm.mark_step()
+                xm.wait_device_ops()
+                _t1 = time.perf_counter()
+                times_us.append((_t1 - _t0) * 1e6)
+
+            self.benchmark_result = _BenchmarkResult(times_us)
+            median_us = sorted(times_us)[len(times_us)//2]
+            p99_us = sorted(times_us)[int(len(times_us)*0.99)]
+            print(f"Latency: {median_us/1000.0:.3f} ms (median)")
+            print(f"Latency: {p99_us/1000.0:.3f} ms (P99)")
+
+    def _mock_benchmark(warmup=2, iters=10):
+        def _decorator(func):
+            return _BenchmarkWrapper(func, warmup, iters)
+        return _decorator
+
+    nki.benchmark = _mock_benchmark
+
+    try:
+        benchmark_nki(test)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print("Test failed")
+        print(f"Benchmark error: {e}", flush=True)
+        exit(1)
+'''
+
+
 class TrnEvalBackend(EvalBackend):
     def __init__(self, parallel: bool = True):
         self.parallel = parallel
@@ -26,13 +199,29 @@ class TrnEvalBackend(EvalBackend):
     #  Helpers                                                            #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _detect_num_cores() -> int:
+        """Return the number of NeuronCores visible on this instance."""
+        try:
+            out = subprocess.check_output(
+                ["neuron-ls", "--json-output"], text=True, timeout=5, stderr=subprocess.DEVNULL
+            )
+            data = json.loads(out)
+            return sum(d.get("nc_count", 0) for d in data)
+        except Exception:
+            pass
+        try:
+            return len([f for f in os.listdir("/dev") if f.startswith("neuron")])
+        except Exception:
+            return 1
+
     def _extract_latency(self, stdout: str) -> float:
         """Extract latency from stdout using pattern 'Latency: <latency> ms'"""
         for line in stdout.split("\n"):
             if "Latency:" in line and "ms" in line:
                 parts = line.split("Latency:")[1].split("ms")[0].strip()
                 try:
-                    return float(parts)
+                    return round(float(parts), 3)
                 except ValueError:
                     continue
         return None
@@ -123,12 +312,10 @@ class TrnEvalBackend(EvalBackend):
     ) -> str:
         """Generate a Python script that compiles a kernel to a NEFF.
 
-        If *is_ref* is True, compiles the reference kernel instead of an
-        implementation.  Strategy: wrap the @nki.jit function with
-        nki.baremetal(save_neff_name=...) and call test_nki(wrapped, wrapped)
-        to trigger compilation with the correct input shapes.  The NEFF is
-        saved to disk during compilation (before execution), so NeuronCore
-        contention errors during execution are harmless.
+        NKI v1: uses nki.baremetal(save_neff_name=...) to save the NEFF directly.
+        NKI v2: triggers compilation via @nki.jit with a deterministic cache
+                prefix, then discovers the cached NEFF path from Neuron runtime
+                logs and copies it to neff_dir.
         """
         preamble = test_code.split("# SUBSTITUTE HERE")[0]
         postamble_raw = (
@@ -155,6 +342,15 @@ if _target_func is None:
     sys.exit(0)
 """
 
+        # 2-phase compilation only used for NKI v1 (baremetal).
+        return self._compile_script_baremetal(
+            preamble, postamble, func_setup, neff_path, temp_dir,
+        )
+
+    def _compile_script_baremetal(
+        self, preamble, postamble, func_setup, neff_path, temp_dir,
+    ) -> str:
+        """NKI v1 compile script: use nki.baremetal to save NEFF directly."""
         return f"""\
 import sys, json, os, traceback
 sys.path.insert(0, {repr(str(temp_dir.resolve()))})
@@ -168,19 +364,13 @@ import neuronxcc.nki as nki
 
 _neff_path = {repr(neff_path)}
 {func_setup}
-# Wrap with nki.baremetal to save NEFF during compilation
 _raw = _target_func.func if hasattr(_target_func, "func") else _target_func
 _bm = nki.baremetal(_raw, save_neff_name=_neff_path)
 
-# Trigger compilation by calling test_nki with the baremetal wrapper as
-# both ref and impl.  The first call compiles and saves the NEFF;
-# execution may fail (NeuronCore contention) but the NEFF is already on disk.
 _error_msg = ""
 try:
     test_nki(_bm, _bm)
 except Exception:
-    # If the NEFF was saved, execution failed (e.g. NeuronCore contention)
-    # which is fine.  If not, compilation itself failed — capture the error.
     if not os.path.exists(_neff_path):
         _error_msg = traceback.format_exc()
 
@@ -259,10 +449,12 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         compiled = {}  # label -> bool
         compile_errors = {}  # label -> error_msg (only for failures)
         all_labels = ["ref"] + list(range(len(code_strs)))
+
         max_parallel = min(os.cpu_count() or 1, len(all_labels))
         with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             futures = {
-                executor.submit(run_compile, label): label for label in all_labels
+                executor.submit(run_compile, label): label
+                for label in all_labels
             }
             for future in as_completed(futures):
                 label, ok, error_msg = future.result()
@@ -295,9 +487,6 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         4. For each implementation, loads its NEFF, executes with the same
            inputs, and compares outputs for correctness.
         5. For passing implementations, benchmarks via nrt_execute loop.
-
-        Only one model is loaded at a time (sequential load -> execute ->
-        cleanup) to avoid NeuronCore contention.
         """
         ref_neff = str((neff_dir / "ref.neff").resolve())
         neff_paths = {}
@@ -312,35 +501,68 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
 
         return f"""\
 import sys, json, os, traceback
+import numpy as np
 sys.path.insert(0, {repr(str(temp_dir.resolve()))})
+from nrt_helper import NrtModel, nrt_close
 
-try:
-    import nki
-except ImportError:
-    import neuronxcc.nki as nki
+_ref_neff = {repr(ref_neff)}
+_neff_paths = {repr(neff_paths)}
+_compile_errors = {repr(impl_compile_errors)}
+_num_impls = {num_impls}
 
-# === Test preamble ===
-{preamble}
-# === Test postamble ===
-{postamble}
+# Load ref model and generate random inputs
+ref_model = NrtModel(_ref_neff)
+inputs = []
+for name, size, dtype, shape in ref_model._inputs_info:
+    inputs.append(np.random.randn(*shape).astype(dtype))
 
-_neff_path = {repr(neff_path)}
-{func_setup}
-# Try nki.baremetal if available (NKI 1 / older SDK), else skip to direct eval
-_error_msg = ""
-try:
-    _raw = _target_func.func if hasattr(_target_func, "func") else _target_func
-    _bm = nki.baremetal(_raw, save_neff_name=_neff_path)
+# Get reference outputs
+ref_out = ref_model(*inputs)
+if not isinstance(ref_out, tuple):
+    ref_out = (ref_out,)
+ref_model.cleanup()
+
+# Evaluate each implementation
+results = []
+for i in range(_num_impls):
+    if i in _compile_errors:
+        results.append({{"correct": False, "latency": None,
+                         "stdout": "", "stderr": _compile_errors[i]}})
+        continue
+
+    neff = _neff_paths.get(i)
+    if not neff or not os.path.exists(neff):
+        results.append({{"correct": False, "latency": None,
+                         "stdout": "", "stderr": "NEFF not found"}})
+        continue
+
     try:
-        test_nki(_bm, _bm)
-    except Exception:
-        if not os.path.exists(_neff_path):
-            _error_msg = traceback.format_exc()
-except (NotImplementedError, AttributeError):
-    # nki.baremetal not available (SDK 2.28+), mark as needing fallback
-    _error_msg = "nki.baremetal not supported, use fallback evaluation"
+        model = NrtModel(neff)
+        impl_out = model(*inputs)
+        if not isinstance(impl_out, tuple):
+            impl_out = (impl_out,)
 
-print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}))
+        correct = all(
+            np.allclose(
+                r.astype(np.float32), t.astype(np.float32),
+                atol=1e-2, rtol=1e-3,
+            )
+            for r, t in zip(ref_out, impl_out)
+        )
+
+        latency = None
+        if correct:
+            latency = round(model.benchmark(warmup=10, iters=100), 3)
+
+        model.cleanup()
+        results.append({{"correct": correct, "latency": latency,
+                         "stdout": "", "stderr": ""}})
+    except Exception as e:
+        results.append({{"correct": False, "latency": None,
+                         "stdout": "", "stderr": traceback.format_exc()}})
+
+nrt_close()
+print("{COMBINED_RESULTS_MARKER}" + json.dumps(results))
 """
 
     # ------------------------------------------------------------------ #
@@ -348,159 +570,40 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
     # ------------------------------------------------------------------ #
 
     def _evaluate_single(
-        self, test_code: str, code_str: str, temp_dir: pathlib.Path, idx: int
+        self, test_code: str, code_str: str, temp_dir: pathlib.Path, idx: int,
+        core_id: int = None,
     ) -> dict:
         """Evaluate a single implementation in its own subprocess (fallback).
 
-        Patches the test script's __main__ block to use torch-based timing
-        instead of nki.benchmark (which is unavailable in SDK 2.28+).
+        For NKI v2 tests, patches the __main__ block to use torch-based
+        timing instead of nki.benchmark. For NKI v1 tests, runs as-is.
         """
         test_code_i = test_code.replace("# SUBSTITUTE HERE", code_str)
+        ref_func_name = self._extract_ref_func_name(test_code)
 
-        # Replace the __main__ block with a torch-timing version that
-        # outputs "Latency: <ms> ms" to stdout.
-        #
-        # Key design for accurate NKI kernel timing on SDK 2.28+:
-        #
-        # Problem: nki.benchmark is unavailable (NotImplementedError).
-        # NKI Beta 2 re-traces the kernel Python AST on every invocation
-        # and writes KLR binaries to random temp directories. The random
-        # path gets embedded in the XLA HLO graph hash, so the Neuron
-        # compilation cache never matches — causing full recompilation
-        # (~1.3s) on every call.
-        #
-        # Solution (two-part):
-        # 1. Monkey-patch TraceKernel.specialize_and_call to use a
-        #    deterministic output_path_prefix based on kernel name +
-        #    input shapes. This makes the XLA graph hash stable, so
-        #    the Neuron compilation cache at /var/tmp/neuron-compile-cache/
-        #    can serve hits after the first call.
-        # 2. Monkey-patch nki.benchmark with a wrapper that uses
-        #    xm.mark_step() + xm.wait_device_ops() for accurate
-        #    wall-clock timing of cached kernel execution.
-        #
-        # After patching: first call ~1-10s (compile), subsequent calls
-        # ~68ms (NKI trace overhead) + kernel execution time.
-        #
-        # See: OpencodeDocs/steering/nki.md "Beta 2 Compilation Caching Issue"
-        if "if __name__" in test_code_i:
+        # NKI v1 tests work out of the box — their __main__ uses
+        # nki.benchmark from neuronxcc.nki which is functional.
+        is_v1 = _test_is_nki_v1(test_code)
+
+        # Only patch __main__ for NKI v2 tests that need torch-based timing.
+        if not is_v1 and "if __name__" in test_code_i:
             main_idx = test_code_i.index("if __name__")
-            test_code_i = (
-                test_code_i[:main_idx]
-                + """\
-if __name__ == "__main__":
-    import time
-    import hashlib
-    import torch
-    import torch_xla
-    from torch_xla.core import xla_model as xm
-
-    # ---- Fix NKI Beta 2 compilation caching ----
-    # Monkey-patch specialize_and_call to use deterministic KLR paths.
-    # Without this, every @nki.jit call recompiles (~1.3s) because the
-    # random temp directory makes every XLA graph hash unique.
-    from nki.compiler.backends.neuron.TraceKernel import TraceKernel
-    _orig_specialize = TraceKernel.specialize_and_call
-
-    def _patched_specialize(self, boundargs, output_path_prefix=None):
-        fn = getattr(self.func, "__name__", "kernel")
-        sk = "".join(str(a.shape) + "_" for a in boundargs.args if hasattr(a, "shape"))
-        prefix = hashlib.md5(f"{fn}_{sk}".encode()).hexdigest()[:12]
-        return _orig_specialize(self, boundargs, output_path_prefix=prefix)
-
-    TraceKernel.specialize_and_call = _patched_specialize
-
-    # Phase 1: Correctness check via test_nki (first calls compile)
-    test_result = test_nki(ref, test)
-    if not test_result:
-        print("Test failed")
-        exit(1)
-    else:
-        print("Test passed")
-
-    # Phase 2: Monkey-patch nki.benchmark, then call benchmark_nki(test)
-    # which creates the correct input tensors and calls the kernel.
-    # With the specialize_and_call patch above, the Neuron compilation
-    # cache now works — subsequent calls hit the cache (~68ms NKI trace
-    # overhead + actual kernel execution time).
-    class _LatencyResult:
-        def __init__(self, times_us):
-            self._times = sorted(times_us)
-        def get_latency_percentile(self, pct):
-            idx = int(len(self._times) * pct / 100.0)
-            idx = min(idx, len(self._times) - 1)
-            return self._times[idx]
-
-    class _BenchmarkResult:
-        def __init__(self, times_us):
-            self.nc_latency = _LatencyResult(times_us)
-
-    class _BenchmarkWrapper:
-        def __init__(self, func, warmup, iters):
-            self._func = func
-            self._warmup = warmup
-            self._iters = iters
-            self.benchmark_result = None
-
-        def __call__(self, *args, **kwargs):
-            device = torch_xla.device()
-            # Warmup: first call triggers compilation + cache save;
-            # subsequent warmup calls verify cache hits.
-            for _w in range(self._warmup + 3):
-                _out = self._func(*args, **kwargs)
-                xm.mark_step()
-            xm.wait_device_ops()
-
-            # Timed iterations with XLA synchronization.
-            # With the caching fix, each call is ~68ms NKI trace overhead
-            # + actual kernel execution (microseconds to milliseconds).
-            _num_iters = max(self._iters, 20)
-            times_us = []
-            for _i in range(_num_iters):
-                xm.wait_device_ops()
-                _t0 = time.perf_counter()
-                _out = self._func(*args, **kwargs)
-                xm.mark_step()
-                xm.wait_device_ops()
-                _t1 = time.perf_counter()
-                times_us.append((_t1 - _t0) * 1e6)  # microseconds
-
-            self.benchmark_result = _BenchmarkResult(times_us)
-            median_us = sorted(times_us)[len(times_us)//2]
-            p99_us = sorted(times_us)[int(len(times_us)*0.99)]
-            print(f"Latency: {median_us/1000.0:.3f} ms (median)")
-            print(f"Latency: {p99_us/1000.0:.3f} ms (P99)")
-
-    def _mock_benchmark(warmup=2, iters=10):
-        def _decorator(func):
-            return _BenchmarkWrapper(func, warmup, iters)
-        return _decorator
-
-    # Monkey-patch nki.benchmark
-    nki.benchmark = _mock_benchmark
-
-    try:
-        if 'benchmark_nki' in dir():
-            benchmark_nki(test)
-        else:
-            # No benchmark_nki function — fall back to test_nki-based timing
-            # This is less accurate but better than nothing
-            raise RuntimeError("No benchmark_nki function available")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"Latency: 1.000 ms (fallback)")
-        print(f"Benchmark error: {e}", flush=True)
-"""
+            _MAIN_TEMPLATE = _NKI_V2_MAIN_TEMPLATE.replace(
+                "__REF_FUNC__", ref_func_name
             )
+            test_code_i = test_code_i[:main_idx] + _MAIN_TEMPLATE
 
         with open(temp_dir / f"code_{idx}.py", "w") as f:
             f.write(test_code_i)
 
         cmd = ["python", str(temp_dir.resolve() / f"code_{idx}.py")]
+        env = None
+        if core_id is not None:
+            env = {**os.environ, "NEURON_RT_VISIBLE_CORES": str(core_id)}
         logger.info(f"Running command {' '.join(cmd)}")
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                               env=env)
         except subprocess.TimeoutExpired:
             logger.error(f"Code {idx} timed out after 600 seconds")
             return {
@@ -646,20 +749,36 @@ if __name__ == "__main__":
         test_code = test_file.read_text()
 
         results = None
-        # Combined evaluation (Phase 1 + Phase 2) requires nki.baremetal
-        # which is not available in SDK 2.28+. Skip directly to individual
-        # evaluation which uses monkey-patched nki.benchmark for timing.
-        # TODO: Re-enable when nki.baremetal support returns or when we
-        # implement a torch-based NEFF extraction alternative.
-        if False and self.parallel:
+        is_v1 = _test_is_nki_v1(test_code)
+
+        # NKI v1: 2-phase (parallel baremetal compile + libnrt benchmark)
+        if self.parallel and is_v1:
             results = self._try_combined_evaluation(test_code, code_strs, temp_dir)
         if results is not None:
             return results
 
-        if self.parallel:
-            logger.info(
-                "Using individual evaluation (combined evaluation disabled for SDK 2.28+)"
-            )
+        # NKI v2 (or v1 fallback): run _evaluate_single per implementation,
+        # parallelized across NeuronCores.
+        num_cores = self._detect_num_cores() if not is_v1 else 1
+        max_parallel = min(num_cores, len(code_strs)) if num_cores > 0 else 1
+
+        if max_parallel > 1:
+            logger.info(f"Evaluating {len(code_strs)} implementations in parallel "
+                        f"({max_parallel} cores)")
+            results = [None] * len(code_strs)
+            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+                futures = {}
+                for i, code_str in enumerate(code_strs):
+                    core_id = i % num_cores
+                    futures[executor.submit(
+                        self._evaluate_single, test_code, code_str,
+                        temp_dir, i, core_id
+                    )] = i
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    results[idx] = future.result()
+            return results
+
         results = []
         for i, code_str in enumerate(code_strs):
             results.append(self._evaluate_single(test_code, code_str, temp_dir, i))

@@ -425,9 +425,9 @@ def main():
                              "(default: 150000; ~37-50K tokens depending on content)")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
-    parser.add_argument("--rerun", metavar="COMPONENT",
+    parser.add_argument("--rerun", metavar="COMPONENT", nargs="+",
                         choices=["rules", "optimization_menu", "translate_menu", "isa", "architecture", "examples"],
-                        help="Re-run synthesis for a single component using an existing "
+                        help="Re-run synthesis for one or more components using an existing "
                              "built config dir (requires --inspect and --source-dir)")
     args = parser.parse_args()
 
@@ -445,19 +445,20 @@ def main():
         config_dir = Path(args.inspect)
         if not config_dir.is_absolute():
             config_dir = REPO_ROOT / config_dir
-        rerun_component(
-            component=args.rerun,
-            config_dir=config_dir,
-            model=args.model,
-            light_model=args.light_model,
-            agent_scope=args.agent_scope,
-            source_dir=args.source_dir,
-            source_files=args.source_files,
-            source_urls=args.source_urls,
-            max_depth=args.max_depth,
-            max_pages=args.max_pages,
-            context_budget=args.context_budget,
-        )
+        for component in args.rerun:
+            rerun_component(
+                component=component,
+                config_dir=config_dir,
+                model=args.model,
+                light_model=args.light_model,
+                agent_scope=args.agent_scope,
+                source_dir=args.source_dir,
+                source_files=args.source_files,
+                source_urls=args.source_urls,
+                max_depth=args.max_depth,
+                max_pages=args.max_pages,
+                context_budget=args.context_budget,
+            )
         return
 
     if args.inspect:

@@ -29,14 +29,14 @@ def main():
     # Target & environment
     # ------------------------------------------------------------------
     backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
-    agent_name = "built:trn1-nki1"   # "gemmini", "trn", "cuda", "built:<name>", or path
+    agent_name = "built:trn2-nki2"   # "gemmini", "trn", "cuda", "built:<name>", or path
     simulator = None                # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
     hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
 
-    prob_type = "trn-tutorial"      # see README.md or sols/ for available problems
+    prob_type = "trn-tutorial-nki2"      # see README.md or sols/ for available problems
     prob_id = 2
 
     # ------------------------------------------------------------------
@@ -45,8 +45,8 @@ def main():
     # Format: "provider::model" (openai, anthropic, together, aws, gcp, vllm)
     models = [
         "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "aws::zai.glm-4.7",
-        "aws::deepseek.v3.2",
+        "aws::zai.glm-5",
+        "aws::minimax.minimax-m2.5",
         "aws::moonshotai.kimi-k2.5",
     ]
     code_models = None  # None = same as planning models
