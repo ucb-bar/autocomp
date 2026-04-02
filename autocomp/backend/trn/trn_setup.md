@@ -48,7 +48,7 @@ Trainium has the following problem types (`prob_type` in `run_search.py`):
 | `trn-tutorial-nki2` | Tutorial NKI v2 kernels (same problems, NKI v2 API) |
 | `trn-advanced-nki1` | Advanced NKI v1 kernels from the nki-samples repo |
 | `trn-advanced-nki2` | Advanced NKI v2 kernels (same problems, NKI v2 API) |
-| `trn-internal` | Internal NKI kernels (DeltaNet, OpenFold3, FlashVSR, etc.) |
+| `trn-internal` | Internal NKI kernels (DeltaNet, OpenFold3, FlashVSR, etc.), NKI v2 |
 
 ### Adding a New Problem
 
