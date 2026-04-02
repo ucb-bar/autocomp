@@ -40,7 +40,7 @@ For example, a Trainium run might look like this:
 backend_name = "trn"
 agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
-prob_type = "trn-tutorial"
+prob_type = "trn-tutorial-nki1"
 prob_id = 2
 models = ["openai::gpt-5.2"]
 ```
@@ -61,10 +61,10 @@ Each hardware target requires two things: an **optimization agent** that knows h
 
 | Hardware target | Optimization agent(s) | Evaluation backend(s) |
 |---|---|---|
-| AWS Trainium | `built:trn1-nki1` (Trainium 1) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
+| AWS Trainium | `built:trn1-nki1` (Trainium 1, NKI v1)<br>`built:trn2-nki1` (Trainium 2, NKI v1)<br>`built:trn2-nki2` (Trainium 2, NKI v2) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
 | Google TPU | `built:tpu-v6e` (TPU v6e) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
-| NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md)), `gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
+| NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
@@ -202,7 +202,7 @@ The most important parameters are:
 
 **Benchmark**
 - `prob_type`: The problem type to use.
-  - For Trainium, `trn-tutorial` or `trn-advanced`.
+  - For Trainium, `trn-tutorial-nki1`, `trn-tutorial-nki2`, `trn-advanced-nki1`, or `trn-advanced-nki2`.
   - For TPU, `tpu`, `jaxbench-pallas`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.

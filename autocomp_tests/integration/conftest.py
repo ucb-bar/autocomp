@@ -32,4 +32,4 @@ def dummy_prob(tmp_path):
     test_file.write_text("# dummy test file")
     sol_file = tmp_path / "0_dummy.py"
     sol_file.write_text("def nki_kernel():\n    pass\n")
-    return Prob("trn-tutorial", 0, test_file=test_file, sol_file=sol_file)
+    return Prob("trn-tutorial-nki1", 0, test_file=test_file, sol_file=sol_file)
