@@ -1,0 +1,42 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Map contraction axis to partition dimension and parallel axis to free dimension to match hardware layout constraints
+- strategy: Tile partition dimension to exactly 128 elements to maximize parallel utilization of all memory partitions
+- strategy: Respect PSUM free dimension ≤512, stationary free ≤128, moving free ≤512 tile size limits
+- strategy: Reserve PSUM exclusively for matmul accumulation with `+=` pattern; evict results to SBUF promptly
+- strategy: Use `nisa.activation` with scale/bias to fold multiply-add and nonlinear function into a single ScalarE instruction
+- strategy: Use `nisa.activation_reduce` to combine element-wise operations with reductions in one instruction
+- strategy: Use `nisa.tensor_tensor_scan` for sequential recurrences to cache intermediate state on-chip and avoid per-step
+    memory traffic
+- strategy: Combine DMA-based datatype casting with load/store transfers instead of separate cast operations
+- strategy: Ensure DMA transfers use full 128 partitions and ≥4KiB per partition to saturate all 16 DMA engines
+- strategy: Use `affine_range` for loops without carried dependencies; use `sequential_range` for accumulation loops to control
+    compiler behavior
+- strategy: Assign larger free-axis operand as stationary in matmul to exploit fast LoadStationary; choose stationary/moving
+    mapping to match downstream consumer layout
+- strategy: Enable FP8 `double_row` mode for 2x matmul throughput; downcast FP32 inputs to BF16/FP16/TF32/cFP8 before matmul
+- strategy: Block M, N, and K dimensions simultaneously to maximize on-chip data reuse and arithmetic intensity
+- strategy: Initialize SBUF accumulation buffers with zero for cross-K-block partial sum accumulation outside PSUM
+- strategy: Declare temporary buffers inside innermost loop scope to prevent compiler-generated spill/reload traffic
+- strategy: Coalesce small result tiles into larger contiguous SBUF buffers before DMA store to HBM
+- strategy: Schedule VectorE on SBUF and ScalarE on PSUM concurrently; distribute work across Tensor/Vector/Scalar engines
+    for pipeline parallelism
+- strategy: Use implicit offset-based loading (implicit im2col) instead of materializing expanded data matrices
+- strategy: Keep SBUF free-dimension stride under 16 bytes and use large P×F tile sizes to amortize ~60-cycle tensor access
+    overhead
+- strategy: Use `nisa.nc_transpose` on-chip instead of `nl.load_transpose2d` when kernel is memory-bound to maintain high
+    DMA bandwidth

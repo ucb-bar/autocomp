@@ -1,0 +1,41 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- The partition dimension (first dimension) of any SBUF/PSUM tile must not exceed 128 (nl.tile_size.pmax); this is a hard
+  hardware constraint that cannot be violated.
+- Input tensors reside in HBM and must be explicitly copied to SBUF via DMA before computation; results must be explicitly
+  copied from SBUF/PSUM back to HBM for output. There is no implicit data movement.
+- nc_matmul reads stationary and moving inputs from SBUF and writes output to PSUM (always FP32 on NeuronCore-v3). The contraction
+  dimension must be along the partition dimension. The operation computes stationary.T @ moving, not stationary @ moving.
+- PSUM data cannot be copied directly to HBM; it must first be copied to SBUF (e.g., via tensor_copy), then from SBUF to HBM
+  (via dma_copy).
+- Tensors in SBUF/PSUM are 2D memories (128 partitions × free dimension); the first dimension of any tile always maps to the
+  partition dimension, and all remaining dimensions are laid out in the free dimension.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- 'nc_matmul tile limits: stationary free dim ≤ 128, moving free dim ≤ 512, partition dim (contraction) ≤ 128 for both inputs.
+  PSUM free dimension must not exceed 512 (psum_fmax).'
+- affine_range must only be used when there are no loop-carried dependencies (associative reductions like matmul accumulation
+  into PSUM are NOT loop-carried dependencies). Use sequential_range when true loop-carried dependencies exist.
+- SBUF capacity is 28 MiB total (128 partitions × 224 KiB each); all live tiles must fit within this budget. PSUM is 2 MiB
+  (128 partitions × 8 banks × 512 FP32 elements).
+- When blocking the K (contraction) dimension across multiple matmul calls, partial PSUM results from different K blocks must
+  be explicitly accumulated into an SBUF buffer, since each inner-loop matmul overwrites/accumulates within a single PSUM
+  allocation.
+- Output tensors returned from an @nki.jit kernel must be allocated with buffer=nl.shared_hbm and have their data copied from
+  SBUF to HBM before being returned.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- 'tensor_tensor: the two input tiles cannot both reside in PSUM; at least one must be in SBUF. For tensor_scalar: operand0
+  must be a scalar or shape [N,1] vector; operand1 must be a tile with the same shape as data. When using arithmetic operators,
+  operand0/operand1 must be float32.'
+- 'For tensor_reduce: the partition axis (axis 0) cannot be a reduction axis; reduction axes must be free axes only. The axis
+  parameter must be consecutive starting from axis 1 (e.g., [1], [1,2]).'
+- PSUM tensor allocation free-dimension offset must be a multiple of the PSUM bank size (2048 elements). Memory allocated
+  via nl.ndarray on SBUF/PSUM is uninitialized; accumulation buffers must be explicitly zeroed (e.g., nl.zeros or memset).
+- Sub-kernels called from a top-level @nki.jit kernel must NOT have the @nki.jit decorator. All nki.isa instructions require
+  an explicit dst parameter. GpSimd Engine cannot access PSUM.
+- 'When using tensor_scalar on Scalar Engine (trn2/NeuronCore-v3), only these op combinations are supported: op0=nl.multiply
+  with op1=nl.add, op0=nl.multiply with op1=None, or op0=nl.add with op1=None. Both op0 and op1 must be the same type (both
+  arithmetic or both bitvec).'

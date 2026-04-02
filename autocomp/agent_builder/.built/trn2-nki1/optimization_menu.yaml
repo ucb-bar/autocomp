@@ -1,0 +1,38 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Tile partition dimension to exactly 128 elements to maximize all parallel compute lanes
+- strategy: Map contraction axis to partition dimension to satisfy TensorE layout constraints without runtime transpositions
+- strategy: Supply pre-transposed operands with transpose flags to eliminate extra transpose instructions
+- strategy: Use `nisa.nc_matmul` instead of `nl.matmul` when inputs already meet layout constraints to avoid implicit shuffling
+- strategy: Accumulate partial matmul results directly in PSUM via in-place accumulation rather than storing/reloading intermediates
+- strategy: Use `nisa.activation` to fuse multiply-add with nonlinear function (e.g., exp) into a single ScalarE instruction
+- strategy: Downcast FP32 inputs to BF16/FP16 before TensorE matmul for ~4x throughput gain with FP32 accumulation
+- strategy: Use free-dimension advanced indexing with `nl.arange` for data reorganization instead of explicit data shuffling
+- strategy: Pack multiple small-partition operations into one full-width 128-partition instruction (partition vectorization)
+- strategy: Declare temporary buffers inside innermost loop scope to reduce on-chip memory spill traffic
+- strategy: Use `affine_range` instead of `sequential_range` for loops without carried dependencies to enable compiler parallelization
+- strategy: "Maximize DMA transfer sizes (\u226532 KiB) by widening tile free dimensions to amortize per-transfer overhead"
+- strategy: Use masking on load/store/compute for non-aligned dimensions instead of explicit padding or boundary code paths
+- strategy: Assign stationary vs moving TensorE operands based on downstream consumer layout to avoid intermediate transposes
+- strategy: Use background LoadStationary to overlap next tile loading with current MultiplyMoving computation
+- strategy: Block free dimensions to increase tile reuse and raise arithmetic intensity above roofline threshold
+- strategy: Use `nisa.activation_reduce` to fuse nonlinear evaluation with reduction in a single ScalarE pass
+- strategy: Replace DMA transpose (`load_transpose2d`) with regular load plus TensorE `nc_transpose` when DMA is the bottleneck
+- strategy: Coalesce small result tiles into larger contiguous tiles before storing to HBM for better DMA efficiency
+- strategy: Use `nl.shared_hbm` output allocation with SPMD grid decomposition to parallelize independent tiles across cores
+- strategy: Enable FP8 `double_row` mode for 2x matmul throughput when input precision allows
+- strategy: Schedule VectorE on SBUF and ScalarE on PSUM concurrently to exploit pipeline parallelism across compute engines
