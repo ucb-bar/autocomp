@@ -168,6 +168,10 @@ cython_debug/
 
 .sources/
 
+# Neuron compiler artifacts
+PostSPMDPassesExecutionDuration.txt
+log-neuron-cc.txt
+
 # Runtime artifacts
 output/
 wandb/

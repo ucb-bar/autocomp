@@ -40,7 +40,7 @@ For example, a Trainium run might look like this:
 backend_name = "trn"
 agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
-prob_type = "trn-tutorial"
+prob_type = "trn-tutorial-nki1"
 prob_id = 2
 models = ["openai::gpt-5.2"]
 ```
@@ -202,7 +202,7 @@ The most important parameters are:
 
 **Benchmark**
 - `prob_type`: The problem type to use.
-  - For Trainium, `trn-tutorial` or `trn-advanced`.
+  - For Trainium, `trn-tutorial-nki1`, `trn-tutorial-nki2`, `trn-advanced-nki1`, or `trn-advanced-nki2`.
   - For TPU, `tpu`, `jaxbench-pallas`, `jaxbench-real`, `jaxbench-priority`, `jaxbench-tokamax`, or `jaxkernelbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
