@@ -33,7 +33,7 @@ NKI (Neuron Kernel Interface) has two API versions. The evaluation backend auto-
 | **Import** | `import neuronxcc.nki as nki` | `import nki` |
 | **Package** | Bundled in `neuronxcc` (Neuron SDK) | Standalone `nki` package |
 | **Execution** | Baremetal / numpy arrays | PyTorch/XLA tensors (`torch_xla`) |
-| **Agents** | `built:trn1-nki1` (Trn1), `built:trn2-nki1` (Trn2) | `built:trn2-nki2` (Trn2) |
+| **Agents** | `built:trn1-nki1` (Trn1)<br>`built:trn2-nki1` (Trn2) | `built:trn2-nki2` (Trn2) |
 | **Problem suffixes** | `trn-tutorial-nki1`, `trn-advanced-nki1` | `trn-tutorial-nki2`, `trn-advanced-nki2` |
 
 The key difference for Autocomp evaluation is that NKI v1 (baremetal) supports decoupled compile-then-execute: compilation runs in parallel on CPU, then candidates execute sequentially on-device. NKI v2 runs through PyTorch/XLA, where compilation and execution are coupled — candidates run in parallel across NeuronCores but each includes both compilation and execution overhead.
