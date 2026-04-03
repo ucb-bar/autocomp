@@ -469,15 +469,11 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
     #  Phase 2: Sequential correctness + benchmark via libnrt            #
     # ------------------------------------------------------------------ #
 
-    def _generate_phase2_script(
-        self,
-        test_code: str,
-        num_impls: int,
-        temp_dir: pathlib.Path,
-        neff_dir: pathlib.Path,
-        compiled: dict,
-        compile_errors: dict,
-    ) -> str:
+    def _generate_phase2_script(self, test_code: str, num_impls: int,
+                                temp_dir: pathlib.Path,
+                                neff_dir: pathlib.Path,
+                                compiled: dict,
+                                compile_errors: dict) -> str:
         """Generate Phase 2 script using *only* libnrt (no NKI).
 
         The script:
@@ -487,83 +483,112 @@ print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}
         4. For each implementation, loads its NEFF, executes with the same
            inputs, and compares outputs for correctness.
         5. For passing implementations, benchmarks via nrt_execute loop.
+
+        Only one model is loaded at a time (sequential load -> execute ->
+        cleanup) to avoid NeuronCore contention.
         """
         ref_neff = str((neff_dir / "ref.neff").resolve())
         neff_paths = {}
         impl_compile_errors = {}
         for i in range(num_impls):
             if compiled.get(i, False):
-                neff_paths[i] = str((neff_dir / f"impl_{i}.neff").resolve())
+                neff_paths[i] = str(
+                    (neff_dir / f"impl_{i}.neff").resolve())
             else:
                 impl_compile_errors[i] = compile_errors.get(
-                    i, "NEFF compilation failed in Phase 1"
-                )
+                    i, "NEFF compilation failed in Phase 1")
 
-        return f"""\
+        return f'''\
 import sys, json, os, traceback
 import numpy as np
 sys.path.insert(0, {repr(str(temp_dir.resolve()))})
-from nrt_helper import NrtModel, nrt_close
+
+from nrt_helper import NrtModel, nrt_init, nrt_close
 
 _ref_neff = {repr(ref_neff)}
 _neff_paths = {repr(neff_paths)}
 _compile_errors = {repr(impl_compile_errors)}
 _num_impls = {num_impls}
+_all_results = [None] * _num_impls
+_NUM_CORRECTNESS_ROUNDS = 3
 
-# Load ref model and generate random inputs
-ref_model = NrtModel(_ref_neff)
-inputs = []
-for name, size, dtype, shape in ref_model._inputs_info:
-    inputs.append(np.random.randn(*shape).astype(dtype))
+nrt_init()
 
-# Get reference outputs
-ref_out = ref_model(*inputs)
-if not isinstance(ref_out, tuple):
-    ref_out = (ref_out,)
-ref_model.cleanup()
+# --- Step 1: execute ref NEFF to get reference outputs ---
+_ref_model = NrtModel(_ref_neff)
 
-# Evaluate each implementation
-results = []
-for i in range(_num_impls):
-    if i in _compile_errors:
-        results.append({{"correct": False, "latency": None,
-                         "stdout": "", "stderr": _compile_errors[i]}})
+# Generate random inputs from the NEFF tensor metadata (shape + dtype)
+_ref_outputs_per_round = []
+_inputs_per_round = []
+for _round in range(_NUM_CORRECTNESS_ROUNDS):
+    _inputs = []
+    for _name, _size, _dtype, _shape in _ref_model._inputs_info:
+        _inputs.append(np.random.rand(*_shape).astype(_dtype))
+    _ref_out = _ref_model(*_inputs)
+    _inputs_per_round.append(_inputs)
+    _ref_outputs_per_round.append(_ref_out)
+
+_ref_model.cleanup()
+
+# --- Step 2: evaluate each implementation ---
+for _idx in range(_num_impls):
+    _result = {{"correct": False, "latency": None, "stdout": "", "stderr": ""}}
+
+    if _idx not in _neff_paths:
+        _result["stderr"] = _compile_errors.get(_idx, "NEFF compilation failed in Phase 1")
+        _all_results[_idx] = _result
         continue
 
-    neff = _neff_paths.get(i)
-    if not neff or not os.path.exists(neff):
-        results.append({{"correct": False, "latency": None,
-                         "stdout": "", "stderr": "NEFF not found"}})
-        continue
-
+    _impl_model = None
     try:
-        model = NrtModel(neff)
-        impl_out = model(*inputs)
-        if not isinstance(impl_out, tuple):
-            impl_out = (impl_out,)
+        _impl_model = NrtModel(_neff_paths[_idx])
 
-        correct = all(
-            np.allclose(
-                r.astype(np.float32), t.astype(np.float32),
-                atol=1e-2, rtol=1e-3,
-            )
-            for r, t in zip(ref_out, impl_out)
-        )
+        # Correctness: run with same inputs, compare outputs
+        _passed = True
+        for _round in range(_NUM_CORRECTNESS_ROUNDS):
+            _impl_out = _impl_model(*_inputs_per_round[_round])
+            _ref_out = _ref_outputs_per_round[_round]
 
-        latency = None
-        if correct:
-            latency = round(model.benchmark(warmup=10, iters=100), 3)
+            # Normalise to list of arrays
+            _ro = [_ref_out] if isinstance(_ref_out, np.ndarray) else list(_ref_out)
+            _co = [_impl_out] if isinstance(_impl_out, np.ndarray) else list(_impl_out)
 
-        model.cleanup()
-        results.append({{"correct": correct, "latency": latency,
-                         "stdout": "", "stderr": ""}})
-    except Exception as e:
-        results.append({{"correct": False, "latency": None,
-                         "stdout": "", "stderr": traceback.format_exc()}})
+            for _r, _c in zip(_ro, _co):
+                if not np.allclose(
+                    _r.astype(np.float32), _c.astype(np.float32),
+                    atol=1e-3, rtol=1e-3,
+                ):
+                    _passed = False
+                    break
+            if not _passed:
+                break
+
+        if not _passed:
+            _result["stderr"] = "Test failed: output mismatch"
+            _all_results[_idx] = _result
+            continue
+
+        # Benchmark via nrt_execute loop
+        _latency = _impl_model.benchmark(warmup=10, iters=100)
+
+        _result["correct"] = True
+        _result["latency"] = round(_latency, 3)
+        _result["stdout"] = "Latency: {{:.3f}} ms (P99)\\n".format(_latency)
+
+    except Exception:
+        _result["stderr"] = traceback.format_exc()
+    finally:
+        if _impl_model is not None:
+            try:
+                _impl_model.cleanup()
+            except Exception:
+                pass
+
+    _all_results[_idx] = _result
 
 nrt_close()
-print("{COMBINED_RESULTS_MARKER}" + json.dumps(results))
-"""
+print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
+'''
 
     # ------------------------------------------------------------------ #
     #  Fallback: single-implementation evaluation                         #
