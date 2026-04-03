@@ -48,10 +48,11 @@ async function sendSettings(
 ) {
   const settings = getStoredSettings(context);
   const hasKey = !!(await getApiKey(context, settings.provider));
-  const lastDir = context.globalState.get<string>(LAST_DIR_KEY) ?? "";
+  const hasAwsSecretKey = !!(await context.secrets.get("autocomp.awsSecretKey"));
+  const lastDir = context.workspaceState.get<string>(LAST_DIR_KEY) ?? "";
   webview.postMessage({
     type: "settings",
-    data: { ...settings, hasApiKey: hasKey, outputDir: lastDir },
+    data: { ...settings, hasApiKey: hasKey, hasAwsSecretKey, outputDir: lastDir },
   });
 }
 
@@ -106,7 +107,7 @@ function openPanel(context: vscode.ExtensionContext) {
         });
         if (uris && uris.length > 0) {
           const dir = uris[0].fsPath;
-          await context.globalState.update(LAST_DIR_KEY, dir);
+          await context.workspaceState.update(LAST_DIR_KEY, dir);
           panel.webview.postMessage({ type: "dirSelected", dir });
         }
       } else if (msg.type === "ingestDir") {
@@ -116,7 +117,7 @@ function openPanel(context: vscode.ExtensionContext) {
           panel.webview.postMessage({ type: "ingestError", error: "Directory not found" });
           return;
         }
-        await context.globalState.update(LAST_DIR_KEY, outputDir);
+        await context.workspaceState.update(LAST_DIR_KEY, outputDir);
         dataDir = path.join(outputDir, ".visualizer-data");
         fs.mkdirSync(dataDir, { recursive: true });
 
@@ -188,20 +189,27 @@ function openPanel(context: vscode.ExtensionContext) {
       } else if (msg.type === "getSettings") {
         await sendSettings(context, panel.webview);
       } else if (msg.type === "saveSettings") {
-        const { provider, model, apiKey, awsRegion } = msg.data as {
+        const { provider, model, apiKey, awsRegion, awsSecretKey } = msg.data as {
           provider: Provider;
           model: string;
           apiKey?: string;
           awsRegion?: string;
+          awsSecretKey?: string;
         };
         await context.globalState.update(SETTINGS_KEY, { provider, model, awsRegion });
         if (apiKey) {
           await context.secrets.store(`autocomp.apiKey.${provider}`, apiKey);
         }
+        if (awsSecretKey) {
+          await context.secrets.store("autocomp.awsSecretKey", awsSecretKey);
+        }
         await sendSettings(context, panel.webview);
       } else if (msg.type === "clearKey") {
         const provider = msg.provider as Provider;
         await context.secrets.delete(`autocomp.apiKey.${provider}`);
+        if (provider === "bedrock") {
+          await context.secrets.delete("autocomp.awsSecretKey");
+        }
         await sendSettings(context, panel.webview);
       }
     },
@@ -253,6 +261,9 @@ async function handleSummarize(
     model: settings.model,
     apiKey: apiKey ?? "",
     awsRegion: settings.awsRegion,
+    awsSecretKey: settings.provider === "bedrock"
+      ? (await context.secrets.get("autocomp.awsSecretKey")) ?? undefined
+      : undefined,
   };
 
   const results = await vscode.window.withProgress(

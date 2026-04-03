@@ -27,6 +27,7 @@ interface SettingsData {
   provider: Provider;
   model: string;
   hasApiKey: boolean;
+  hasAwsSecretKey?: boolean;
   awsRegion?: string;
   outputDir?: string;
 }
@@ -47,6 +48,7 @@ function SettingsPage({
   const [provider, setProvider] = useState<Provider>(settings?.provider ?? "openai");
   const [model, setModel] = useState(settings?.model ?? "");
   const [apiKey, setApiKey] = useState("");
+  const [awsSecretKey, setAwsSecretKey] = useState("");
   const [awsRegion, setAwsRegion] = useState(settings?.awsRegion ?? "us-east-1");
   const [outputDir, setOutputDir] = useState(settings?.outputDir ?? "");
   const [saved, setSaved] = useState(false);
@@ -71,9 +73,11 @@ function SettingsPage({
         model: model || provInfo.placeholder,
         apiKey: apiKey || undefined,
         awsRegion: isBedrock ? (awsRegion || "us-east-1") : undefined,
+        awsSecretKey: isBedrock ? (awsSecretKey || undefined) : undefined,
       },
     });
     setApiKey("");
+    setAwsSecretKey("");
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -90,7 +94,10 @@ function SettingsPage({
         <p className="text-stone-400 text-sm mb-8">Configure output directory and summarization settings.</p>
 
         <div className="bg-white border border-stone-200 rounded-lg p-5 mb-5">
-          <h2 className="text-sm font-medium text-stone-700 mb-3">Output Directory</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-stone-700">Output Directory</h2>
+            <span className="text-[10px] text-stone-400 uppercase tracking-wide">this workspace</span>
+          </div>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -122,7 +129,10 @@ function SettingsPage({
         </div>
 
         <div className="bg-white border border-stone-200 rounded-lg p-5 space-y-5">
-          <h2 className="text-sm font-medium text-stone-700 mb-1">Plan Summarization</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-stone-700">Plan Summarization</h2>
+            <span className="text-[10px] text-stone-400 uppercase tracking-wide">all workspaces</span>
+          </div>
 
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-2">Provider</label>
@@ -169,34 +179,51 @@ function SettingsPage({
 
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-1">
-              {isBedrock ? "API Key (optional)" : "API Key"}
+              {isBedrock ? "Access Key ID (optional)" : "API Key"}
             </label>
             <div className="flex items-center gap-2">
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={settings?.hasApiKey ? "••••••• (saved)" : "sk-..."}
+                placeholder={settings?.hasApiKey ? "••••••• (saved)" : isBedrock ? "AKIA..." : "sk-..."}
                 className="flex-1 border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
               />
               {settings?.hasApiKey && (
                 <span className="text-emerald-600 text-[10px] font-semibold uppercase tracking-wide">saved</span>
               )}
             </div>
-            <p className="text-[11px] text-stone-400 mt-1">
-              {isBedrock
-                ? "Leave blank to use EC2 instance profile / environment credentials."
-                : "Stored securely in VS Code SecretStorage."}
-            </p>
+            {!isBedrock && (
+              <p className="text-[11px] text-stone-400 mt-1">Stored securely in VS Code SecretStorage.</p>
+            )}
             {settings?.hasApiKey && (
               <button
                 onClick={() => vscode.postMessage({ type: "clearKey", provider })}
                 className="text-[11px] text-red-500 hover:text-red-600 underline mt-1"
               >
-                Remove saved key
+                Remove saved {isBedrock ? "credentials" : "key"}
               </button>
             )}
           </div>
+
+          {isBedrock && (
+            <div>
+              <label className="block text-xs font-medium text-stone-500 mb-1">Secret Access Key (optional)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  value={awsSecretKey}
+                  onChange={(e) => setAwsSecretKey(e.target.value)}
+                  placeholder={settings?.hasAwsSecretKey ? "••••••• (saved)" : ""}
+                  className="flex-1 border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
+                />
+                {settings?.hasAwsSecretKey && (
+                  <span className="text-emerald-600 text-[10px] font-semibold uppercase tracking-wide">saved</span>
+                )}
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1">Leave both blank to use EC2 instance profile / environment credentials.</p>
+            </div>
+          )}
 
           <div className="flex items-center gap-3 pt-1">
             <button

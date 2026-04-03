@@ -13,6 +13,8 @@ export interface SummarizeConfig {
   apiKey: string;
   /** AWS region for Bedrock (defaults to us-east-1) */
   awsRegion?: string;
+  /** AWS secret access key for Bedrock (optional; uses default credential chain if omitted) */
+  awsSecretKey?: string;
 }
 
 const SYSTEM_PROMPT = `You are a concise technical summarizer. Given an optimization plan for a code transformation, produce a 1-2 sentence summary that captures the key strategy. Focus on what the plan does, not how it was generated. Be specific about the optimization technique. Do not use filler phrases.`;
@@ -54,9 +56,16 @@ async function callBedrock(
   config: SummarizeConfig,
   userPrompt: string,
 ): Promise<string> {
-  const client = new BedrockRuntimeClient({
+  const clientOpts: Record<string, unknown> = {
     region: config.awsRegion ?? "us-east-1",
-  });
+  };
+  if (config.apiKey && config.awsSecretKey) {
+    clientOpts.credentials = {
+      accessKeyId: config.apiKey,
+      secretAccessKey: config.awsSecretKey,
+    };
+  }
+  const client = new BedrockRuntimeClient(clientOpts);
   const body = JSON.stringify({
     anthropic_version: "bedrock-2023-05-31",
     system: SYSTEM_PROMPT,
