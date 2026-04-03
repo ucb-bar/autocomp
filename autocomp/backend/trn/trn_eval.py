@@ -55,9 +55,6 @@ def _ensure_platform_override():
         logger.warning("Could not auto-detect NEURON_PLATFORM_TARGET_OVERRIDE from IMDS")
 
 
-_ensure_platform_override()
-
-
 # Template for the __main__ block injected into NKI v2 test scripts.
 # Placeholder __REF_FUNC__ is replaced at runtime.
 _NKI_V2_MAIN_TEMPLATE = '''
@@ -193,6 +190,7 @@ if __name__ == "__main__":
 
 class TrnEvalBackend(EvalBackend):
     def __init__(self, parallel: bool = True):
+        _ensure_platform_override()
         self.parallel = parallel
 
     # ------------------------------------------------------------------ #
