@@ -1,11 +1,13 @@
 import pathlib
 import random
 import json
+import time
 from pathlib import Path
 
 import wandb
 
 from autocomp.common import logger, SOLS_DIR, REPO_ROOT
+from autocomp.common.llm_utils import aggregate_usage
 from autocomp.search.code_repo import CodeCandidate, CodeRepository
 from autocomp.search.prob import Prob
 from autocomp.agents.llm_ensemble import LLMEnsemble
@@ -933,7 +935,11 @@ class BeamSearchStrategy(SearchStrategy):
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
         losses = []
+        all_iteration_metrics = []
+        run_t0 = time.perf_counter()
         for i in range(1, iterations + 1):
+            iter_t0 = time.perf_counter()
+            iter_metrics = {}
             cur_word = "translation" if i <= self.translate_iters else "optimization"
             logger.info(f"Iteration {i} of {cur_word}:")
 
@@ -984,6 +990,10 @@ class BeamSearchStrategy(SearchStrategy):
                 i <= self.start_exhaustive_iters
             )  # or if we are in the first start_exhaustive_iters iterations
             translate = i <= self.translate_iters
+            self.agent.reset_usage()
+            if self.code_agent is not self.agent:
+                self.code_agent.reset_usage()
+            plan_t0 = time.perf_counter()
             plan_only_candidates = self.propose_optimizations_iter(
                 current_candidates,
                 save_dir,
@@ -992,6 +1002,8 @@ class BeamSearchStrategy(SearchStrategy):
                 exhaustive=exhaustive,
                 translate=translate,
             )
+            plan_duration = round(time.perf_counter() - plan_t0, 3)
+            iter_metrics["plan_duration_s"] = plan_duration
             logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
 
             # Step 2: Generate code candidates for each optimization plan
@@ -1001,6 +1013,7 @@ class BeamSearchStrategy(SearchStrategy):
             for cand_idx, cand in enumerate(plan_only_candidates):
                 parent_idx = current_candidates.index(cand.parent)
                 save_strs.append(f"{parent_idx}_{cand_idx}")
+            code_t0 = time.perf_counter()
             if self.use_edits:
                 impl_candidates = self.code_agent.implement_code_edits_parallel(
                     plan_only_candidates,
@@ -1020,6 +1033,8 @@ class BeamSearchStrategy(SearchStrategy):
                     prob=self.prob,
                 )
             logger.info(f"Generated {len(impl_candidates)} implementations.")
+            code_duration = round(time.perf_counter() - code_t0, 3)
+            iter_metrics["code_duration_s"] = code_duration
 
             if (
                 len(current_candidates) > 1
@@ -1040,9 +1055,15 @@ class BeamSearchStrategy(SearchStrategy):
             # Step 3: Evaluate the generated implementations
             save_dir = self.output_dir / f"eval-results-iter-{i}"
             save_dir.mkdir(parents=True, exist_ok=True)
+            eval_t0 = time.perf_counter()
             evaluated_code_candidates = self.evaluate_candidates(
                 impl_candidates, metric=self.metric, cur_iter=i, save_dir=save_dir
             )
+            eval_duration = round(time.perf_counter() - eval_t0, 3)
+            iter_metrics["evaluation"] = {
+                "duration_s": eval_duration,
+                "num_candidates": len(impl_candidates),
+            }
             logger.info(f"Evaluated {len(evaluated_code_candidates)} implementations.")
 
             # Step 3.5: Reimplement failed implementations
@@ -1143,6 +1164,32 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
+
+            # Save per-iteration metrics
+            try:
+                all_usage = self.agent.collect_usage()
+                if self.code_agent is not self.agent:
+                    all_usage.extend(self.code_agent.collect_usage())
+                usage_by_phase = aggregate_usage(all_usage)
+                for phase_name, model_data in usage_by_phase.items():
+                    iter_metrics[phase_name] = model_data
+            except Exception as e:
+                logger.warning("Failed to collect usage metrics: %s", e)
+            iter_metrics["iteration"] = i
+            iter_metrics["iteration_total_s"] = round(time.perf_counter() - iter_t0, 3)
+            try:
+                metrics_path = self.output_dir / f"metrics-iter-{i}.json"
+                if metrics_path.exists():
+                    with open(metrics_path, "r") as f:
+                        prev = json.load(f)
+                    for k, v in prev.items():
+                        iter_metrics.setdefault(k, v)
+                with open(metrics_path, "w") as f:
+                    json.dump(iter_metrics, f, indent=2)
+                logger.info("Saved iteration %d metrics to %s", i, metrics_path)
+            except Exception as e:
+                logger.warning("Failed to save iteration metrics: %s", e)
+            all_iteration_metrics.append(iter_metrics)
         else:
             last_iter = len(self.repository.candidates_per_iteration) - 1
             last_iter_cands = self.repository.get_candidates(last_iter)
@@ -1153,3 +1200,34 @@ class BeamSearchStrategy(SearchStrategy):
                     }
                 }
             )
+
+        # Save run-level aggregate metrics
+        run_total_s = round(time.perf_counter() - run_t0, 3)
+        run_metrics = {
+            "run_total_s": run_total_s,
+            "iterations": all_iteration_metrics,
+        }
+        try:
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_llm_duration = 0.0
+            total_eval_duration = 0.0
+            for im in all_iteration_metrics:
+                for phase in ("plan_generation", "code_generation", "context_selection", "menu_generation"):
+                    for model_data in im.get(phase, {}).values():
+                        total_input_tokens += model_data.get("input_tokens", 0)
+                        total_output_tokens += model_data.get("output_tokens", 0)
+                        total_llm_duration += model_data.get("duration_s", 0)
+                total_eval_duration += im.get("evaluation", {}).get("duration_s", 0)
+            run_metrics["total_input_tokens"] = total_input_tokens
+            run_metrics["total_output_tokens"] = total_output_tokens
+            run_metrics["total_llm_duration_s"] = round(total_llm_duration, 3)
+            run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
+        except Exception as e:
+            logger.warning("Failed to aggregate run metrics: %s", e)
+        try:
+            with open(self.output_dir / "run_metrics.json", "w") as f:
+                json.dump(run_metrics, f, indent=2)
+            logger.info("Saved run metrics to %s", self.output_dir / "run_metrics.json")
+        except Exception as e:
+            logger.warning("Failed to save run metrics: %s", e)

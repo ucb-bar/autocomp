@@ -3,6 +3,8 @@ import json
 import asyncio
 import random
 import copy
+import time
+import contextvars
 
 import boto3
 from openai import OpenAI, AsyncOpenAI
@@ -13,6 +15,9 @@ from anthropic import AsyncAnthropic
 from together import Together, AsyncTogether
 
 from autocomp.common import logger
+
+# Context variable for tagging LLM calls by phase (e.g. "plan_generation")
+llm_phase: contextvars.ContextVar[str] = contextvars.ContextVar("llm_phase", default="unknown")
 
 # Try to import keys from keys.py, use as fallback if env vars not set
 try:
@@ -428,6 +433,55 @@ def _messages_for_bedrock(messages: list[dict]) -> tuple[list[dict] | None, list
     return system, out
 
 
+def _extract_usage(provider: str, resp) -> dict:
+    """Extract token usage from a provider-specific response object.
+
+    Always returns a valid dict with at least input_tokens and output_tokens,
+    even if the response object has an unexpected shape (e.g. SDK version
+    mismatch).
+    """
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    try:
+        if provider == "openai":
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or getattr(resp.usage, "prompt_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or getattr(resp.usage, "completion_tokens", 0) or 0
+        elif provider in ("vllm", "together"):
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "prompt_tokens", 0) or getattr(resp.usage, "input_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "completion_tokens", 0) or getattr(resp.usage, "output_tokens", 0) or 0
+        elif provider in ("anthropic", "aws"):
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or 0
+        elif provider == "gcp":
+            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+                usage["input_tokens"] = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage_metadata, "candidates_token_count", 0) or 0
+        elif provider == "aws-bedrock":
+            if isinstance(resp, dict) and "usage" in resp:
+                usage["input_tokens"] = resp["usage"].get("inputTokens", 0) or 0
+                usage["output_tokens"] = resp["usage"].get("outputTokens", 0) or 0
+    except Exception:
+        pass
+    return usage
+
+
+def _attach_usage(normalized: dict, provider: str, resp, t0: float, model: str) -> None:
+    """Attach usage metrics to a normalized response dict. Never raises."""
+    try:
+        usage = _extract_usage(provider, resp)
+        usage["duration_s"] = round(time.perf_counter() - t0, 3)
+        usage["model"] = model
+        usage["phase"] = llm_phase.get("unknown")
+        normalized["usage"] = usage
+    except Exception:
+        normalized.setdefault("usage", {
+            "input_tokens": 0, "output_tokens": 0, "duration_s": 0,
+            "model": model, "phase": llm_phase.get("unknown"),
+        })
+
+
 async def fetch_tool_completion(
     semaphore: asyncio.Semaphore,
     client,
@@ -443,11 +497,12 @@ async def fetch_tool_completion(
 ) -> dict:
     """Provider-dispatching async helper for chat-completions with tool calling.
 
-    Returns a normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...]}.
+    Returns a normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...], "usage": {...}}.
     """
     max_retries = 8
     for attempt in range(max_retries):
         try:
+            t0 = time.perf_counter()
             async with semaphore:
                 if provider == "openai":
                     instructions, input_items = _messages_for_openai_responses(messages)
@@ -486,7 +541,9 @@ async def fetch_tool_completion(
                             }
                         }
                     resp = await client.responses.create(**kwargs)
-                    return _normalize_openai_responses_response(resp)
+                    normalized = _normalize_openai_responses_response(resp)
+                    _attach_usage(normalized, "openai", resp, t0, model)
+                    return normalized
 
                 elif provider in ("vllm", "together"):
                     kwargs = {"model": model, "messages": messages}
@@ -499,7 +556,9 @@ async def fetch_tool_completion(
                     if response_format:
                         kwargs["response_format"] = response_format
                     resp = await client.chat.completions.create(**kwargs)
-                    return _normalize_openai_response(resp.choices[0].message)
+                    normalized = _normalize_openai_response(resp.choices[0].message)
+                    _attach_usage(normalized, provider, resp, t0, model)
+                    return normalized
 
                 elif provider in ("anthropic", "aws"):
                     system, anth_messages = _messages_for_anthropic(messages)
@@ -540,6 +599,7 @@ async def fetch_tool_completion(
                                 normalized["content"] = tc["function"]["arguments"]
                                 normalized["tool_calls"] = []
                                 break
+                    _attach_usage(normalized, "anthropic", resp, t0, model)
                     return normalized
 
                 elif provider == "gcp":
@@ -565,7 +625,9 @@ async def fetch_tool_completion(
                         contents=contents,
                         config=config,
                     )
-                    return _normalize_gemini_response(resp)
+                    normalized = _normalize_gemini_response(resp)
+                    _attach_usage(normalized, "gcp", resp, t0, model)
+                    return normalized
 
                 elif provider == "aws-bedrock":
                     system, br_messages = _messages_for_bedrock(messages)
@@ -611,6 +673,7 @@ async def fetch_tool_completion(
                                 normalized["content"] = tc["function"]["arguments"]
                                 normalized["tool_calls"] = []
                                 break
+                    _attach_usage(normalized, "aws-bedrock", resp, t0, model)
                     return normalized
 
                 else:
@@ -636,7 +699,37 @@ async def fetch_tool_completion(
         "role": "assistant",
         "content": "Error: max retries reached",
         "tool_calls": [],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "duration_s": 0, "model": model, "phase": llm_phase.get("unknown")},
     }
+
+
+def aggregate_usage(results: list[dict]) -> dict:
+    """Aggregate usage stats from a list of normalized LLM responses.
+    Returns {model: {calls, input_tokens, output_tokens, duration_s}} grouped by (model, phase)
+    and a flat list under "by_phase" keyed by phase name.
+
+    Accepts both bare usage dicts (from _usage_accumulator) and
+    response dicts containing a nested "usage" key.
+    """
+    by_phase: dict[str, dict[str, dict]] = {}
+    for r in results:
+        u = r.get("usage", r) if isinstance(r, dict) else {}
+        if not u or "phase" not in u:
+            continue
+        phase = u.get("phase", "unknown")
+        model = u.get("model", "unknown")
+        if phase not in by_phase:
+            by_phase[phase] = {}
+        if model not in by_phase[phase]:
+            by_phase[phase][model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "duration_s": 0.0, "max_duration_s": 0.0}
+        entry = by_phase[phase][model]
+        entry["calls"] += 1
+        entry["input_tokens"] += u.get("input_tokens", 0)
+        entry["output_tokens"] += u.get("output_tokens", 0)
+        call_dur = u.get("duration_s", 0)
+        entry["duration_s"] = round(entry["duration_s"] + call_dur, 3)
+        entry["max_duration_s"] = round(max(entry["max_duration_s"], call_dur), 3)
+    return by_phase
 
 
 class LLMClient:
@@ -645,7 +738,8 @@ class LLMClient:
         self.client = None
         self.async_client = None
         self._vllm_api_base = None
-        # Persistent event loop so async clients can be reused across calls
+        self._last_usage: list[dict] = []
+        self._usage_accumulator: list[dict] = []
         self._loop = asyncio.new_event_loop()
 
         self.provider = provider
@@ -728,6 +822,16 @@ class LLMClient:
         Uses a single long-lived loop so async clients can reuse connections."""
         return self._loop.run_until_complete(coro)
 
+    def reset_usage(self):
+        """Clear the usage accumulator. Call before a logical step."""
+        self._usage_accumulator.clear()
+
+    def collect_usage(self) -> list[dict]:
+        """Return and clear accumulated usage records since the last reset."""
+        records = list(self._usage_accumulator)
+        self._usage_accumulator.clear()
+        return records
+
     def web_search(self, query: str) -> str:
         messages = [{"role": "user", "content": query}]
         tools = [{"type": "web_search_preview"}]
@@ -778,10 +882,10 @@ class LLMClient:
         reasoning: dict | None = None,
     ) -> dict:
         """Single LLM call with message array, optional tool schemas, optional structured output.
-        Returns normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...]}."""
+        Returns normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...], "usage": {...}}."""
         semaphore = asyncio.Semaphore(1)
         bedrock = getattr(self, "_bedrock_client", None)
-        return self._run_async(
+        result = self._run_async(
             fetch_tool_completion(
                 semaphore,
                 self.async_client,
@@ -796,6 +900,9 @@ class LLMClient:
                 bedrock_client=bedrock,
             )
         )
+        self._last_usage = [result.get("usage", {})]
+        self._usage_accumulator.extend(self._last_usage)
+        return result
 
     def chat_messages_async(
         self,
@@ -848,6 +955,8 @@ class LLMClient:
 
         results = self._run_async(_run())
 
+        self._last_usage = [r.get("usage", {}) for r in results]
+        self._usage_accumulator.extend(self._last_usage)
         grouped: list[list[dict]] = []
         for i in range(len(messages_lst)):
             grouped.append(list(results[i * num_samples : (i + 1) * num_samples]))

@@ -8,6 +8,7 @@ import yaml
 from pathlib import Path
 
 from autocomp.common import logger
+from autocomp.common.llm_utils import llm_phase
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
@@ -553,8 +554,11 @@ class BuiltLLMAgent(LLMAgent):
 
     def _get_problem_context(self, prob: Prob, code: str) -> tuple[str, str]:
         """Return (isa_text, formatted_examples_text) for this problem."""
+        prev_phase = llm_phase.get("unknown")
+        llm_phase.set("context_selection")
         isa_text = self._get_isa_for_problem(prob, code)
         bodies = self._get_relevant_code_examples(prob, code)
+        llm_phase.set(prev_phase)
         if bodies:
             parts = [f"### {name}\n{body}" for name, body in bodies.items()]
             examples_text = "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n"

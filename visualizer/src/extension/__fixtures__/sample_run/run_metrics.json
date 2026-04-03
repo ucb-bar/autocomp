@@ -1,0 +1,49 @@
+{
+  "run_total_s": 1786.766,
+  "iterations": [
+    {
+      "plan_duration_s": 445.116,
+      "code_duration_s": 43.129,
+      "evaluation": {
+        "duration_s": 64.433,
+        "num_candidates": 8
+      },
+      "iteration": 1,
+      "iteration_total_s": 552.681
+    },
+    {
+      "plan_duration_s": 175.44,
+      "code_duration_s": 58.953,
+      "evaluation": {
+        "duration_s": 68.593,
+        "num_candidates": 16
+      },
+      "iteration": 2,
+      "iteration_total_s": 302.99
+    },
+    {
+      "plan_duration_s": 164.051,
+      "code_duration_s": 81.573,
+      "evaluation": {
+        "duration_s": 91.845,
+        "num_candidates": 32
+      },
+      "iteration": 3,
+      "iteration_total_s": 337.473
+    },
+    {
+      "plan_duration_s": 334.364,
+      "code_duration_s": 155.158,
+      "evaluation": {
+        "duration_s": 104.095,
+        "num_candidates": 32
+      },
+      "iteration": 4,
+      "iteration_total_s": 593.62
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0,
+  "total_llm_duration_s": 0.0,
+  "total_eval_duration_s": 328.966
+}

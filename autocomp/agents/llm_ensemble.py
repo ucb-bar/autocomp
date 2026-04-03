@@ -12,6 +12,18 @@ class LLMEnsemble:
 
     def __repr__(self):
         return f"LLMEnsemble({self.llms})"
+
+    def reset_usage(self):
+        """Clear usage accumulators on all agents' LLM clients."""
+        for llm in self.llms:
+            llm.llm_client.reset_usage()
+
+    def collect_usage(self) -> list[dict]:
+        """Collect and clear usage records from all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client.collect_usage())
+        return records
     
     def divide_work(self, num_to_gen: int):
         num_agents = len(self.llms)

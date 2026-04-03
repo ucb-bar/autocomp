@@ -4,6 +4,7 @@ import random
 import re
 
 from autocomp.common import logger, LLMClient
+from autocomp.common.llm_utils import llm_phase
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
 
@@ -204,6 +205,7 @@ class LLMAgent:
         """
         prompts_lst = [self._get_propose_new_menu_prompt(candidate, prob) for candidate in candidates]
 
+        llm_phase.set("menu_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=1,
@@ -345,6 +347,7 @@ class LLMAgent:
         temperature = 1
         samples_per_prompt = num_plans // num_unique_prompts_per_cand
 
+        llm_phase.set("plan_generation")
         extended_responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=samples_per_prompt,
@@ -432,6 +435,7 @@ class LLMAgent:
             prompts_lst.append(prompt_text)
 
         temperature = 1
+        llm_phase.set("code_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=num_samples,
@@ -510,6 +514,7 @@ class LLMAgent:
             messages_lst.append(messages)
 
         # Call LLM with structured output
+        llm_phase.set("code_generation")
         grouped_results = self.llm_client.chat_messages_async(
             messages_lst,
             num_samples=num_samples,
@@ -660,6 +665,7 @@ class LLMAgent:
                 f.write(prompt_text)
             prompts_lst.append(prompt_text)
 
+        llm_phase.set("code_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=num_samples,

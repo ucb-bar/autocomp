@@ -1,0 +1,408 @@
+{'correct': True, 'latency': 3.734, 'stdout': 'Latency: 3.734 ms (P99)
+', 'stderr': ''}
+Prev latency: 2.461
+New latency: 3.734
+Plan:  ## Optimization Plan: Apply Strategy 7
+
+I will replace the high-level `nl.mean` reductions with `nki.isa.tensor_reduce(np.add, ...)` to gain finer control over engine selection and avoid implicit casting overhead. The `nl.mean` API is a high-level abstraction that may introduce additional operations and type conversions, while `tensor_reduce` explicitly targets the Vector Engine with predictable performance characteristics.
+
+**Key Changes:**
+1. Replace `nl.mean(input_sb, axis=1)` with `nisa.tensor_reduce(np.add, input_sb, axis=[1])` followed by multiplication by `1/N`
+2. Replace `nl.mean(nl.square(input_sb), axis=1)` with explicit `tensor_reduce` for sum of squares
+3. Explicitly specify `dtype=nl.float32` for all reduction operations to control numerical precision
+4. Maintain the same variance formula: `Var(x) = E[x²] - (E[x])²`
+
+The optimization maintains semantic equivalence: `mean = sum/N` and `variance = mean_of_squares - mean²`, using explicit reductions instead of the `nl.mean` abstraction.
+
+```python
+import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with optimized reductions using nki.isa.tensor_reduce.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows and columns in the input tensor
+  num_rows = input_tensor.shape[0]
+  num_cols = input_tensor.shape[1]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+
+  # Precompute reciprocal of num_cols for efficient mean computation
+  inv_num_cols = np.float32(1.0 / num_cols)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(num_rows / nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    ######################################################################
+    # OPTIMIZATION: Strategy 7 - Replace nl.mean with nki.isa.tensor_reduce
+    # 
+    # The original code used nl.mean which has implicit implementation details
+    # that may introduce overhead. By using nki.isa.tensor_reduce with 
+    # np.add directly, we:
+    # - Explicitly select Vector Engine for the reduction
+    # - Control output dtype precisely (nl.float32)
+    # - Avoid implicit casting overhead from high-level API
+    ######################################################################
+    
+    # Compute mean: sum elements then multiply by 1/N
+    # tensor_reduce with np.add computes sum across axis 1 (free dimension)
+    sum_x = nisa.tensor_reduce(
+        np.add, 
+        input_sb, 
+        axis=[1],           # Reduce across free dimension
+        dtype=nl.float32,    # Explicit output dtype control
+        keepdims=True        # Maintain shape for broadcasting
+    )
+    # mean = sum / N = sum * (1/N)
+    mean = nisa.tensor_scalar(sum_x, np.multiply, inv_num_cols, 
+                               dtype=nl.float32)
+
+    # Compute variance using same approach: Var(x) = E[x^2] - (E[x])^2
+    # First: E[x^2] = sum(x^2) / N
+    input_sq = nl.square(input_sb)
+    sum_xsq = nisa.tensor_reduce(
+        np.add,
+        input_sq,
+        axis=[1],
+        dtype=nl.float32,
+        keepdims=True
+    )
+    mean_xsq = nisa.tensor_scalar(sum_xsq, np.multiply, inv_num_cols,
+                                   dtype=nl.float32)
+    
+    # (E[x])^2 = mean * mean
+    mean_sq = nisa.tensor_scalar(mean, np.multiply, mean,
+                                  dtype=nl.float32)
+    
+    # Variance = E[x^2] - (E[x])^2
+    var = nisa.tensor_tensor(mean_xsq, mean_sq, np.subtract, dtype=nl.float32)
+    ######################################################################
+    # End of Strategy 7 optimization
+    ######################################################################
+
+    # Broadcast statistics for element-wise normalization
+    mean_bcast = mean.broadcast_to((nl.tile_size.pmax, num_cols))
+    var_bcast = var.broadcast_to((nl.tile_size.pmax, num_cols))
+    
+    # Normalize and apply scale/shift
+    normalized = (input_sb - mean_bcast) * nl.rsqrt(var_bcast + epsilon)
+    output_sb = normalized * gamma_sb_bcast + beta_sb_bcast
+
+    # Store with mask for boundary handling
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], 
+             value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+```
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan=''' ## Optimization Plan: Apply Strategy 7
+
+I will replace the high-level `nl.mean` reductions with `nki.isa.tensor_reduce(np.add, ...)` to gain finer control over engine selection and avoid implicit casting overhead. The `nl.mean` API is a high-level abstraction that may introduce additional operations and type conversions, while `tensor_reduce` explicitly targets the Vector Engine with predictable performance characteristics.
+
+**Key Changes:**
+1. Replace `nl.mean(input_sb, axis=1)` with `nisa.tensor_reduce(np.add, input_sb, axis=[1])` followed by multiplication by `1/N`
+2. Replace `nl.mean(nl.square(input_sb), axis=1)` with explicit `tensor_reduce` for sum of squares
+3. Explicitly specify `dtype=nl.float32` for all reduction operations to control numerical precision
+4. Maintain the same variance formula: `Var(x) = E[x²] - (E[x])²`
+
+The optimization maintains semantic equivalence: `mean = sum/N` and `variance = mean_of_squares - mean²`, using explicit reductions instead of the `nl.mean` abstraction.
+
+```python
+import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with optimized reductions using nki.isa.tensor_reduce.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows and columns in the input tensor
+  num_rows = input_tensor.shape[0]
+  num_cols = input_tensor.shape[1]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+
+  # Precompute reciprocal of num_cols for efficient mean computation
+  inv_num_cols = np.float32(1.0 / num_cols)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(num_rows / nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    ######################################################################
+    # OPTIMIZATION: Strategy 7 - Replace nl.mean with nki.isa.tensor_reduce
+    # 
+    # The original code used nl.mean which has implicit implementation details
+    # that may introduce overhead. By using nki.isa.tensor_reduce with 
+    # np.add directly, we:
+    # - Explicitly select Vector Engine for the reduction
+    # - Control output dtype precisely (nl.float32)
+    # - Avoid implicit casting overhead from high-level API
+    ######################################################################
+    
+    # Compute mean: sum elements then multiply by 1/N
+    # tensor_reduce with np.add computes sum across axis 1 (free dimension)
+    sum_x = nisa.tensor_reduce(
+        np.add, 
+        input_sb, 
+        axis=[1],           # Reduce across free dimension
+        dtype=nl.float32,    # Explicit output dtype control
+        keepdims=True        # Maintain shape for broadcasting
+    )
+    # mean = sum / N = sum * (1/N)
+    mean = nisa.tensor_scalar(sum_x, np.multiply, inv_num_cols, 
+                               dtype=nl.float32)
+
+    # Compute variance using same approach: Var(x) = E[x^2] - (E[x])^2
+    # First: E[x^2] = sum(x^2) / N
+    input_sq = nl.square(input_sb)
+    sum_xsq = nisa.tensor_reduce(
+        np.add,
+        input_sq,
+        axis=[1],
+        dtype=nl.float32,
+        keepdims=True
+    )
+    mean_xsq = nisa.tensor_scalar(sum_xsq, np.multiply, inv_num_cols,
+                                   dtype=nl.float32)
+    
+    # (E[x])^2 = mean * mean
+    mean_sq = nisa.tensor_scalar(mean, np.multiply, mean,
+                                  dtype=nl.float32)
+    
+    # Variance = E[x^2] - (E[x])^2
+    var = nisa.tensor_tensor(mean_xsq, mean_sq, np.subtract, dtype=nl.float32)
+    ######################################################################
+    # End of Strategy 7 optimization
+    ######################################################################
+
+    # Broadcast statistics for element-wise normalization
+    mean_bcast = mean.broadcast_to((nl.tile_size.pmax, num_cols))
+    var_bcast = var.broadcast_to((nl.tile_size.pmax, num_cols))
+    
+    # Normalize and apply scale/shift
+    normalized = (input_sb - mean_bcast) * nl.rsqrt(var_bcast + epsilon)
+    output_sb = normalized * gamma_sb_bcast + beta_sb_bcast
+
+    # Store with mask for boundary handling
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], 
+             value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+```''',
+code='''import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with optimized reductions using nki.isa.tensor_reduce.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows and columns in the input tensor
+  num_rows = input_tensor.shape[0]
+  num_cols = input_tensor.shape[1]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+
+  # Precompute reciprocal of num_cols for efficient mean computation
+  inv_num_cols = np.float32(1.0 / num_cols)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(num_rows / nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    ######################################################################
+    # OPTIMIZATION: Strategy 7 - Replace nl.mean with nki.isa.tensor_reduce
+    # 
+    # The original code used nl.mean which has implicit implementation details
+    # that may introduce overhead. By using nki.isa.tensor_reduce with 
+    # np.add directly, we:
+    # - Explicitly select Vector Engine for the reduction
+    # - Control output dtype precisely (nl.float32)
+    # - Avoid implicit casting overhead from high-level API
+    ######################################################################
+    
+    # Compute mean: sum elements then multiply by 1/N
+    # tensor_reduce with np.add computes sum across axis 1 (free dimension)
+    sum_x = nisa.tensor_reduce(
+        np.add, 
+        input_sb, 
+        axis=[1],           # Reduce across free dimension
+        dtype=nl.float32,    # Explicit output dtype control
+        keepdims=True        # Maintain shape for broadcasting
+    )
+    # mean = sum / N = sum * (1/N)
+    mean = nisa.tensor_scalar(sum_x, np.multiply, inv_num_cols, 
+                               dtype=nl.float32)
+
+    # Compute variance using same approach: Var(x) = E[x^2] - (E[x])^2
+    # First: E[x^2] = sum(x^2) / N
+    input_sq = nl.square(input_sb)
+    sum_xsq = nisa.tensor_reduce(
+        np.add,
+        input_sq,
+        axis=[1],
+        dtype=nl.float32,
+        keepdims=True
+    )
+    mean_xsq = nisa.tensor_scalar(sum_xsq, np.multiply, inv_num_cols,
+                                   dtype=nl.float32)
+    
+    # (E[x])^2 = mean * mean
+    mean_sq = nisa.tensor_scalar(mean, np.multiply, mean,
+                                  dtype=nl.float32)
+    
+    # Variance = E[x^2] - (E[x])^2
+    var = nisa.tensor_scalar(mean_xsq, np.subtract, mean_sq, reverse1=True, dtype=nl.float32)
+    ######################################################################
+    # End of Strategy 7 optimization
+    ######################################################################
+
+    # Broadcast statistics for element-wise normalization
+    mean_bcast = mean.broadcast_to((nl.tile_size.pmax, num_cols))
+    var_bcast = var.broadcast_to((nl.tile_size.pmax, num_cols))
+    
+    # Normalize and apply scale/shift
+    normalized = (input_sb - mean_bcast) * nl.rsqrt(var_bcast + epsilon)
+    output_sb = normalized * gamma_sb_bcast + beta_sb_bcast
+
+    # Store with mask for boundary handling
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], 
+             value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='moonshotai.kimi-k2.5',
+code_gen_model='zai.glm-5',
+stdout=None,
+stderr=None)
