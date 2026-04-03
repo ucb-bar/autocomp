@@ -9,11 +9,15 @@ A VS Code extension for visualizing [Autocomp](https://github.com/ucb-bar/autoco
 
 ## Features
 
+- **Run List** — Browse all optimization runs in an output directory. Each card shows the raw directory name, problem badge, beam size, iteration count, model list, and speedup. Sorted by speedup.
 - **Score Progression Chart** — Interactive SVG chart plotting individual candidate lineage traces across iterations. Click any point to inspect the candidate.
 - **Beam Tree** — Visual tree showing beam search ancestry with score-based coloring. Selecting a node highlights its ancestors and descendants.
 - **Code Diff** — Compare any candidate against its ancestors using VS Code's native diff viewer. Choose which ancestor to diff against from a dropdown.
 - **Candidate Summary** — View optimization plans, model attributions (plan and code models), and score improvements for each candidate.
-- **Metrics Panel** — Per-iteration and per-run metrics: LLM token counts (input/output), call durations by phase (plan generation, code generation, context selection, menu generation), and evaluation time.
+- **Metrics Panel** — Collapsible panel with three levels of progressive disclosure:
+  - **Run summary** — Total wall-clock time, aggregate LLM time, evaluation time, and total input/output token counts.
+  - **Iteration rows** — Collapsible per-iteration summaries showing total, planning, coding, and eval durations. Expand to see phase details grouped under "Planning" and "Coding" wall-clock headers.
+  - **Phase tables** — Per-phase, per-model breakdowns of call counts, token usage, average time per call, and slowest individual call. Phases are displayed in execution order: Context Selection, Menu Generation, Plan Generation, Code Generation.
 - **Run Config** — Expandable panel showing all run metadata (beam size, models, metric, etc.) — automatically populated from `run_metadata.json`.
 - **Plan Summarization** — Summarize optimization plans using an LLM. Supports OpenAI, Anthropic, AWS Bedrock (uses instance credentials on EC2), and Google Gemini. Configure via the gear icon next to the Summarize button. API keys are stored securely in VS Code SecretStorage.
 
@@ -94,7 +98,7 @@ visualizer/
 - **`ingestRun(runDir)`** — Ingests a single run: loads candidates, eval results, metrics; assigns stable IDs; detects carry-forwards; computes scores and speedups.
 - **`ingestOutputDir(outputDir, outDir)`** — Ingests all runs in an output directory; writes per-run JSON files and a `runs.json` index.
 
-**`App.tsx`** — React app bundled with Vite. Renders run list, score progression chart, beam tree, metrics panel, and code diffs.
+**`App.tsx`** — React app bundled with Vite. Opens to a settings page by default. Renders run list (with raw directory names), score progression chart, beam tree, collapsible metrics panel with progressive disclosure, and code diffs. Navigates between settings and trace viewer via a gear icon.
 
 ### Data Flow
 
@@ -148,7 +152,7 @@ The `parent` field is recursive, forming the full ancestry chain.
 
 Autocomp writes optional metrics files alongside candidates:
 
-- **`metrics-iter-N.json`** — Per-iteration: LLM token counts and durations by phase, evaluation time, total iteration time.
+- **`metrics-iter-N.json`** — Per-iteration: wall-clock durations for planning and coding phases, LLM token counts and call durations by phase and model (including average and slowest individual call times), evaluation time, and total iteration time.
 - **`run_metrics.json`** — Aggregate: total run time, total LLM time, total eval time, total input/output tokens.
 
 Missing fields render as "—" in the UI, so older runs without metrics display correctly.

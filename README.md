@@ -293,6 +293,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and 
 
 ## 📝 Changelog
 
+**(4/3/2026)** Added run metrics (runtime and tokens) and updated Trace Visualizer to be self-contained.
+
 **(3/25/2026)** Added support for structured-output code edits in the code implementation phase.
 
 **(3/17/2026)** Added preliminary TPU support and enhanced Autocomp's code translation capabilities.
