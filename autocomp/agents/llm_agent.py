@@ -169,6 +169,21 @@ class LLMAgent:
                                    code_icl_examples: bool = True) -> str:
         raise NotImplementedError
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None) -> str:
+        """Build a prompt that generates optimized code directly, without a separate planning phase.
+
+        Subclasses should override to provide hardware-specific prompts.
+        The default falls back to _get_propose_optimizations_prompt context
+        but asks for code output instead of a plan.
+        """
+        raise NotImplementedError
+
     def _get_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
         """Return a messages list for the edit-based code generation path.
 
@@ -466,6 +481,106 @@ class LLMAgent:
                 new_cand.code_gen_model = self.llm_client.model
                 this_plan_cands.append(new_cand)
             candidates.extend(this_plan_cands)
+        return candidates
+
+    def direct_implement_code_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str], prob: Prob,
+        give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
+        include_ancestors: bool = False, dropout_menu_options: float = 1.0,
+        cur_iter: int = None, num_iters: int = None,
+    ) -> list[CodeCandidate]:
+        """Generate optimized code directly from parent candidates, bypassing the planning phase.
+
+        Each candidate in candidate_lst is a parent; we generate num_samples code
+        implementations per parent using a single prompt that combines planning and
+        implementation context.
+        """
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+
+        loaded_code = []
+        code_not_found = False
+        for c_i in range(len(candidate_lst)):
+            this_cand_loaded_code = []
+            save_str = save_strs[c_i]
+            for s_i in range(num_samples):
+                path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                if path.exists():
+                    with open(path, "r") as f:
+                        code = extract(f.read())
+                        this_cand_loaded_code.append(code)
+                else:
+                    code_not_found = True
+                    break
+            if code_not_found:
+                break
+            loaded_code.append(this_cand_loaded_code)
+        else:
+            loaded_candidates = []
+            for c_i in range(len(candidate_lst)):
+                cand = candidate_lst[c_i]
+                for s_i in range(num_samples):
+                    new_cand = CodeCandidate(cand, "direct implementation (no plan)", loaded_code[c_i][s_i],
+                                             plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
+                    loaded_candidates.append(new_cand)
+            logger.info("Loaded %d direct implementations from cache", len(loaded_candidates))
+            return loaded_candidates
+
+        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1):
+            num_unique_prompts_per_cand = num_samples
+        else:
+            num_unique_prompts_per_cand = 1
+
+        prompts_lst = []
+        for c_i, candidate in enumerate(candidate_lst):
+            save_str = save_strs[c_i]
+            for p in range(num_unique_prompts_per_cand):
+                prompt_text = self._get_direct_implement_prompt(
+                    candidate, prob,
+                    give_score_feedback=give_score_feedback,
+                    give_hw_feedback=give_hw_feedback,
+                    include_ancestors=include_ancestors,
+                    dropout_menu_options=dropout_menu_options,
+                    cur_iter=cur_iter, num_iters=num_iters,
+                )
+                prompt_path = save_dir / f"direct_prompt{'' if not save_str else '_' + save_str}_{p}.txt"
+                with open(prompt_path, "w") as f:
+                    f.write(prompt_text)
+                prompts_lst.append(prompt_text)
+
+        samples_per_prompt = num_samples // num_unique_prompts_per_cand
+
+        llm_phase.set("code_generation")
+        extended_responses = self.llm_client.chat_async(
+            prompts_lst=prompts_lst,
+            num_samples=samples_per_prompt,
+            temperature=1,
+        )
+        logger.info("%s: finished generating %d direct implementations for %d candidates.",
+                     self.llm_client.model, len(prompts_lst) * samples_per_prompt, len(candidate_lst))
+
+        full_responses = [[] for _ in range(len(candidate_lst))]
+        for r_i, per_prompt_responses in enumerate(extended_responses):
+            c_i = r_i // num_unique_prompts_per_cand
+            full_responses[c_i].extend(per_prompt_responses)
+
+        candidates: list[CodeCandidate] = []
+        for c_i in range(len(candidate_lst)):
+            save_str = save_strs[c_i]
+            for s_i, sample_response in enumerate(full_responses[c_i]):
+                full_path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                with open(full_path, "w") as f:
+                    f.write(sample_response)
+                extracted_code = extract(sample_response)
+                if not extracted_code:
+                    logger.warning("Failed to extract code from direct impl %d response %d", c_i, s_i)
+                path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}.txt"
+                with open(path, "w") as f:
+                    f.write(extracted_code)
+                new_cand = CodeCandidate(candidate_lst[c_i], "direct implementation (no plan)", extracted_code,
+                                         plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
+                candidates.append(new_cand)
         return candidates
 
     def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,

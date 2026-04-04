@@ -803,6 +803,49 @@ class BuiltLLMAgent(LLMAgent):
 
         return prompt_text
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None) -> str:
+        opt_lst = self.get_opt_menu_options(prob, candidate)
+        if dropout_menu_options < 1:
+            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
+
+        examples_prefix = ""
+        if examples_text:
+            examples_prefix = examples_text + "Use these reference patterns to inform your optimization.\n\n"
+
+        prompt_text = examples_prefix + self._build_prompt_scaffold(
+            candidate, prob, "",
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
+        menu_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_text += f"{i + 1}. {opt}\n"
+
+        prompt_text += "Please carefully review the code to identify any inefficiencies. "
+        prompt_text += "Performance can be improved by using the following strategies:\n"
+        prompt_text += "<strategies>:\n" + menu_text + "\n"
+
+        prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
+        prompt_text += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
+        prompt_text += "Output the complete optimized code directly.\n"
+
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
+
+        if cur_iter is not None and num_iters is not None:
+            prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
+
+        prompt_text += "\nOptimized code:"
+        return prompt_text
+
     def _get_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
         if prob is None:
             raise ValueError("BuiltLLMAgent requires prob parameter to be provided")

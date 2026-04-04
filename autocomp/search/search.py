@@ -784,6 +784,7 @@ class BeamSearchStrategy(SearchStrategy):
         early_stop_threshold: float = 1.0,
         resume_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
+        skip_planning: bool = False,
     ):
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
@@ -795,6 +796,7 @@ class BeamSearchStrategy(SearchStrategy):
         self.trigger_exhaustive_iters = trigger_exhaustive_iters
         self.start_exhaustive_iters = start_exhaustive_iters
         self.reimplement_failed = reimplement_failed
+        self.skip_planning = skip_planning
         super().__init__(
             output_dir,
             eval_backend,
@@ -1034,67 +1036,91 @@ class BeamSearchStrategy(SearchStrategy):
                 logger.info("Loaded %d candidates from %s", num_cands_loaded, save_dir)
                 continue
 
-            # Step 1: Propose optimizations for each candidate
-            save_dir = self.output_dir / f"generated-plans-iter-{i}"
-            save_dir.mkdir(parents=True, exist_ok=True)
-            # If we don't improve by trigger_exhaustive_threshold for trigger_exhaustive_iters, do exhaustive
-            exhaustive = False
-            if len(losses) >= self.trigger_exhaustive_iters + 1:
-                if (
-                    losses[i - 1] / losses[i - self.trigger_exhaustive_iters - 1]
-                ) >= self.trigger_exhaustive_threshold:
-                    exhaustive = True
-            exhaustive = exhaustive or (
-                i <= self.start_exhaustive_iters
-            )  # or if we are in the first start_exhaustive_iters iterations
+            # Step 1 + 2: Generate implementations (plan-then-implement or direct)
             translate = i <= self.translate_iters
             self.agent.reset_usage()
             if self.code_agent is not self.agent:
                 self.code_agent.reset_usage()
-            plan_t0 = time.perf_counter()
-            plan_only_candidates = self.propose_optimizations_iter(
-                current_candidates,
-                save_dir,
-                i,
-                iterations,
-                exhaustive=exhaustive,
-                translate=translate,
-            )
-            plan_duration = round(time.perf_counter() - plan_t0, 3)
-            iter_metrics["plan_duration_s"] = plan_duration
-            logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
 
-            # Step 2: Generate code candidates for each optimization plan
-            save_dir = self.output_dir / f"generated-code-iter-{i}"
-            save_dir.mkdir(parents=True, exist_ok=True)
-            save_strs = []
-            for cand_idx, cand in enumerate(plan_only_candidates):
-                parent_idx = current_candidates.index(cand.parent)
-                save_strs.append(f"{parent_idx}_{cand_idx}")
-            code_t0 = time.perf_counter()
-            if self.use_edits:
-                impl_candidates = self.code_agent.implement_code_edits_parallel(
-                    plan_only_candidates,
-                    self.num_code_candidates,
+            if self.skip_planning and not translate:
+                # Direct implementation: skip planning, generate code in one shot
+                save_dir = self.output_dir / f"generated-code-iter-{i}"
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_strs = [f"parent{p_i}" for p_i in range(len(current_candidates))]
+                num_direct_samples = self.num_plan_candidates * self.num_code_candidates
+                code_t0 = time.perf_counter()
+                impl_candidates = self.code_agent.direct_implement_code_parallel(
+                    current_candidates,
+                    num_direct_samples,
                     save_dir,
                     save_strs=save_strs,
-                    code_icl_examples=self.code_icl_examples,
                     prob=self.prob,
+                    give_score_feedback=self.give_score_feedback,
+                    give_hw_feedback=self.give_hw_feedback,
+                    include_ancestors=self.include_ancestors,
+                    dropout_menu_options=self.dropout_menu_options,
+                    cur_iter=i,
+                    num_iters=iterations,
                 )
+                code_duration = round(time.perf_counter() - code_t0, 3)
+                iter_metrics["plan_duration_s"] = 0
+                iter_metrics["code_duration_s"] = code_duration
+                logger.info(f"Generated {len(impl_candidates)} direct implementations (no planning phase).")
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
             else:
-                impl_candidates = self.code_agent.implement_code_parallel(
-                    plan_only_candidates,
-                    self.num_code_candidates,
+                # Standard 2-phase: plan then implement
+                save_dir = self.output_dir / f"generated-plans-iter-{i}"
+                save_dir.mkdir(parents=True, exist_ok=True)
+                exhaustive = False
+                if len(losses) >= self.trigger_exhaustive_iters + 1:
+                    if (
+                        losses[i - 1] / losses[i - self.trigger_exhaustive_iters - 1]
+                    ) >= self.trigger_exhaustive_threshold:
+                        exhaustive = True
+                exhaustive = exhaustive or (i <= self.start_exhaustive_iters)
+                plan_t0 = time.perf_counter()
+                plan_only_candidates = self.propose_optimizations_iter(
+                    current_candidates,
                     save_dir,
-                    save_strs=save_strs,
-                    code_icl_examples=self.code_icl_examples,
-                    prob=self.prob,
+                    i,
+                    iterations,
+                    exhaustive=exhaustive,
+                    translate=translate,
                 )
-            logger.info(f"Generated {len(impl_candidates)} implementations.")
-            code_duration = round(time.perf_counter() - code_t0, 3)
-            iter_metrics["code_duration_s"] = code_duration
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                plan_duration = round(time.perf_counter() - plan_t0, 3)
+                iter_metrics["plan_duration_s"] = plan_duration
+                logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+
+                save_dir = self.output_dir / f"generated-code-iter-{i}"
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_strs = []
+                for cand_idx, cand in enumerate(plan_only_candidates):
+                    parent_idx = current_candidates.index(cand.parent)
+                    save_strs.append(f"{parent_idx}_{cand_idx}")
+                code_t0 = time.perf_counter()
+                if self.use_edits:
+                    impl_candidates = self.code_agent.implement_code_edits_parallel(
+                        plan_only_candidates,
+                        self.num_code_candidates,
+                        save_dir,
+                        save_strs=save_strs,
+                        code_icl_examples=self.code_icl_examples,
+                        prob=self.prob,
+                    )
+                else:
+                    impl_candidates = self.code_agent.implement_code_parallel(
+                        plan_only_candidates,
+                        self.num_code_candidates,
+                        save_dir,
+                        save_strs=save_strs,
+                        code_icl_examples=self.code_icl_examples,
+                        prob=self.prob,
+                    )
+                logger.info(f"Generated {len(impl_candidates)} implementations.")
+                code_duration = round(time.perf_counter() - code_t0, 3)
+                iter_metrics["code_duration_s"] = code_duration
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
 
             if (
                 len(current_candidates) > 1

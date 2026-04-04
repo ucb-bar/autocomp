@@ -260,6 +260,61 @@ Cycles can be reduced by using the following optimizations:
 
         return prompt_text
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None) -> str:
+        opt_lst = self.get_opt_menu_options(prob)
+        if dropout_menu_options < 1:
+            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        include_score_feedback = random.random() < give_score_feedback
+        include_hw_feedback_flag = random.random() < give_hw_feedback
+
+        parents_prompt = ""
+        cur_cand = candidate
+        while cur_cand is not None:
+            if include_hw_feedback_flag:
+                parents_prompt = "\n".join(cur_cand.hw_feedback) + "\n" + parents_prompt
+            if include_score_feedback and (cur_cand.score is not None):
+                parents_prompt = f"The latency of this code was {cur_cand.score} cycles.\n" + parents_prompt
+            if not include_ancestors:
+                parents_prompt = "\nThe original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+                break
+            elif cur_cand.plan is not None:
+                parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
+            else:
+                parents_prompt = "The original unoptimized code was:\n" + cur_cand.code + "\n" + parents_prompt
+            cur_cand = cur_cand.parent
+
+        if self.pe_dim == 4:
+            prompt_text = "\nThe Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
+        else:
+            prompt_text = "\nThe Gemmini accelerator's ISA is as follows:" + isa_prompt_conv.PROMPT(self.pe_dim)
+        prompt_text += parents_prompt
+
+        menu_options_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_options_text += f"{i + 1}. {opt}\n"
+        prompt_text += "Please carefully review the program to identify any inefficiencies.\n"
+        prompt_text += "Cycles can be reduced by using the following optimizations:\n<optimizations>:\n" + menu_options_text + "\n"
+
+        prompt_text += "You are an optimizing compiler that generates high-performance Gemmini code. "
+        prompt_text += "Apply one of the <optimizations> to address the inefficiencies of the above code and reduce its cycle count. "
+        prompt_text += "Output the complete optimized code directly.\n"
+
+        prompt_text += "\nMake sure to follow these rules:"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+
+        if cur_iter is not None and num_iters is not None:
+            prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
+
+        prompt_text += "\nOptimized code:"
+        return prompt_text
+
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         if self.pe_dim == 4:
             prompt_text = "The Gemmini accelerator's ISA is as follows:" + isa_prompt_admm.PROMPT(self.pe_dim)
