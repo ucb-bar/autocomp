@@ -172,7 +172,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import autocomp.common.my_logging
-    autocomp.common.my_logging.move_log(output_dir)
+    autocomp.common.my_logging.move_log(output_dir, tag="search")
     logger.info("Output directory: %s", output_dir)
 
     # ------------------------------------------------------------------
