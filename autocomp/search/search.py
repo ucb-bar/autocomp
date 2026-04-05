@@ -534,7 +534,9 @@ class SearchStrategy:
                         logger.debug(f"Candidate code:\n{cand.code}")
                         continue
                 dont_add = False
-                if self.prevent_duplicate_level == 2:
+                if self.prevent_duplicate_level < 0:
+                    pass
+                elif self.prevent_duplicate_level == 2:
                     # Don't keep any candidates with parents in common other than the root candidate
                     # And also don't keep the parents of candidates already in the list
                     for already_in_cand in cur_candidates:
