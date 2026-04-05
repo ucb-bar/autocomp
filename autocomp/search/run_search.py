@@ -100,7 +100,7 @@ def main():
     trigger_exhaustive_threshold = 1
     trigger_exhaustive_iters = 20
     start_exhaustive_iters = 0
-    prevent_duplicate_level = 0     # 0: same parent+plan, 1: same parent, 2: any shared ancestor
+    prevent_duplicate_level = -1     # 0: same parent+plan, 1: same parent, 2: any shared ancestor
     random.seed(1111)
 
     # ------------------------------------------------------------------
