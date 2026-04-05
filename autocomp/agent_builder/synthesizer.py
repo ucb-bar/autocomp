@@ -89,9 +89,15 @@ class ComponentSynthesizer:
         return results[0] if results else []
 
     def _chat_light_async(self, prompts: list[str], **kwargs) -> list[list[str]]:
-        return self.light_llm.chat_async(
+        if len(prompts) > 5:
+            logger.info("  Sending %d parallel LLM calls (light model)...", len(prompts))
+        t0 = time.time()
+        results = self.light_llm.chat_async(
             prompts, **kwargs,
         )
+        if len(prompts) > 5:
+            logger.info("  %d calls completed in %.1fs", len(prompts), time.time() - t0)
+        return results
 
     # ------------------------------------------------------------------
     # LLM-based content routing (replaces heuristic routing + filter)
@@ -125,16 +131,19 @@ class ComponentSynthesizer:
         )
 
         filtered: list[tuple[str, str]] = []
-        removed = 0
+        removed_keys: list[str] = []
         for (key, text), responses in zip(items, all_responses):
             raw = (responses[0].strip() if responses else "").lower()
             if "no" in raw and "yes" not in raw:
-                removed += 1
+                removed_keys.append(key)
             else:
                 filtered.append((key, text))
 
         logger.info("Pre-filter: %d -> %d items (%d removed)",
-                     len(items), len(filtered), removed)
+                     len(items), len(filtered), len(removed_keys))
+        if removed_keys:
+            for key in removed_keys:
+                logger.info("  Pre-filter removed: %s", key)
         return filtered
 
     def _llm_route_content(
@@ -211,6 +220,7 @@ class ComponentSynthesizer:
         )
 
         skipped = 0
+        skipped_keys: list[str] = []
         for (key, text), responses in zip(all_items, all_responses):
             raw = (responses[0].strip() if responses else "").lower()
             assigned = False
@@ -220,12 +230,15 @@ class ComponentSynthesizer:
                     assigned = True
             if not assigned:
                 skipped += 1
+                skipped_keys.append(key)
 
         for bname, items in buckets.items():
             total_chars = sum(len(t) for _, t in items)
             logger.info("  %s: %d files, %d chars", bname, len(items), total_chars)
         if skipped:
             logger.info("  skipped: %d files", skipped)
+            for key in skipped_keys:
+                logger.info("    %s", key)
 
         return buckets
 
@@ -293,6 +306,7 @@ class ComponentSynthesizer:
         then merges the summaries.
         """
         if not items:
+            logger.warning("Architecture: no items routed to this bucket -- returning placeholder")
             return "No architecture documentation found. Please add manually."
 
         items = _chunk_items(items, self.context_budget)
@@ -322,11 +336,13 @@ class ComponentSynthesizer:
             f"Hardware Architecture Summary:"
         )
         responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        if not responses or not responses[0].strip():
+            logger.warning("Architecture single-pass: LLM returned empty response")
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
     def _arch_map_reduce(self, items: list[tuple[str, str]]) -> str:
         # Map: summarize each document individually in parallel
-        logger.info("Architecture: map - summarize each document individually in parallel")
+        logger.info("Architecture: map - summarize %d documents individually in parallel", len(items))
         prompts: list[str] = []
         for key, text in items:
             truncated = _truncate(text, max_chars=self.context_budget)
@@ -341,12 +357,16 @@ class ComponentSynthesizer:
                 f"Architecture-relevant notes:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
                 prompts, num_samples=1, temperature=0,
             )
         ]
+        empty_count = sum(1 for r in all_responses if not r)
+        logger.info("Architecture: map complete in %.1fs (%d/%d documents returned content)",
+                     time.time() - t0, len(all_responses) - empty_count, len(all_responses))
 
         logger.info("Architecture: reduce - merge summaries into final architecture summary")
         summaries = "\n\n".join(
@@ -380,6 +400,9 @@ class ComponentSynthesizer:
             (key, text) for key, text in items
             if len(text.strip()) >= 50 and len(text) >= 200
         ]
+        dropped = len(items) - len(candidates)
+        if dropped:
+            logger.info("ISA docs: filtered %d/%d items below minimum size threshold", dropped, len(items))
         candidates.sort(key=lambda x: len(x[1]), reverse=True)
 
         if not candidates:
@@ -528,10 +551,10 @@ JSON array:"""
                 logger.info("  ISA filtering: %d -> %d entries (%d removed)",
                             len(entries), len(filtered), len(entries) - len(filtered))
                 return filtered
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-
-        logger.warning("  ISA filtering: failed to parse LLM response, keeping all entries")
+            else:
+                logger.warning("ISA filtering: no JSON array in LLM response, keeping all %d entries", len(entries))
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.warning("ISA filtering parse error: %s. Keeping all %d entries", e, len(entries))
         return entries
 
     def _categorize_isa_entries(
@@ -570,10 +593,11 @@ Return ONLY a JSON object:"""
                     isinstance(v, list) for v in result.values()
                 ):
                     return result
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        logger.warning("Failed to parse categorization JSON, using single category")
+                logger.warning("ISA categorization: unexpected JSON structure, using single category")
+            else:
+                logger.warning("ISA categorization: no JSON object in LLM response, using single category")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("ISA categorization parse error: %s. Using single category", e)
         return {"API Reference": list(seen.keys())}
 
     def _build_isa_boundary_prompt(self, key: str, text: str) -> str:
@@ -618,6 +642,7 @@ JSON array:"""
         try:
             arr_match = re.search(r"\[[\s\S]*\]", raw)
             if not arr_match:
+                logger.info("ISA boundary parse: no JSON array for %s, trying markdown fallback", source_key)
                 return _parse_markdown_entries(raw, source_key)
             items = json.loads(arr_match.group())
             entries: list[ISAEntry] = []
@@ -642,8 +667,9 @@ JSON array:"""
                 ))
             if entries:
                 return entries
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.info("ISA boundary parse: JSON parse failed for %s (%s), trying markdown fallback",
+                        source_key, e)
 
         return _parse_markdown_entries(raw, source_key)
 
@@ -726,6 +752,7 @@ JSON array:"""
         ]
 
         if not items:
+            logger.warning("Optimization menu: no items routed -- using %d default strategies only", len(defaults))
             return defaults
 
         items = _chunk_items(items, self.context_budget)
@@ -766,12 +793,14 @@ JSON array:"""
                 f"Optimization strategies:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
                 prompts, num_samples=1, temperature=0,
             )
         ]
+        logger.info("Optimization menu: map complete in %.1fs", time.time() - t0)
 
         # Collect all candidate strategies from map step
         candidates: list[str] = []
@@ -850,7 +879,10 @@ Return each strategy on its own line, prefixed with "- ".
 Performance optimization strategies:"""
 
         responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
-        return responses[0].strip() if responses else ""
+        raw = responses[0].strip() if responses else ""
+        if not raw:
+            logger.warning("Optimization reduce: LLM returned empty response")
+        return raw
 
     @staticmethod
     def _parse_bullet_lines(raw: str) -> list[str]:
@@ -962,6 +994,8 @@ Translation strategies:"""
         }
 
         if not items:
+            logger.warning("Rules: no items routed -- using %d base rules only",
+                           sum(len(v) for v in base_rules.values()))
             return base_rules
 
         extra_context = self._rules_extra_context(architecture, isa_docs)
@@ -1022,12 +1056,14 @@ Translation strategies:"""
                 f"Rules:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
                 prompts, num_samples=1, temperature=0,
             )
         ]
+        logger.info("Rules: map complete in %.1fs", time.time() - t0)
 
         candidates: list[str] = []
         for i, resp in enumerate(all_responses):
@@ -1081,7 +1117,10 @@ Return as a JSON object with keys "general", "planning", "coding", each mapping 
 Return ONLY a JSON object:"""
 
         responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
-        return responses[0].strip() if responses else "{}"
+        raw = responses[0].strip() if responses else "{}"
+        if raw == "{}":
+            logger.warning("Rules reduce: LLM returned empty response")
+        return raw
 
     @staticmethod
     def _merge_rules(base_rules: dict[str, list[str]], raw: str) -> dict[str, list[str]]:
@@ -1094,8 +1133,8 @@ Return ONLY a JSON object:"""
                     if key in extracted and isinstance(extracted[key], list):
                         merged[key].extend(extracted[key])
                         logger.info("  Rules extracted (%s): %d new rules", key, len(extracted[key]))
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse rules JSON, using defaults only")
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse rules JSON: %s. Raw response: %.300s", e, raw)
         return merged
 
 
@@ -1131,15 +1170,21 @@ def _items_to_text(items: list[tuple[str, str]], max_chars: int) -> str:
     """Concatenate (key, text) pairs into a single string, respecting a size budget."""
     parts: list[str] = []
     total = 0
+    included = 0
     for key, text in items:
         chunk = f"--- {key} ---\n{text}\n"
         if total + len(chunk) > max_chars:
             remaining = max_chars - total
             if remaining > 500:
                 parts.append(chunk[:remaining] + "\n[... truncated ...]")
+                included += 1
+            if included < len(items):
+                logger.info("Content truncated: included %d/%d items to fit %d char budget",
+                            included, len(items), max_chars)
             break
         parts.append(chunk)
         total += len(chunk)
+        included += 1
     return "\n".join(parts)
 
 

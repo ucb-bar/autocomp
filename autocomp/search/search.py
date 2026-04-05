@@ -961,6 +961,18 @@ class BeamSearchStrategy(SearchStrategy):
                 json.dump(run_metrics, f, indent=2)
         except Exception as e:
             logger.warning("Failed to save run metrics: %s", e)
+        total_in = run_metrics.get("total_input_tokens", 0)
+        total_out = run_metrics.get("total_output_tokens", 0)
+        total_tok = total_in + total_out
+        logger.info(
+            "Token usage — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
+            f"{total_in:,}",
+            f"{total_out:,}",
+            f"{total_tok:,}",
+            run_metrics.get("total_llm_duration_s", "?"),
+            run_metrics.get("total_eval_duration_s", "?"),
+            run_metrics.get("run_total_s", "?"),
+        )
 
     def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics, run_t0):
         """Save current iteration metrics to disk and update run-level aggregate."""
