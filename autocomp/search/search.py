@@ -1266,6 +1266,7 @@ class BeamSearchStrategy(SearchStrategy):
                     }
                 }
             )
+            return
 
-        # Final save of run-level aggregate metrics
+        # Final save when loop exited early (break)
         self._save_run_metrics(all_iteration_metrics, run_t0)
