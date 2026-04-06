@@ -972,7 +972,7 @@ class BeamSearchStrategy(SearchStrategy):
                 return f"{n / 1_000:.1f}K"
             return str(n)
         logger.info(
-            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM wall time: %ss, eval time: %ss, run time: %ss",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
             _fmt_tokens(total_in),
             _fmt_tokens(total_out),
             _fmt_tokens(total_tok),
