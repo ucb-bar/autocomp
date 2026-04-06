@@ -457,7 +457,7 @@ class GemminiEvalBackend(EvalBackend):
             working_code_strs = [clean_code_strs[i] for i in working_code_idxs]
             first_test = prob.tests[0]
             # Batch N at a time
-            batch_size = 100
+            batch_size = 20
             batch_start_idx = 0
             while batch_start_idx < len(working_code_strs):
                 batch_end_idx = min(batch_start_idx + batch_size, len(working_code_strs))
