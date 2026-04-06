@@ -13,6 +13,14 @@ class LLMEnsemble:
     def __repr__(self):
         return f"LLMEnsemble({self.llms})"
 
+    @property
+    def _usage_accumulator(self) -> list[dict]:
+        """Non-destructive read of usage records across all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client._usage_accumulator)
+        return records
+
     def reset_usage(self):
         """Clear usage accumulators on all agents' LLM clients."""
         for llm in self.llms:

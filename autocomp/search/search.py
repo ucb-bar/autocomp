@@ -286,7 +286,7 @@ class SearchStrategy:
         code_agent: LLMEnsemble = None,
         early_stop_iters: int = 0,
         early_stop_threshold: float = 1.0,
-        resume_from: str | pathlib.Path | None = None,
+        continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
     ):
         self.repository = CodeRepository()  # Stores the code candidates
@@ -331,14 +331,14 @@ class SearchStrategy:
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
         if num_cands_loaded > 0:
             logger.info("Loaded initial code from %s", save_dir)
-        elif resume_from:
-            resume_dir = pathlib.Path(resume_from)
-            src_dir = _find_latest_candidates_dir(resume_dir)
+        elif continue_from:
+            continue_dir = pathlib.Path(continue_from)
+            src_dir = _find_latest_candidates_dir(continue_dir)
             if src_dir is None:
                 raise ValueError(
-                    f"No candidates-iter-* directories found in {resume_dir}"
+                    f"No candidates-iter-* directories found in {continue_dir}"
                 )
-            logger.info("Resuming from %s", src_dir)
+            logger.info("Continuing from %s", src_dir)
             import shutil
 
             for f in src_dir.glob("candidate_*.txt"):
@@ -782,7 +782,7 @@ class BeamSearchStrategy(SearchStrategy):
         code_agent: LLMEnsemble = None,
         early_stop_iters: int = 0,
         early_stop_threshold: float = 1.0,
-        resume_from: str | pathlib.Path | None = None,
+        continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
     ):
         self.num_analyses = num_analyses
@@ -818,7 +818,7 @@ class BeamSearchStrategy(SearchStrategy):
             code_agent=code_agent,
             early_stop_iters=early_stop_iters,
             early_stop_threshold=early_stop_threshold,
-            resume_from=resume_from,
+            continue_from=continue_from,
             use_edits=use_edits,
         )
         self.init_wandb()
@@ -965,7 +965,7 @@ class BeamSearchStrategy(SearchStrategy):
         total_out = run_metrics.get("total_output_tokens", 0)
         total_tok = total_in + total_out
         logger.info(
-            "Token usage — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
             f"{total_in:,}",
             f"{total_out:,}",
             f"{total_tok:,}",
@@ -1044,6 +1044,13 @@ class BeamSearchStrategy(SearchStrategy):
             num_cands_loaded = self.repository.load_candidates(i, save_dir)
             if num_cands_loaded > 0:
                 logger.info("Loaded %d candidates from %s", num_cands_loaded, save_dir)
+                metrics_path = self.output_dir / f"metrics-iter-{i}.json"
+                if metrics_path.exists():
+                    try:
+                        with open(metrics_path, "r") as f:
+                            all_iteration_metrics.append(json.load(f))
+                    except Exception:
+                        pass
                 continue
 
             # Step 1: Propose optimizations for each candidate

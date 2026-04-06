@@ -63,7 +63,7 @@ def main():
     dropout_menu_options = 0.25
     early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
-    resume_from = ""
+    continue_from = ""
 
     # ------------------------------------------------------------------
     # Code generation
@@ -164,8 +164,8 @@ def main():
         output_str += "_fgisa1"
     if example_rate > 0:
         output_str += f"_ex{example_rate}"
-    if resume_from:
-        output_str += "_resumed"
+    if continue_from:
+        output_str += "_continued"
     if use_edits:
         output_str += "_edits"
     output_dir = pathlib.Path("output") / output_str
@@ -204,7 +204,7 @@ def main():
         code_agent=code_agent,
         early_stop_iters=early_stop_iters,
         early_stop_threshold=early_stop_threshold,
-        resume_from=resume_from,
+        continue_from=continue_from,
         use_edits=use_edits,
     )
 

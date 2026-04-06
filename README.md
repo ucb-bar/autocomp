@@ -224,7 +224,7 @@ The most important parameters are:
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
 - `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
-- `resume_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
+- `continue_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
 
 **Code Generation**
 - `use_edits`: If `True`, the LLM outputs structured JSON edits (`old_str`/`new_str` pairs) instead of rewriting the entire file. Generally more effective when code size is large. Defaults to `False`.
