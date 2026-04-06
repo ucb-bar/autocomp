@@ -941,18 +941,19 @@ class BeamSearchStrategy(SearchStrategy):
         try:
             total_input_tokens = 0
             total_output_tokens = 0
-            total_llm_duration = 0.0
+            total_llm_wall_s = 0.0
             total_eval_duration = 0.0
             for im in all_iteration_metrics:
                 for phase in ("plan_generation", "code_generation", "context_selection", "menu_generation"):
                     for model_data in im.get(phase, {}).values():
                         total_input_tokens += model_data.get("input_tokens", 0)
                         total_output_tokens += model_data.get("output_tokens", 0)
-                        total_llm_duration += model_data.get("duration_s", 0)
+                total_llm_wall_s += im.get("plan_duration_s", 0)
+                total_llm_wall_s += im.get("code_duration_s", 0)
                 total_eval_duration += im.get("evaluation", {}).get("duration_s", 0)
             run_metrics["total_input_tokens"] = total_input_tokens
             run_metrics["total_output_tokens"] = total_output_tokens
-            run_metrics["total_llm_duration_s"] = round(total_llm_duration, 3)
+            run_metrics["total_llm_duration_s"] = round(total_llm_wall_s, 3)
             run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
         except Exception as e:
             logger.warning("Failed to aggregate run metrics: %s", e)
@@ -964,11 +965,17 @@ class BeamSearchStrategy(SearchStrategy):
         total_in = run_metrics.get("total_input_tokens", 0)
         total_out = run_metrics.get("total_output_tokens", 0)
         total_tok = total_in + total_out
+        def _fmt_tokens(n):
+            if n >= 1_000_000:
+                return f"{n / 1_000_000:.1f}M"
+            if n >= 1_000:
+                return f"{n / 1_000:.1f}K"
+            return str(n)
         logger.info(
-            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
-            f"{total_in:,}",
-            f"{total_out:,}",
-            f"{total_tok:,}",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM wall time: %ss, eval time: %ss, run time: %ss",
+            _fmt_tokens(total_in),
+            _fmt_tokens(total_out),
+            _fmt_tokens(total_tok),
             run_metrics.get("total_llm_duration_s", "?"),
             run_metrics.get("total_eval_duration_s", "?"),
             run_metrics.get("run_total_s", "?"),
