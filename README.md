@@ -14,7 +14,7 @@
 | <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
 </p>
 
-**Autocomp** is an LLM-powered kernel optimizer that writes faster code for your accelerator — so you don't have to. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
+**Autocomp** is an extensible, portable framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
 It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **NVIDIA GPUs**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and the **RISC-V Vector Extension**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
