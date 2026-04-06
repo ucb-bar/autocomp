@@ -1,5 +1,5 @@
 @nki.jit
-def test(q, k, v):
+def solution(q, k, v):
     """Important: we are optimizing for shape d_head = 128, seq_len = 4096."""
     d_head, seqlen_q = q.shape
     seqlen_kv = seqlen_q

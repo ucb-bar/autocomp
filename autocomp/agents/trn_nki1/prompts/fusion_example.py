@@ -195,7 +195,7 @@ def nki_fused_all_proj_kernel(x_tensor, g_tensor, up_wT, gate_wT, down_wT):
     return out
 
 
-def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Shapes (prefill example):
     # x: (1, 32, 2048)
     # weights: up/gate (8192, 2048), down (2048, 8192)
@@ -219,7 +219,7 @@ def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, d
 def PROMPT_2():
     return """Here is an example of a fused kernel that inlines two matrix multiplications into a single loop to enable SBUF residency (among other optimizations).
 @nki.jit
-def test(x_tensor, gamma, ug_wT, down_wT):
+def solution(x_tensor, gamma, ug_wT, down_wT):
     '''
     Optimized NKI kernel using larger load blocks (Optimization 8).
     Processing R=1, H=2048, U=8192, D=2048.
@@ -519,7 +519,7 @@ def nki_fused_layer_(lhs, up_w, gate_w, down_w):
             
     return out_hbm
 
-def test(x, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Direct NKI kernel call with 3D input; view operations are removed.
     return nki_fused_layer_(x, up_proj_weight, gate_proj_weight, down_proj_weight)
 """

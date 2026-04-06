@@ -64,7 +64,7 @@ def nki_matmul_tiled_(lhsT, rhs):
 
     return result
 
-def test(x, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Decode shapes:
     # x.shape = (1, 1, 2048)
     # up_proj_weight.shape = (2048, 4096)

@@ -1,5 +1,5 @@
 @nki.jit
-def test(lhsT, rhs):
+def solution(lhsT, rhs):
   # Compute result = lhsT.T @ rhs, where lhsT is [K, M] and rhs is [K, N].
   # Accumulate in fp32; store output in the original dtype.
   K, M = lhsT.shape

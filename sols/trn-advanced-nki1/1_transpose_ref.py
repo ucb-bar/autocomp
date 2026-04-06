@@ -8,7 +8,7 @@ def get_3d_shape(ref, dim):
   return new_shape
 
 @nki.jit
-def test(ref, dim):
+def solution(ref, dim):
   assert len(ref.shape) >= 2
   assert dim != len(ref.shape) - 1
 

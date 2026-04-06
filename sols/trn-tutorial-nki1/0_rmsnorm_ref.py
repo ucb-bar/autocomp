@@ -1,5 +1,5 @@
 @nki.jit
-def test(a_tensor, g_tensor):
+def solution(a_tensor, g_tensor):
   # Calculate out_tensor = a_tensor/RMS(a_tensor) * g_tensor
   # Where RMS(a_tensor) = sqrt((1/N) * sum(a_tensor * a_tensor))
   # and N = a_tensor.shape[1]

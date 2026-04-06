@@ -1,5 +1,5 @@
 c
-void test(float Kinf[12][4], float x_i[12][1], float d_i[4][1], float u_i[4][1]) {
+void solution(float Kinf[12][4], float x_i[12][1], float d_i[4][1], float u_i[4][1]) {
     /* This function implements the operation u_i = -(Kinf * x_i) - d_i. However, it may not achieve optimal performance.
     */
 

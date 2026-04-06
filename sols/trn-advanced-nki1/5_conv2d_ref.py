@@ -110,7 +110,7 @@ def is_negative_padding(padding):
 
 
 @nki.jit
-def test(img_ref, filter_ref, **kwargs):
+def solution(img_ref, filter_ref, **kwargs):
     
     padding = kwargs['padding']
     H_padding_l, H_padding_r = padding[0]

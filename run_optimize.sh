@@ -34,7 +34,7 @@ echo "Start time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "=========================================="
 
 for PROB_ID in $KERNELS; do
-    TEST_FILE=$(ls tests/trn-internal/${PROB_ID}_*_test.py 2>/dev/null | head -1)
+    TEST_FILE=$(ls harnesses/trn-internal/${PROB_ID}_*_test.py 2>/dev/null | head -1)
     if [ -n "$TEST_FILE" ]; then
         echo "Warming up: $TEST_FILE"
         python "$TEST_FILE" 2>&1 || echo "Warm-up for prob_id=$PROB_ID returned non-zero (may be OK)"

@@ -1,5 +1,5 @@
 @nki.jit
-def test(in_tensor, pool_size):
+def solution(in_tensor, pool_size):
     k = pool_size
     h_in, w_in = in_tensor.shape
     h_out = h_in - (k - 1)

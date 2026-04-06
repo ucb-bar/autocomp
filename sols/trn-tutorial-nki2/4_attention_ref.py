@@ -1,5 +1,5 @@
 @nki.jit
-def test(q, k, v):
+def solution(q, k, v):
   """Beta 2 migrated attention kernel (matches `4_attention_test.py` semantics).
 
   Inputs are shaped (d_head=128, seqlen). Output is shaped (seqlen, d_head).

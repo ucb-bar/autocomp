@@ -1,5 +1,5 @@
 @nki.jit
-def test(delta, u, A, B_exp, C_exp):
+def solution(delta, u, A, B_exp, C_exp):
   """
   B_exp, C_exp are pre-broadcast on the host:
     original B: [batch, state_size, seq_len]

@@ -43,4 +43,4 @@ Gemmini has the following problem types (`prob_type` in `run_search.py`):
 | `admm-multifunction` | TinyMPC kernels (FP32, 4x4 config) |
 | `gemm` | Additional matrix multiply benchmarks (int8, 16x16 config) |
 
-Baseline solutions are stored in `sols/{prob_type}/` and test files are in `tests/{prob_type}/`. To add a new problem, add both a baseline solution (`sol{prob_id}_exo_baseline.c`) and a test file (`test{prob_id}.c`) with `// SUBSTITUTE HERE` and `// SUBSTITUTE END` markers where generated code should be inserted.
+Baseline solutions are stored in `sols/{prob_type}/` and test files are in `harnesses/{prob_type}/`. To add a new problem, add both a baseline solution (`sol{prob_id}_exo_baseline.c`) and a test file (`test{prob_id}.c`) with `// SUBSTITUTE HERE` and `// SUBSTITUTE END` markers where generated code should be inserted.

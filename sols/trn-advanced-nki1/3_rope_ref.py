@@ -1,5 +1,5 @@
 @nki.jit
-def test(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
+def solution(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
     def RoPE_sbuf(x_in_sb, cos_sb, sin_sb, x_out_sb):
         d_head, S = x_in_sb.shape
         assert d_head <= 128

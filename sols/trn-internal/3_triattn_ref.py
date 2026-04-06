@@ -1,5 +1,5 @@
 @nki.jit
-def test(
+def solution(
     q,
     k,
     v,

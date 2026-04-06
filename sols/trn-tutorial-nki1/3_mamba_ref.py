@@ -1,5 +1,5 @@
 @nki.jit
-def test(delta, u, A, B, C):
+def solution(delta, u, A, B, C):
     """Computes the SSM operation in the Mamba model.
 
     :param delta: (batch_size, channels, seq_len)

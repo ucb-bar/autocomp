@@ -125,7 +125,7 @@ def nki_matmul_tiled_(lhsT, rhs):
 
     return result
 
-def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Prefill shapes:
     # x.shape = (1, 32, 2048)
     # post_attention_layernorm_weight.shape = (2048,)

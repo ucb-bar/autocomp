@@ -1,5 +1,5 @@
 @nki.jit
-def test(
+def solution(
     psi_real_in,
     psi_imag_in,
     zz_phase_real,

@@ -1,5 +1,5 @@
 @nki.jit
-def test(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
+def solution(in_tensor: nki.tensor, pool_size: int) -> nki.tensor:
     """
     Performs 2D max pooling with stride 1 on a 2D tensor.
     

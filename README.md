@@ -258,7 +258,7 @@ The [Autocomp Trace Visualizer](https://marketplace.visualstudio.com/items?itemN
 
 **`sols/`** - Baseline code for benchmarks (organized by problem type).
 
-**`tests/`** - Test cases corresponding to `sols/`.
+**`harnesses/`** - Test harnesses and context files corresponding to `sols/`.
 
 **`examples/`** - Example optimization traces from Autocomp.
 
@@ -292,6 +292,8 @@ WANDB_MODE=disabled pytest
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
 
 ## 📝 Changelog
+
+**(4/6/2026)** Renamed `tests/` to `harnesses/` and solution entry point from `test()` to `solution()` for clarity. Improved agent builder logging.
 
 **(4/3/2026)** Added run metrics (runtime and tokens) and updated Trace Visualizer to be self-contained.
 

@@ -1,5 +1,5 @@
 @nki.jit
-def test(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
+def solution(x, axis=None, p_size=None, f_size=None, acc_dtype=None):
     assert isinstance(axis, int) or axis is None
     if axis is None:
         axis = -1

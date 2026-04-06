@@ -1,5 +1,5 @@
 @nki.jit
-def test(q, k, v, use_causal_mask=False):
+def solution(q, k, v, use_causal_mask=False):
   """Beta 2 SDPA kernel for tutorial SD-attention shapes.
 
   Computes softmax(q @ k.T * scale) @ v.

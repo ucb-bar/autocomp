@@ -49,6 +49,6 @@ def matmul(
     )(x, y)
 
 
-def test(x, y):
+def solution(x, y):
     out = matmul(x, y)
     return out
