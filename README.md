@@ -42,7 +42,7 @@ agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
 prob_type = "trn-tutorial-nki1"
 prob_id = 2
-models = ["openai::gpt-5.2"]
+models = ["openai::gpt-5.4"]
 ```
 
 Then run:
