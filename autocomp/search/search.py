@@ -181,7 +181,10 @@ def create_backend_and_agents(
 
 
 def load_initial_code(backend_name: str, prob: "Prob") -> str:
-    """Load initial code for the given backend and problem."""
+    """Load initial code for the given backend and problem.
+
+    Also sets ``prob.sol_file`` to the resolved source-file path.
+    """
     if prob.sol_file:
         return prob.sol_file.read_text()
 
@@ -196,44 +199,42 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
                 raise FileNotFoundError(
                     f"No file matching {prob_id}_*.py in {kb_level_dir}"
                 )
-            with open(matches[0]) as f:
-                return f.read().replace("Model", "ModelNew")
+            prob.sol_file = matches[0]
+            return matches[0].read_text().replace("Model", "ModelNew")
     elif backend_name == "gpumode":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "gemmini":
         if "admm" in prob_type:
-            with open(
-                SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
-            ) as f:
-                return f.read()
+            sol_path = SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
         else:
-            with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
-                return f.read()
+            sol_path = SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c"
+        prob.sol_file = sol_path
+        return sol_path.read_text()
     elif backend_name == "trn":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "tpu":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "jaxbench":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if matches:
-            with open(matches[0]) as f:
-                return f.read()
+            prob.sol_file = matches[0]
+            return matches[0].read_text()
         from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
 
         return extract_workload_code(prob)
@@ -381,6 +382,25 @@ class SearchStrategy:
                 json.dump(metadata, f, indent=2, default=str)
         except Exception as e:
             logger.warning("Failed to save run metadata: %s", e)
+
+    def _save_best_candidate(self):
+        """Find the global best candidate and write its source code to disk."""
+        best = None
+        for candidates in self.repository.candidates_per_iteration:
+            for c in candidates:
+                if c.score is not None and c.score != float("inf"):
+                    if best is None or c.score < best.score:
+                        best = c
+        if best is None:
+            return None
+        ext = self.prob.sol_file.suffix if self.prob.sol_file else ".txt"
+        path = self.output_dir / f"best_candidate_so_far{ext}"
+        try:
+            path.write_text(best.code)
+            logger.info("Best candidate score: %s (saved to %s)", best.score, path.name)
+        except Exception as e:
+            logger.warning("Failed to save best candidate: %s", e)
+        return best
 
     def propose_optimizations_iter(
         self, candidates: list[CodeCandidate], num_plans: int
@@ -741,6 +761,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
+            self._save_best_candidate()
 
 
 class BeamSearchStrategy(SearchStrategy):
@@ -957,6 +978,9 @@ class BeamSearchStrategy(SearchStrategy):
             run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
         except Exception as e:
             logger.warning("Failed to aggregate run metrics: %s", e)
+        best = self._save_best_candidate()
+        if best is not None:
+            run_metrics["best_score"] = best.score
         try:
             with open(self.output_dir / "run_metrics.json", "w") as f:
                 json.dump(run_metrics, f, indent=2)
@@ -1251,6 +1275,7 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
+            self._save_best_candidate()
 
             # Final save for this iteration (captures complete usage data)
             self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
