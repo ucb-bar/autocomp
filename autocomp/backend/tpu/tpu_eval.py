@@ -9,7 +9,7 @@ import secrets
 import re
 import shlex
 
-from autocomp.common import logger, TESTS_DIR
+from autocomp.common import logger, HARNESSES_DIR
 from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 
@@ -337,7 +337,7 @@ class TpuEvalBackend(TpuHardwareBackend):
 
 	@staticmethod
 	def _load_harness(prob: Prob) -> str:
-		harness_path = TESTS_DIR / prob.prob_type / f"test{prob.prob_id}.py"
+		harness_path = HARNESSES_DIR / prob.prob_type / f"test{prob.prob_id}.py"
 		if not harness_path.exists():
 			raise FileNotFoundError(f"Harness file not found: {harness_path}")
 		harness = harness_path.read_text(encoding="utf-8", errors="replace")
@@ -486,12 +486,12 @@ for _idx, _b64 in enumerate(IMPL_SOURCES):
         _src = base64.b64decode(_b64).decode()
         _ns = dict(_shared_globals)
         exec(_src, _ns)
-        _test_fn = _ns.get("test")
+        _test_fn = _ns.get("solution")
         if _test_fn is None:
-            print("ERROR: no test() function defined")
+            print("ERROR: no solution() function defined")
             print(DELIM_END, flush=True)
             continue
-        test = _test_fn
+        solution = _test_fn
         _run_autocomp_harness()
     except SystemExit:
         print("FAIL: SystemExit raised")

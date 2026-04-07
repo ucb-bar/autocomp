@@ -79,7 +79,7 @@ def nki_matmul_tiled_batched_(lhsT, rhs):
 
 import torch
 
-def test(hidden_states, lm_head_weight):
+def solution(hidden_states, lm_head_weight):
     # hidden_states: (32, 1, 2048)
     # lm_head_weight: (2048, 64128)
     # output: (32, 1, 64128)

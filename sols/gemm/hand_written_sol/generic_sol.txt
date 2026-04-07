@@ -3,7 +3,7 @@
 #define TILE_SIZE_K // Tile size for K dimension (A and B)
 #define TILE_SIZE_J // Tile size for J dimension (B and C)
 
-void test(float A[I_SIZE][K_SIZE], float B[K_SIZE][J_SIZE], float C[I_SIZE][J_SIZE]) {
+void solution(float A[I_SIZE][K_SIZE], float B[K_SIZE][J_SIZE], float C[I_SIZE][J_SIZE]) {
     // Configuration for the systolic array operations
     config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
     config_st(J_SIZE * sizeof(float)); // C has J_SIZE columns in DRAM

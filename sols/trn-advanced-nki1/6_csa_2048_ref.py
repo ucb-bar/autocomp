@@ -1,5 +1,5 @@
 @nki.jit
-def test(q, k, v,
+def solution(q, k, v,
         kernel_dtype, acc_type,
         seq_len=2048,
         d_head=128

@@ -1,5 +1,5 @@
 @nki.jit
-def test(img_ref, filter_ref, **kwargs):
+def solution(img_ref, filter_ref, **kwargs):
     # --- inline helpers -------------------------------------------------------
     def _div_ceil(n, d):
         return (n + d - 1) // d

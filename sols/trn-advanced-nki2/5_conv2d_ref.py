@@ -80,7 +80,7 @@ def transpose_kernel_beta2(ref, dim, dst):
 
 
 @nki.jit
-def test(img_ref, filter_T_ref, padding=None, stride=None, rhs_dilation=None, in_perm=None, kern_perm=None, out_perm=None):
+def solution(img_ref, filter_T_ref, padding=None, stride=None, rhs_dilation=None, in_perm=None, kern_perm=None, out_perm=None):
     # filter_T_ref shape: (C_in, H_f, W_f, C_out) — pre-transposed outside the kernel
     if stride is None:
         stride = [1, 1]

@@ -40,7 +40,7 @@ def transpose_p_local(
         ] = nl.copy(p_local_t_tmp, dtype=p_local_transposed.dtype)
 
 @nki.jit
-def test(
+def solution(
     q,
     k,
     v,

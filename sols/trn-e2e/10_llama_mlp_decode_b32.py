@@ -69,7 +69,7 @@ def nki_matmul_tiled_batched_(lhsT, rhs):
 
 import torch
 
-def test(x, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     # Decode shapes:
     # x.shape = (32, 1, 2048)
     # up_proj_weight.shape = (2048, 4096)

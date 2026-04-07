@@ -1,5 +1,5 @@
 @nki.jit
-def test(
+def solution(
     X_real_hbm,
     X_imag_hbm,
     W_128_real_hbm,

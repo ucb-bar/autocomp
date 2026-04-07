@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import re
+import time
 import yaml
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def build_agent(agent_name: str, output_dir: str,
                 context_budget: int = 150_000) -> Path:
     """Run the AgentBuilder pipeline on directory, file, and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
+    t0 = time.time()
     builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
                            agent_scope=agent_scope, context_budget=context_budget)
     if source_dir:
@@ -56,7 +58,32 @@ def build_agent(agent_name: str, output_dir: str,
     for url in (source_urls or []):
         builder.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     config_dir = builder.build(agent_name=agent_name, output_dir=output_dir)
+    elapsed = time.time() - t0
+    usage_records = builder._llm_client.collect_usage()
+    if builder._light_llm_client:
+        usage_records.extend(builder._light_llm_client.collect_usage())
+    _print_build_summary(elapsed, usage_records)
     return config_dir
+
+
+def _print_build_summary(elapsed: float, usage_records: list[dict]):
+    """Print wall-clock time and LLM token usage after a build."""
+    from autocomp.common.llm_utils import aggregate_usage
+    usage = aggregate_usage(usage_records)
+
+    mins, secs = divmod(int(elapsed), 60)
+    print(f"\nBuild completed in {mins}m {secs}s")
+
+    if not usage:
+        return
+    total_in = 0
+    total_out = 0
+    for phase_data in usage.values():
+        for model_data in phase_data.values():
+            total_in += model_data.get("input_tokens", 0)
+            total_out += model_data.get("output_tokens", 0)
+    if total_in or total_out:
+        print(f"  LLM tokens: {total_in:,} in / {total_out:,} out ({total_in + total_out:,} total)")
 
 
 # ------------------------------------------------------------------
@@ -471,6 +498,9 @@ def main():
         parser.error("At least one of --source-dir, --source-file, or --source-url is required for building")
 
     output_dir = str(Path(args.output_dir) / args.agent_name)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    import autocomp.common.my_logging
+    autocomp.common.my_logging.move_log(Path(output_dir), tag="agent-builder")
     print(f"Building {args.agent_name} agent...")
     if args.source_dir:
         print(f"  Source dir: {args.source_dir}")

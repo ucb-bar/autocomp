@@ -181,7 +181,10 @@ def create_backend_and_agents(
 
 
 def load_initial_code(backend_name: str, prob: "Prob") -> str:
-    """Load initial code for the given backend and problem."""
+    """Load initial code for the given backend and problem.
+
+    Also sets ``prob.sol_file`` to the resolved source-file path.
+    """
     if prob.sol_file:
         return prob.sol_file.read_text()
 
@@ -196,44 +199,42 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
                 raise FileNotFoundError(
                     f"No file matching {prob_id}_*.py in {kb_level_dir}"
                 )
-            with open(matches[0]) as f:
-                return f.read().replace("Model", "ModelNew")
+            prob.sol_file = matches[0]
+            return matches[0].read_text().replace("Model", "ModelNew")
     elif backend_name == "gpumode":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "gemmini":
         if "admm" in prob_type:
-            with open(
-                SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
-            ) as f:
-                return f.read()
+            sol_path = SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
         else:
-            with open(SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c") as f:
-                return f.read()
+            sol_path = SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c"
+        prob.sol_file = sol_path
+        return sol_path.read_text()
     elif backend_name == "trn":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "tpu":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.py in {sol_dir}")
-        with open(matches[0]) as f:
-            return f.read()
+        prob.sol_file = matches[0]
+        return matches[0].read_text()
     elif backend_name == "jaxbench":
         sol_dir = SOLS_DIR / prob_type
         matches = list(sol_dir.glob(f"{prob_id}_*.py"))
         if matches:
-            with open(matches[0]) as f:
-                return f.read()
+            prob.sol_file = matches[0]
+            return matches[0].read_text()
         from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
 
         return extract_workload_code(prob)
@@ -286,7 +287,7 @@ class SearchStrategy:
         code_agent: LLMEnsemble = None,
         early_stop_iters: int = 0,
         early_stop_threshold: float = 1.0,
-        resume_from: str | pathlib.Path | None = None,
+        continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
     ):
         self.repository = CodeRepository()  # Stores the code candidates
@@ -331,14 +332,14 @@ class SearchStrategy:
         num_cands_loaded = self.repository.load_candidates(0, save_dir)
         if num_cands_loaded > 0:
             logger.info("Loaded initial code from %s", save_dir)
-        elif resume_from:
-            resume_dir = pathlib.Path(resume_from)
-            src_dir = _find_latest_candidates_dir(resume_dir)
+        elif continue_from:
+            continue_dir = pathlib.Path(continue_from)
+            src_dir = _find_latest_candidates_dir(continue_dir)
             if src_dir is None:
                 raise ValueError(
-                    f"No candidates-iter-* directories found in {resume_dir}"
+                    f"No candidates-iter-* directories found in {continue_dir}"
                 )
-            logger.info("Resuming from %s", src_dir)
+            logger.info("Continuing from %s", src_dir)
             import shutil
 
             for f in src_dir.glob("candidate_*.txt"):
@@ -381,6 +382,25 @@ class SearchStrategy:
                 json.dump(metadata, f, indent=2, default=str)
         except Exception as e:
             logger.warning("Failed to save run metadata: %s", e)
+
+    def _save_best_candidate(self):
+        """Find the global best candidate and write its source code to disk."""
+        best = None
+        for candidates in self.repository.candidates_per_iteration:
+            for c in candidates:
+                if c.score is not None and c.score != float("inf"):
+                    if best is None or c.score < best.score:
+                        best = c
+        if best is None:
+            return None
+        ext = self.prob.sol_file.suffix if self.prob.sol_file else ".txt"
+        path = self.output_dir / f"best_candidate_so_far{ext}"
+        try:
+            path.write_text(best.code)
+            logger.info("Best candidate score: %s (saved to %s)", best.score, path.name)
+        except Exception as e:
+            logger.warning("Failed to save best candidate: %s", e)
+        return best
 
     def propose_optimizations_iter(
         self, candidates: list[CodeCandidate], num_plans: int
@@ -743,6 +763,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
+            self._save_best_candidate()
 
 
 class BeamSearchStrategy(SearchStrategy):
@@ -784,7 +805,7 @@ class BeamSearchStrategy(SearchStrategy):
         code_agent: LLMEnsemble = None,
         early_stop_iters: int = 0,
         early_stop_threshold: float = 1.0,
-        resume_from: str | pathlib.Path | None = None,
+        continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
         skip_planning: bool = False,
     ):
@@ -822,7 +843,7 @@ class BeamSearchStrategy(SearchStrategy):
             code_agent=code_agent,
             early_stop_iters=early_stop_iters,
             early_stop_threshold=early_stop_threshold,
-            resume_from=resume_from,
+            continue_from=continue_from,
             use_edits=use_edits,
         )
         self.init_wandb()
@@ -945,26 +966,48 @@ class BeamSearchStrategy(SearchStrategy):
         try:
             total_input_tokens = 0
             total_output_tokens = 0
-            total_llm_duration = 0.0
+            total_llm_wall_s = 0.0
             total_eval_duration = 0.0
             for im in all_iteration_metrics:
                 for phase in ("plan_generation", "code_generation", "context_selection", "menu_generation"):
                     for model_data in im.get(phase, {}).values():
                         total_input_tokens += model_data.get("input_tokens", 0)
                         total_output_tokens += model_data.get("output_tokens", 0)
-                        total_llm_duration += model_data.get("duration_s", 0)
+                total_llm_wall_s += im.get("plan_duration_s", 0)
+                total_llm_wall_s += im.get("code_duration_s", 0)
                 total_eval_duration += im.get("evaluation", {}).get("duration_s", 0)
             run_metrics["total_input_tokens"] = total_input_tokens
             run_metrics["total_output_tokens"] = total_output_tokens
-            run_metrics["total_llm_duration_s"] = round(total_llm_duration, 3)
+            run_metrics["total_llm_duration_s"] = round(total_llm_wall_s, 3)
             run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
         except Exception as e:
             logger.warning("Failed to aggregate run metrics: %s", e)
+        best = self._save_best_candidate()
+        if best is not None:
+            run_metrics["best_score"] = best.score
         try:
             with open(self.output_dir / "run_metrics.json", "w") as f:
                 json.dump(run_metrics, f, indent=2)
         except Exception as e:
             logger.warning("Failed to save run metrics: %s", e)
+        total_in = run_metrics.get("total_input_tokens", 0)
+        total_out = run_metrics.get("total_output_tokens", 0)
+        total_tok = total_in + total_out
+        def _fmt_tokens(n):
+            if n >= 1_000_000:
+                return f"{n / 1_000_000:.1f}M"
+            if n >= 1_000:
+                return f"{n / 1_000:.1f}K"
+            return str(n)
+        logger.info(
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
+            _fmt_tokens(total_in),
+            _fmt_tokens(total_out),
+            _fmt_tokens(total_tok),
+            run_metrics.get("total_llm_duration_s", "?"),
+            run_metrics.get("total_eval_duration_s", "?"),
+            run_metrics.get("run_total_s", "?"),
+        )
 
     def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics, run_t0):
         """Save current iteration metrics to disk and update run-level aggregate."""
@@ -1036,6 +1079,13 @@ class BeamSearchStrategy(SearchStrategy):
             num_cands_loaded = self.repository.load_candidates(i, save_dir)
             if num_cands_loaded > 0:
                 logger.info("Loaded %d candidates from %s", num_cands_loaded, save_dir)
+                metrics_path = self.output_dir / f"metrics-iter-{i}.json"
+                if metrics_path.exists():
+                    try:
+                        with open(metrics_path, "r") as f:
+                            all_iteration_metrics.append(json.load(f))
+                    except Exception:
+                        pass
                 continue
 
             # Step 1 + 2: Generate implementations (plan-then-implement or direct)
@@ -1253,6 +1303,7 @@ class BeamSearchStrategy(SearchStrategy):
             logger.info("New candidate scores:")
             for candidate in candidates_for_next_iter:
                 logger.info(candidate.score)
+            self._save_best_candidate()
 
             # Final save for this iteration (captures complete usage data)
             self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
@@ -1268,6 +1319,7 @@ class BeamSearchStrategy(SearchStrategy):
                     }
                 }
             )
+            return
 
-        # Final save of run-level aggregate metrics
+        # Final save when loop exited early (break)
         self._save_run_metrics(all_iteration_metrics, run_t0)

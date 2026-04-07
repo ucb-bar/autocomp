@@ -1,5 +1,5 @@
 @nki.jit
-def test(a_tensor, g_tensor):
+def solution(a_tensor, g_tensor):
 
   # Row tile size (partition limit); column chunk size for nc_matmul (max 128x512)
   TILE_ROWS = 128

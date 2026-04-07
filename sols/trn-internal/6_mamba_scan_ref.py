@@ -1,5 +1,5 @@
 @nki.jit
-def test(
+def solution(
     dA_exp_t,
     dBx_t,
     C_t,

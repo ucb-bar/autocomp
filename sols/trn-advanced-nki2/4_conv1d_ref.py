@@ -3,7 +3,7 @@ def div_ceil(n, d):
 
 
 @nki.jit
-def test(img_ref, filter_ref, padding=None):
+def solution(img_ref, filter_ref, padding=None):
     W_padding_l, W_padding_r = padding[1]
 
     N, C_in, H, W = img_ref.shape

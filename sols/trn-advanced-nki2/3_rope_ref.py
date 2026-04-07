@@ -1,5 +1,5 @@
 @nki.jit
-def test(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
+def solution(x_in, cos, sin, lnc_shard=False, first_second_half_impl=True):
     d_head, S = x_in.shape
     d_half = d_head // 2
 

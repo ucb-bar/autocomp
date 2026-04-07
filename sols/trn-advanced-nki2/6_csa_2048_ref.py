@@ -1,5 +1,5 @@
 @nki.jit
-def test(q, k, v, causal_mask,
+def solution(q, k, v, causal_mask,
          kernel_dtype, acc_type,
          seq_len=2048,
          d_head=128):

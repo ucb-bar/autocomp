@@ -17,11 +17,11 @@ INT8_32PE_CHIPYARD_PATH = None
 
 def clean_code(code_str: str) -> str:
     """
-    Takes LLM-generated code, removes the "test" wrapper function, and cleans up anything that is not runnable C code
+    Takes LLM-generated code, removes the "solution" wrapper function, and cleans up anything that is not runnable C code
 
     for example:
     '''
-    void test(Kinf, r, K_r) {
+    void solution(Kinf, r, K_r) {
         config_ex(WEIGHT_STATIONARY,  NO_ACTIVATION, true, false);
         config_st(1 * sizeof(float)); // output K_r has 1 column in DRAM
         ...
@@ -43,10 +43,10 @@ def clean_code(code_str: str) -> str:
     # Remove the function wrapper and return only the body of the function
     if not code_str:
         return ""
-    after_void_test_str = code_str[code_str.find("void test("):]
-    start = after_void_test_str.find('{') + 1
-    end = after_void_test_str.rfind('}')
-    body = after_void_test_str[start:end]
+    after_void_solution_str = code_str[code_str.find("void solution("):]
+    start = after_void_solution_str.find('{') + 1
+    end = after_void_solution_str.rfind('}')
+    body = after_void_solution_str[start:end]
     return body
     # body = code_str[start:end].split("\n")
     # new_body = []

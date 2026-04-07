@@ -1,5 +1,5 @@
 @nki.jit
-def test(Q, K, V, past_k, past_v, attention_mask):
+def solution(Q, K, V, past_k, past_v, attention_mask):
     """
     Token-generation attention kernel in NKI.
     Optimized for Trainium/Inferentia.

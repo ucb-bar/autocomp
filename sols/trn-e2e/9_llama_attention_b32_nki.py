@@ -1,5 +1,5 @@
 @nki.jit
-def test(Q, K, V, past_key_value, attention_mask):
+def solution(Q, K, V, past_key_value, attention_mask):
     """
     NKI implementation of token generation attention.
 

@@ -158,7 +158,7 @@ def nki_fused_all_proj_kernel(x_tensor, g_tensor, up_wT, gate_wT, down_wT):
     return out
 
 
-def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, down_proj_weight):
     b, s, h = x.shape
     x2d = x.view(-1, h)  # [R, H]
     output = nki_fused_all_proj_kernel(
@@ -174,7 +174,7 @@ def test(x, post_attention_layernorm_weight, up_proj_weight, gate_proj_weight, d
 def PROMPT_2():
     return """Here is an example of a fused kernel that inlines two matrix multiplications into a single loop to enable SBUF residency (among other optimizations).
 @nki.jit
-def test(x_tensor, gamma, ug_wT, down_wT):
+def solution(x_tensor, gamma, ug_wT, down_wT):
     '''
     Single-token (M=1) fused MLP: RMSNorm + up/gate + SiLU*up + down.
     Beta 2, K-first layout (par_dim = TILE_K = 128 throughout).
@@ -420,7 +420,7 @@ def nki_fused_layer_(lhs_T, up_w, gate_w, down_w):
     return out_T
 
 
-def test(x, up_proj_weight, gate_proj_weight, down_proj_weight):
+def solution(x, up_proj_weight, gate_proj_weight, down_proj_weight):
     # x: [B, S, K_in] with B=1, S=1 (single token inference)
     b, s, k_in = x.shape
     n_out = down_proj_weight.shape[-1]

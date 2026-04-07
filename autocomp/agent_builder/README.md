@@ -41,6 +41,8 @@ python -m autocomp.agent_builder.run_agent_builder \
 | `--max-depth` | Max link-following depth for `--source-url` (default: 2) |
 | `--max-pages` | Max pages to fetch per `--source-url` (default: 250) |
 
+> **Tip — File size limit:** Individual text files larger than 512 KB are skipped during `--source-dir` ingestion (a warning is logged). If you have a large reference file, either split it into smaller pieces or provide it directly via `--source-file` (which has no size limit, though very large files will be chunked by the synthesizer's context budget).
+
 > **Tip — URL scoping:** The crawler only follows links whose path starts with the parent directory of the URL you provide. For example, `--source-url https://docs.example.com/en/v2.0/api/index.html` crawls pages under `/en/v2.0/api/` and won't follow links to `/en/latest/` or `/en/v3.0/`. If you need content from multiple subtrees, provide a separate `--source-url` for each:
 >
 > ```bash

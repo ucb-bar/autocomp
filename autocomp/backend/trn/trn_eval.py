@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 from datetime import datetime
 
-from autocomp.common import logger, TESTS_DIR
+from autocomp.common import logger, HARNESSES_DIR
 from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 
@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
     TraceKernel.specialize_and_call = _patched_specialize
 
-    test_result = test_nki(__REF_FUNC__, test)
+    test_result = test_nki(__REF_FUNC__, solution)
     if not test_result:
         print("Test failed")
         exit(1)
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     nki.benchmark = _mock_benchmark
 
     try:
-        benchmark_nki(test)
+        benchmark_nki(solution)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -334,9 +334,9 @@ _target_func = {ref_func_name}
             func_setup = f"""\
 import importlib
 _mod = importlib.import_module("impls.impl_{idx}")
-_target_func = getattr(_mod, "test", None)
+_target_func = getattr(_mod, "solution", None)
 if _target_func is None:
-    print(json.dumps({{"compiled": False, "error": "No test function defined"}}))
+    print(json.dumps({{"compiled": False, "error": "No solution function defined"}}))
     sys.exit(0)
 """
 
@@ -761,7 +761,7 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         if prob.test_file:
             test_file = prob.test_file
         else:
-            test_dir = TESTS_DIR / prob.prob_type
+            test_dir = HARNESSES_DIR / prob.prob_type
             matches = list(test_dir.glob(f"{prob.prob_id}_*.py"))
             if not matches:
                 raise FileNotFoundError(

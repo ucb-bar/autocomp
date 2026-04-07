@@ -1,5 +1,5 @@
 @nki.jit
-def test(lhsT, rhs):
+def solution(lhsT, rhs):
   """NKI kernel to compute a matrix multiplication operation in a tiled manner
 
   Args:

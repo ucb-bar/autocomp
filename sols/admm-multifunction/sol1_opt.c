@@ -1,4 +1,4 @@
-void test(float Adyn[12][12], float Bdyn[12][4] float Kinf[4][12], float x[NHORIZON + 1][12][1], float d[NHORIZON][4][1], float u[NHORIZON][4][1]) {
+void solution(float Adyn[12][12], float Bdyn[12][4] float Kinf[4][12], float x[NHORIZON + 1][12][1], float d[NHORIZON][4][1], float u[NHORIZON][4][1]) {
     /* Hand-written implementation from https://github.com/ucb-bar/Accelerated-TinyMPC/blob/09b86d4edf5b21730aff200c3f16fabd99dc4a4a/src/tinympc/admm_gemmini.cpp#L611
     */
 
