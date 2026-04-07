@@ -234,6 +234,68 @@ class TrnNki1LLMAgent(LLMAgent):
 
         return prompt_text
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
+        if translate:
+            opt_lst = self._get_convert_to_nki_menu_options()
+        else:
+            opt_lst = self.get_opt_menu_options(prob)
+            if dropout_menu_options < 1:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        include_score_feedback = random.random() < give_score_feedback
+
+        parents_prompt = ""
+        cur_cand = candidate
+        while cur_cand is not None:
+            if include_score_feedback and (cur_cand.score is not None):
+                parents_prompt = f"The latency of this code was {cur_cand.score} ms.\n" + parents_prompt
+            if not include_ancestors:
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+                break
+            elif cur_cand.plan is not None:
+                parents_prompt = "\nNext, we applied this plan to the code:\n" + cur_cand.plan + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
+            else:
+                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+            cur_cand = cur_cand.parent
+
+        prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
+        prompt_text += self.nki_isa_generator.generate_isa(prob)
+        prompt_text += parents_prompt
+
+        menu_options_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_options_text += f"{i + 1}. {opt}\n"
+
+        if translate:
+            prompt_text += "Please review the code and identify parts that should be converted to NKI kernels.\n"
+            prompt_text += "The following conversion strategies are available:\n"
+            prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
+            prompt_text += "You are an expert NKI performance engineer. "
+            prompt_text += "Apply one of the <optimizations> to convert the above code to NKI and output the complete code directly.\n"
+        else:
+            prompt_text += "Please carefully review the NKI code to identify any inefficiencies. "
+            prompt_text += "Performance can be improved by using the following optimizations:\n"
+            prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
+            prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
+            prompt_text += "Apply one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. "
+            prompt_text += "Output the complete optimized code directly.\n"
+
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
+
+        if cur_iter is not None and num_iters is not None:
+            prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
+
+        prompt_text += "\nOptimized NKI code:"
+        return prompt_text
+
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate], prob: Prob = None) -> str:
         prompt_text = "The NKI (Neuron Kernel Interface) is used for writing high-performance kernels on AWS Trainium and Inferentia chips.\n"
         prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "

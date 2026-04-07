@@ -1044,7 +1044,7 @@ class BeamSearchStrategy(SearchStrategy):
             if self.code_agent is not self.agent:
                 self.code_agent.reset_usage()
 
-            if self.skip_planning and not translate:
+            if self.skip_planning:
                 # Direct implementation: skip planning, generate code in one shot
                 save_dir = self.output_dir / f"generated-code-iter-{i}"
                 save_dir.mkdir(parents=True, exist_ok=True)
@@ -1063,6 +1063,7 @@ class BeamSearchStrategy(SearchStrategy):
                     dropout_menu_options=self.dropout_menu_options,
                     cur_iter=i,
                     num_iters=iterations,
+                    translate=translate,
                 )
                 code_duration = round(time.perf_counter() - code_t0, 3)
                 iter_metrics["plan_duration_s"] = 0

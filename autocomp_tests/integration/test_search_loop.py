@@ -124,3 +124,21 @@ def test_beam_search_two_iterations(built_agent, dummy_eval_backend, dummy_prob,
     assert "total_output_tokens" in rm
     assert "total_llm_duration_s" in rm
     assert "total_eval_duration_s" in rm
+
+
+def test_skip_planning(built_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
+    """Run two iterations in no-plan (direct) mode and verify artifacts."""
+    strategy = _make_strategy(
+        tmp_output_dir, dummy_eval_backend, built_agent, dummy_prob,
+        skip_planning=True,
+    )
+    strategy.optimize(iterations=2)
+
+    for i in (1, 2):
+        assert (tmp_output_dir / f"candidates-iter-{i}").is_dir()
+        assert (tmp_output_dir / f"generated-code-iter-{i}").is_dir()
+        assert not (tmp_output_dir / f"generated-plans-iter-{i}").exists()
+
+    rm = json.loads((tmp_output_dir / "run_metrics.json").read_text())
+    assert rm["run_total_s"] > 0
+    assert len(rm["iterations"]) == 2

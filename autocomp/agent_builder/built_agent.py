@@ -809,10 +809,25 @@ class BuiltLLMAgent(LLMAgent):
                                      include_ancestors: bool = False,
                                      dropout_menu_options: float = 1.0,
                                      cur_iter: int = None,
-                                     num_iters: int = None) -> str:
-        opt_lst = self.get_opt_menu_options(prob, candidate)
-        if dropout_menu_options < 1:
-            opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
+        if translate:
+            if self._translate_menu:
+                opt_lst = list(self._translate_menu)
+            else:
+                if not self._translate_menu_warned:
+                    logger.warning(
+                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                        "Using generic default. Create a translate_menu.yaml with "
+                        "target-specific strategies for better results.",
+                        self.config_dir,
+                    )
+                    self._translate_menu_warned = True
+                opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
+        else:
+            opt_lst = self.get_opt_menu_options(prob, candidate)
+            if dropout_menu_options < 1:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
 
         isa_text, examples_text = self._get_problem_context(prob, candidate.code)
 
@@ -829,16 +844,22 @@ class BuiltLLMAgent(LLMAgent):
         for i, opt in enumerate(opt_lst):
             menu_text += f"{i + 1}. {opt}\n"
 
-        prompt_text += "Please carefully review the code to identify any inefficiencies. "
-        prompt_text += "Performance can be improved by using the following strategies:\n"
-        prompt_text += "<strategies>:\n" + menu_text + "\n"
-
-        prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
-        prompt_text += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
-        prompt_text += "Output the complete optimized code directly.\n"
+        if translate:
+            prompt_text += "Please review the code and identify parts that should be converted to the target hardware representation.\n"
+            prompt_text += "The following conversion strategies are available:\n"
+            prompt_text += "<strategies>:\n" + menu_text + "\n"
+            prompt_text += "You are an expert at translating code to this hardware target. "
+            prompt_text += "Apply one of the <strategies> to convert the above code and output the complete code directly.\n"
+        else:
+            prompt_text += "Please carefully review the code to identify any inefficiencies. "
+            prompt_text += "Performance can be improved by using the following strategies:\n"
+            prompt_text += "<strategies>:\n" + menu_text + "\n"
+            prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
+            prompt_text += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
+            prompt_text += "Output the complete optimized code directly.\n"
 
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
+        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob, translate=translate)
 
         if cur_iter is not None and num_iters is not None:
             prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."

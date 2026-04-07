@@ -175,12 +175,13 @@ class LLMAgent:
                                      include_ancestors: bool = False,
                                      dropout_menu_options: float = 1.0,
                                      cur_iter: int = None,
-                                     num_iters: int = None) -> str:
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
         """Build a prompt that generates optimized code directly, without a separate planning phase.
 
         Subclasses should override to provide hardware-specific prompts.
-        The default falls back to _get_propose_optimizations_prompt context
-        but asks for code output instead of a plan.
+        When *translate* is True the prompt should ask for conversion to the
+        target representation rather than optimization.
         """
         raise NotImplementedError
 
@@ -489,6 +490,7 @@ class LLMAgent:
         give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
     ) -> list[CodeCandidate]:
         """Generate optimized code directly from parent candidates, bypassing the planning phase.
 
@@ -543,6 +545,7 @@ class LLMAgent:
                     include_ancestors=include_ancestors,
                     dropout_menu_options=dropout_menu_options,
                     cur_iter=cur_iter, num_iters=num_iters,
+                    translate=translate,
                 )
                 prompt_path = save_dir / f"direct_prompt{'' if not save_str else '_' + save_str}_{p}.txt"
                 with open(prompt_path, "w") as f:

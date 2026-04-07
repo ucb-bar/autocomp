@@ -266,7 +266,8 @@ Cycles can be reduced by using the following optimizations:
                                      include_ancestors: bool = False,
                                      dropout_menu_options: float = 1.0,
                                      cur_iter: int = None,
-                                     num_iters: int = None) -> str:
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
         opt_lst = self.get_opt_menu_options(prob)
         if dropout_menu_options < 1:
             opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]

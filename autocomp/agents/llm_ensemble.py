@@ -170,6 +170,7 @@ class LLMEnsemble:
         give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
     ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -180,7 +181,7 @@ class LLMEnsemble:
                     llm.direct_implement_code_parallel,
                     candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob,
                     give_score_feedback, give_hw_feedback, include_ancestors,
-                    dropout_menu_options, cur_iter, num_iters,
+                    dropout_menu_options, cur_iter, num_iters, translate,
                 ))
 
         cands = []
