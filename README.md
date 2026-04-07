@@ -14,7 +14,7 @@
 | <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
 </p>
 
-**Autocomp** is an LLM-powered kernel optimizer that writes faster code for your accelerator — so you don't have to. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
+**Autocomp** is an extensible, portable framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
 It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **NVIDIA GPUs**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and the **RISC-V Vector Extension**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
@@ -42,7 +42,7 @@ agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
 prob_type = "trn-tutorial-nki1"
 prob_id = 2
-models = ["openai::gpt-5.2"]
+models = ["openai::gpt-5.4"]
 ```
 
 Then run:
@@ -224,7 +224,7 @@ The most important parameters are:
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
 - `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
-- `resume_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
+- `continue_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
 
 **Code Generation**
 - `use_edits`: If `True`, the LLM outputs structured JSON edits (`old_str`/`new_str` pairs) instead of rewriting the entire file. Generally more effective when code size is large. Defaults to `False`.
@@ -258,7 +258,7 @@ The [Autocomp Trace Visualizer](https://marketplace.visualstudio.com/items?itemN
 
 **`sols/`** - Baseline code for benchmarks (organized by problem type).
 
-**`tests/`** - Test cases corresponding to `sols/`.
+**`harnesses/`** - Test harnesses and context files corresponding to `sols/`.
 
 **`examples/`** - Example optimization traces from Autocomp.
 
@@ -292,6 +292,8 @@ WANDB_MODE=disabled pytest
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
 
 ## 📝 Changelog
+
+**(4/6/2026)** Renamed `tests/` to `harnesses/` and solution entry point from `test()` to `solution()` for clarity. Improved agent builder logging.
 
 **(4/3/2026)** Added run metrics (runtime and tokens) and updated Trace Visualizer to be self-contained.
 

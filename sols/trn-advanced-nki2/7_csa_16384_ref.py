@@ -26,7 +26,7 @@ def transpose_p_local(p_local_transposed, p_local, Q_TILE_SIZE, LARGE_KV_TILE_SI
 
 
 @nki.jit
-def test(
+def solution(
     q, k, v, olm_prev,
     kernel_dtype, acc_type,
     tile_mask,

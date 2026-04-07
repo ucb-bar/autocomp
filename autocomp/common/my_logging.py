@@ -17,16 +17,18 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 format="[%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s"
 
-def logfilename():
-    """ Construct a unique log file name from: date + 16 char random. """
+def logfilename(tag=""):
+    """Construct a unique log file name: autocomp-date[-tag]-random.log"""
     timeline = time.strftime("%Y-%m-%d--%H-%M-%S", time.gmtime())
-    randname = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(16))
-    return "auto-comp-" + timeline + "-" + randname + ".log"
+    randname = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    if tag:
+        return f"autocomp-{timeline}-{tag}-{randname}.log"
+    return f"autocomp-{timeline}-{randname}.log"
 
-def move_log(log_dir):
+def move_log(log_dir, tag=""):
     logger.propagate = False
     formatter = logging.Formatter(format)
-    logfile = log_dir / logfilename()
+    logfile = log_dir / logfilename(tag)
     file_handler = logging.FileHandler(logfile)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)

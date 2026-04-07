@@ -1,5 +1,5 @@
 def PROMPT():
-    orig_code = """void test(int8_t inp[4][58][58][64], int8_t weights[3][3][64][64], int32_t bias[1][64], int8_t output[4][56][56][64]) {
+    orig_code = """void solution(int8_t inp[4][58][58][64], int8_t weights[3][3][64][64], int32_t bias[1][64], int8_t output[4][56][56][64]) {
   ...
   for (int_fast32_t b = 0; b < 4; b++) {
     for (int_fast32_t ocol_o = 0; ocol_o < 3; ocol_o++) {
@@ -19,7 +19,7 @@ def PROMPT():
             mvin3( &inp[(b)][(krow + orow)][(kcol + 16 * ocol_o)][0], i_s + ((kcol) * (1024))/16, 16*(4), (16) );
 ..."""
 
-    new_code = """void test(int8_t inp[4][58][58][64], int8_t weights[3][3][64][64], int32_t bias[1][64], int8_t output[4][56][56][64]) {
+    new_code = """void solution(int8_t inp[4][58][58][64], int8_t weights[3][3][64][64], int32_t bias[1][64], int8_t output[4][56][56][64]) {
   ...
   uint32_t i_s = 0;
   uint32_t w_s = 16 * 16 * 4 * 3 * 30 * sizeof(int8_t) / 16;

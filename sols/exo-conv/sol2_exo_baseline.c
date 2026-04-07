@@ -1,4 +1,4 @@
-void test(int8_t inp[4][16][16][256], int8_t weights[3][3][256][256], int32_t bias[1][256], int8_t output[4][14][14][256]) {
+void solution(int8_t inp[4][16][16][256], int8_t weights[3][3][256][256], int32_t bias[1][256], int8_t output[4][14][14][256]) {
   config_st((256));
   config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
   config_ld((256), 1.0f, 16, 1);

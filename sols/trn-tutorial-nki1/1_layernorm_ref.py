@@ -1,5 +1,5 @@
 @nki.jit
-def test(input_tensor, epsilon, gamma_vector, beta_vector):
+def solution(input_tensor, epsilon, gamma_vector, beta_vector):
   """Computes LayerNorm.
   """
   output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,

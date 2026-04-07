@@ -62,7 +62,7 @@ def main():
     early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
     skip_planning = True           # True = bypass plan phase, generate code directly
-    resume_from = ""
+    continue_from = ""
 
     # ------------------------------------------------------------------
     # Code generation
@@ -163,8 +163,8 @@ def main():
         output_str += "_fgisa1"
     if example_rate > 0:
         output_str += f"_ex{example_rate}"
-    if resume_from:
-        output_str += "_resumed"
+    if continue_from:
+        output_str += "_continued"
     if use_edits:
         output_str += "_edits"
     if skip_planning:
@@ -173,7 +173,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import autocomp.common.my_logging
-    autocomp.common.my_logging.move_log(output_dir)
+    autocomp.common.my_logging.move_log(output_dir, tag="search")
     logger.info("Output directory: %s", output_dir)
 
     # ------------------------------------------------------------------
@@ -205,7 +205,7 @@ def main():
         code_agent=code_agent,
         early_stop_iters=early_stop_iters,
         early_stop_threshold=early_stop_threshold,
-        resume_from=resume_from,
+        continue_from=continue_from,
         use_edits=use_edits,
     )
 

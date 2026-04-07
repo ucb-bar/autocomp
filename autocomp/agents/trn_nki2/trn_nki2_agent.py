@@ -172,7 +172,7 @@ class TrnNki2LLMAgent(LLMAgent):
                 rules.append("Plans can be highly targeted to one particular part of the code.")
             rules.append("Do not count out any of the <optimizations> unless they are clearly irrelevant to the code.")
         if coding:
-            rules.append("Optimize the test() function and do not change its name.")
+            rules.append("Optimize the solution() function and do not change its name.")
             rules.append("Wrap the generated code with ```python at the beginning and ``` at the end.")
         rules.append("Ensure that loop dependencies are not violated inside affine_range loops.")
 

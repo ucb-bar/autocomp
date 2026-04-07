@@ -1,6 +1,6 @@
 import pathlib
 
-from autocomp.common import TESTS_DIR
+from autocomp.common import HARNESSES_DIR
 
 class Prob():
     def __init__(self, prob_type: str, prob_id: int, *, test_file: pathlib.Path | str | None = None, sol_file: pathlib.Path | str | None = None, context: str = ""):
@@ -11,7 +11,7 @@ class Prob():
         self.tests: list[Test] = []
         self.context = context
 
-        test_dir = TESTS_DIR
+        test_dir = HARNESSES_DIR
         if not self.test_file:
             test_files = list((test_dir / prob_type).glob(f"test{prob_id}.c"))
             for test_file_path in test_files:

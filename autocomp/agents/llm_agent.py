@@ -88,7 +88,7 @@ def extract(code_str: str) -> str:
     Tries, in order:
     1. Fenced code blocks (```<optional-lang> ... ```) — returns the *last*
        block, which is typically the final complete implementation.
-    2. Gemmini-style ``void test(...) { ... }`` brace matching.
+    2. Gemmini-style ``void solution(...) { ... }`` brace matching.
     3. Fallback: the entire string.
     """
     if not code_str:
@@ -98,17 +98,17 @@ def extract(code_str: str) -> str:
     if blocks:
         return blocks[-1]
 
-    if "void test" in code_str:
-        from_void_test_str = code_str[code_str.find("void test"):]
+    if "void solution" in code_str:
+        from_void_solution_str = code_str[code_str.find("void solution"):]
         open_braces = 0
         in_comment = False
         in_single_line_comment = False
-        for i, char in enumerate(from_void_test_str):
-            if from_void_test_str[i:i+2] == '/*':
+        for i, char in enumerate(from_void_solution_str):
+            if from_void_solution_str[i:i+2] == '/*':
                 in_comment = True
-            elif from_void_test_str[i:i+2] == '*/':
+            elif from_void_solution_str[i:i+2] == '*/':
                 in_comment = False
-            if from_void_test_str[i:i+2] == '//':
+            if from_void_solution_str[i:i+2] == '//':
                 in_single_line_comment = True
             elif char == '\n':
                 in_single_line_comment = False
@@ -122,9 +122,9 @@ def extract(code_str: str) -> str:
                     end = i
                     break
         try:
-            body = from_void_test_str[:end+1]
+            body = from_void_solution_str[:end+1]
         except:
-            return from_void_test_str
+            return from_void_solution_str
         return body
 
     return code_str
