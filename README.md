@@ -27,7 +27,7 @@ It already delivers strong results across **[AWS Trainium](https://aws.amazon.co
 Autocomp's workflow is:
 
 1. Pick your hardware target:
-   - Choose an optimization agent (or [build your own](#-agent-builder)).
+   - Choose an optimization agent (or build your own with the Agent Builder).
    - Set up an evaluation backend.
 2. Configure one or more LLMs.
 3. Edit `autocomp/search/run_search.py` with your settings.
