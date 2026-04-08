@@ -28,24 +28,26 @@ def main():
     # ------------------------------------------------------------------
     # Target & environment
     # ------------------------------------------------------------------
-    backend_name = "gemmini"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
-    agent_name = "gemmini"   # "gemmini", "trn", "cuda", "built:<name>", or path
-    simulator = "firesim"                # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
-    hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
+    backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
+    agent_name = "built:trn1-nki1"   # "gemmini", "trn", "cuda", "built:<name>", or path
+    simulator = None                # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
+    hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
 
-    prob_type = "exo-conv"      # see README.md or sols/ for available problems
-    prob_id = 2
+    prob_type = "trn-tutorial-nki1"      # see README.md or sols/ for available problems
+    prob_id = 1
 
     # ------------------------------------------------------------------
     # Models
     # ------------------------------------------------------------------
     # Format: "provider::model" (openai, anthropic, together, aws, gcp, vllm)
     models = [
-        "openai::gpt-4o",
-        "openai::o3-mini",
+        "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "aws::zai.glm-5",
+        "aws::minimax.minimax-m2.5",
+        "aws::moonshotai.kimi-k2.5",
     ]
     code_models = None  # None = same as planning models
 
@@ -54,14 +56,13 @@ def main():
     # ------------------------------------------------------------------
     search_strategy = "beam"
     metric = "latency"
-    iterations = 10
-    num_plan_candidates = 12
-    num_code_candidates = 4
-    beam_size = 6
-    dropout_menu_options = 0.3
+    iterations = 8
+    num_plan_candidates = 4
+    num_code_candidates = 2
+    beam_size = 4
+    dropout_menu_options = 0.25
     early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
-    skip_planning = True           # True = bypass plan phase, generate code directly
     continue_from = ""
 
     # ------------------------------------------------------------------
@@ -90,7 +91,7 @@ def main():
     # ------------------------------------------------------------------
     give_score_feedback = 1
     give_util_feedback = 0
-    give_hw_feedback = 1
+    give_hw_feedback = 0
     include_ancestors = False
     plan_icl_examples = False
     code_icl_examples = False
@@ -100,7 +101,7 @@ def main():
     trigger_exhaustive_threshold = 1
     trigger_exhaustive_iters = 20
     start_exhaustive_iters = 0
-    prevent_duplicate_level = -1    # -1: disabled, 0: same parent+plan, 1: same parent, 2: any shared ancestor
+    prevent_duplicate_level = 0     # 0: same parent+plan, 1: same parent, 2: any shared ancestor
     random.seed(1111)
 
     # ------------------------------------------------------------------
@@ -167,8 +168,6 @@ def main():
         output_str += "_continued"
     if use_edits:
         output_str += "_edits"
-    if skip_planning:
-        output_str += "_noplan"
     output_dir = pathlib.Path("output") / output_str
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -224,7 +223,6 @@ def main():
             trigger_exhaustive_iters=trigger_exhaustive_iters,
             start_exhaustive_iters=start_exhaustive_iters,
             reimplement_failed=reimplement_failed,
-            skip_planning=skip_planning,
         )
     else:
         raise ValueError(f"Unknown search strategy: {search_strategy}")
