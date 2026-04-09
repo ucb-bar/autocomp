@@ -224,6 +224,7 @@ The most important parameters are:
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
 - `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
+- `skip_planning`: If `True`, skip the separate planning phase and generate optimized code in a single LLM call. The model is still prompted to reason about its approach before outputting code. Defaults to `False`.
 - `continue_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
 
 **Code Generation**

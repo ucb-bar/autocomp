@@ -63,6 +63,7 @@ def main():
     dropout_menu_options = 0.25
     early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
+    skip_planning = False           # True = bypass plan phase, generate code directly
     continue_from = ""
 
     # ------------------------------------------------------------------
@@ -168,6 +169,8 @@ def main():
         output_str += "_continued"
     if use_edits:
         output_str += "_edits"
+    if skip_planning:
+        output_str += "_noplan"
     output_dir = pathlib.Path("output") / output_str
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,6 +226,7 @@ def main():
             trigger_exhaustive_iters=trigger_exhaustive_iters,
             start_exhaustive_iters=start_exhaustive_iters,
             reimplement_failed=reimplement_failed,
+            skip_planning=skip_planning,
         )
     else:
         raise ValueError(f"Unknown search strategy: {search_strategy}")

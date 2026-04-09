@@ -402,19 +402,36 @@ class GemminiEvalBackend(EvalBackend):
         for test_i, test in enumerate(prob.tests):
             logger.info("Running spike on %d implementations", len(code_strs))
             test_output_per_code_str = run_spike_mp([test.get_test_code([code_str]) for code_str in clean_code_strs], self.gemmini_path, timeout=3000)
+            num_compile_errors = 0
+            num_correct = 0
+            num_incorrect = 0
             for code_i, test_output in enumerate(test_output_per_code_str):
                 # logger.debug(test_output)
-                if "Correct" in test_output:
+                if test_output == "Compile error" or test_output == "Timeout":
+                    logger.debug("Test %d %s for code %d", test_i, test_output, code_i)
+                    stats[code_i]["test_results"][test_i] = False
+                    stats[code_i]["correct"] = False
+                    stats[code_i]["compiled"] = False
+                    num_compile_errors += 1
+                elif "Correct" in test_output:
                     logger.debug("Test %d Correct result", test_i)
                     stats[code_i]["test_results"][test_i] = True
+                    if "compiled" not in stats[code_i]:
+                        stats[code_i]["compiled"] = True
                     if simulator == "spike": # Get instruction count from spike
                         if "Generated implementation latency" in test_output:
                             sol_latency = int(test_output.split("Generated implementation latency: ")[-1].split(" cycles")[0])
                             stats[code_i]["latency"] = sol_latency
+                    num_correct += 1
                 else:
                     logger.debug("Test %d Incorrect result", test_i)
                     stats[code_i]["test_results"][test_i] = False
                     stats[code_i]["correct"] = False
+                    if "compiled" not in stats[code_i]:
+                        stats[code_i]["compiled"] = True
+                    num_incorrect += 1
+            logger.info("Test %d: %d compiled (%d correct, %d incorrect), %d compile errors",
+                        test_i, num_correct + num_incorrect, num_correct, num_incorrect, num_compile_errors)
 
         if simulator == "firesim":
             # test = prob.tests[0]
@@ -427,10 +444,12 @@ class GemminiEvalBackend(EvalBackend):
             #         stats[code_i]["correct"] = False
             # Use batched run to speed up evaluation
             working_code_idxs = []
+            num_compiled = sum(1 for s in stats if s.get("compiled", True))
             for code_i in range(len(code_strs)):
                 if stats[code_i]["correct"]: # Get correctness from spike
                     working_code_idxs.append(code_i)
-            logger.info("%d of %d implementations passed spike", len(working_code_idxs), len(code_strs))
+            logger.info("%d of %d implementations passed spike (%d compiled, %d compile errors)",
+                        len(working_code_idxs), len(code_strs), num_compiled, len(code_strs) - num_compiled)
             logger.debug("Working code indices: %s", str(working_code_idxs))
             # logger.info("%d of %d implementations compiled successfully", len(working_code_idxs), len(code_strs))
             if len(working_code_idxs) == 0:
@@ -438,7 +457,7 @@ class GemminiEvalBackend(EvalBackend):
             working_code_strs = [clean_code_strs[i] for i in working_code_idxs]
             first_test = prob.tests[0]
             # Batch N at a time
-            batch_size = 100
+            batch_size = 20
             batch_start_idx = 0
             while batch_start_idx < len(working_code_strs):
                 batch_end_idx = min(batch_start_idx + batch_size, len(working_code_strs))
