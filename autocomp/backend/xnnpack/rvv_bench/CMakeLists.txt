@@ -86,6 +86,11 @@ target_link_libraries(app PRIVATE XNNPACK pthreadpool GTest::gtest GTest::gmock)
 # Add source files (kernel is embedded in main.cpp)
 target_sources(app PRIVATE src/main.cpp)
 
+# Add XNNPACK tester implementations needed by test harnesses
+target_sources(app PRIVATE
+  ${XNNPACK_DIR}/test/gemm-microkernel-tester.cc
+  ${XNNPACK_DIR}/test/next_prime.cc)
+
 # Enable RVV intrinsics
 target_compile_options(app PRIVATE -march=rv64gcv
 -mabi=lp64d

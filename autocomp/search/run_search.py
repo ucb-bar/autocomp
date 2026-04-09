@@ -19,6 +19,7 @@ from autocomp.search.prob import Prob
 from autocomp.hw_config import (
     CudaHardwareConfig,
     GemminiHardwareConfig,
+    SaturnHardwareConfig,
     TrnHardwareConfig,
     TpuHardwareConfig,
 )
@@ -28,14 +29,15 @@ def main():
     # ------------------------------------------------------------------
     # Target & environment
     # ------------------------------------------------------------------
-    backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode"
-    agent_name = "built:trn-nki1"   # "gemmini", "trn", "cuda", "built:<name>", or path
-    simulator = None                # "firesim"/"spike" for gemmini; "gpumode-local"/"gpumode-cli" for gpumode
+    backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode", "saturn", "xnnpack"
+    agent_name = "built:trn-nki1"   # "gemmini", "trn", "cuda", "saturn", "built:<name>", or path
+    simulator = None                # "firesim"/"spike" for gemmini, saturn, and xnnpack; "gpumode-local"/"gpumode-cli" for gpumode
     hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
-
+    # hw_config = SaturnHardwareConfig(vlen=512, dlen=256, issue_queue="split")
+    
     prob_type = "trn-tutorial"      # see README.md or sols/ for available problems
     prob_id = 2
 

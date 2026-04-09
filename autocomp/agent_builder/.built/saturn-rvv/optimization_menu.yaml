@@ -1,0 +1,42 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Avoid using the `v0` register for non-mask operations to prevent unnecessary data movement
+- strategy: Prefer tail-agnostic and mask-agnostic policies over undisturbed modes to avoid reading destination registers
+- strategy: Prefer VL predication over masking when restricting computation to leading elements
+- strategy: Maximize LMUL (register grouping) to reduce dynamic instruction count and increase chime length, avoiding register
+    spills
+- strategy: Use low LMUL for `vrgather.vv` to avoid quadratic costs, splitting high-LMUL shuffles into LMUL=1 shuffles
+- strategy: Fold immediate scalar values into vector operations using `.vi`, `.vx`, or `.vf` intrinsic variants to reduce
+    register pressure
+- strategy: Use `vmv.v.x` or `vmv.v.i` intrinsics to splat values, and `vmerge.vxm` for masked splats
+- strategy: Use `vmv.v.i` with an immediate 0 to efficiently zero a vector register
+- strategy: Use whole register load/store and move (`vmv1r.v`) intrinsics for unpredicated VLEN-sized data movement
+- strategy: Prefer unit-stride memory operations over strided or indexed operations, which are limited to one element per
+    cycle
+- strategy: Use unit-stride segment loads and stores for Array-of-Structures (AOS) to Structure-of-Arrays (SOA) conversions
+- strategy: Interleave integer, floating-point, and memory vector intrinsics to maximize functional unit chaining and parallel
+    issue
+- strategy: Schedule scalar bookkeeping and address calculation instructions to overlap with vector instruction execution
+- strategy: Avoid vector instructions that write to scalar registers in inner loops to prevent scalar pipeline stalls
+- strategy: Vectorize reductions using element-wise vector operations in the loop body, deferring the final reduction to the
+    tail code
+- strategy: Round up VL to the data path width and issue a single `vsetvli` for operations without side effects on mixed-length
+    vectors
+- strategy: Use `vmerge` or `vfmerge` intrinsics to replace unpredictable data-dependent branches
+- strategy: Use fractional LMUL for mixed-width loops to reduce register pressure and avoid spill code
+- strategy: Use immediate AVL configurations for small known dimensions to avoid stripmining overhead
+- strategy: Prefer vector slide instructions over arbitrary register gathers, which are element-wise and much slower

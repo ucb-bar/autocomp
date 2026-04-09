@@ -1,0 +1,14 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Convert a small amount of high-level code to hardware-specific kernel code
+- strategy: Maximize vector register grouping (e.g., using `m8` LMUL types like `vfloat32m8_t`) when translating array operations
+    to increase chime length and hide pipeline latencies on Saturn's short-vector architecture.
+- strategy: Interleave independent memory intrinsics (e.g., `__riscv_vle32_v`) and arithmetic intrinsics (e.g., `__riscv_vfmacc_vv`)
+    within the loop body to exploit Saturn's decoupled in-order sequencers and maximize hardware chaining.
+- strategy: Hoist vector-to-scalar reduction intrinsics (e.g., `__riscv_vfredusum_vs`) and scalar extractions outside of performance-critical
+    inner loops to prevent severe post-commit Read-After-Write (RAW) stalls in the scalar pipeline.
+- strategy: Translate operations on interleaved data structures (like complex numbers or RGB pixels) using segmented load/store
+    intrinsics (e.g., `__riscv_vlseg3e8_v`) to leverage Saturn's hardware segment buffers and avoid slow strided or indexed
+    memory accesses.
+- strategy: Group intrinsic operations that share the same element width (SEW) and LMUL to minimize `__riscv_vsetvl` transitions
+    and avoid introducing pipeline bubbles in the host scalar core.

@@ -1,0 +1,23 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- 'Tuple types (used for segmented loads/stores) must strictly satisfy the RVV specification restriction: EMUL * NFIELDS <=
+  8.'
+- Do not read or rely on the values of tail or masked-off elements when using agnostic policies (e.g., tail-agnostic or mask-agnostic),
+  as evaluating these agnostic values is undefined behavior.
+- Do not assume or manually set vstart > 0. Intrinsics assume vstart = 0, and portable application software must not rely
+  on positive vstart values.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- Always use the dynamic vector length (vl) returned by vsetvl or vsetvlmax for loop strip-mining; never assume a fixed hardware
+  vector length.
+- Vector-to-scalar writes (e.g., scalar extractions or reductions) must be placed outside of inner loops to prevent severe
+  Read-After-Write (RAW) pipeline stalls caused by Saturn's post-commit execution model.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- When using fault-only-first load intrinsics, the new_vl argument must point to a valid memory location; providing an illegal
+  memory location is undefined behavior.
+- Do not read or rely on the vxsat CSR after executing fixed-point intrinsics, as its resulting value is explicitly unspecified.
+- Use the standard C assignment operator (=) to copy whole vector register contents instead of attempting to use whole-register
+  move intrinsics.

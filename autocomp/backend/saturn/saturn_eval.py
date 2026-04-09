@@ -13,54 +13,53 @@ from autocomp.search.prob import Prob, Test
 from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
-SATURN_CHIPYARD_PATH = "/scratch/charleshong/saturn-tutorial/chipyard"
-SATURN_ZEPHYR_BASE = "/scratch/charleshong/saturn-tutorial/zephyr-chipyard-sw"  # Zephyr installation root
+SATURN_CHIPYARD_PATH = ""
+SATURN_ZEPHYR_BASE = ""  # Zephyr installation root
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0
 SATURN_COMPILE_TIMEOUT = 120.0
-SATURN_FIRESIM_TIMEOUT = 500.0
+SATURN_FIRESIM_PER_CANDIDATE_TIMEOUT = 60.0
+SATURN_FIRESIM_MIN_TIMEOUT = 45.0
 
 FIRESIM_REPEAT_ITERS = 15
 
 SATURN_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
 SATURN_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench" # Contains src/main.c, CMakeLists.txt, prj.conf
+SATURN_FIRESIM_SIM_SLOT_DIR = pathlib.Path("")
 
 def clean_code(code_str: str) -> str:
     """
-    Takes LLM-generated code, removes the "test" wrapper function, and cleans up
-    anything that is not runnable C code.
+    Takes LLM-generated code, removes any outer function wrapper, and returns
+    just the function body.
 
-    For example:
-    '''
-    void test(...) {
-        // RVV vector code
-        vfloat32m1_t va = vle32_v_f32m1(a, vl);
-        ...
-    }
-    '''
-
-    becomes:
-
-    '''
-    // RVV vector code
-    vfloat32m1_t va = vle32_v_f32m1(a, vl);
-    ...
-    '''
+    Handles any function name (void test, void xnn_f32_..., static void ..., etc).
+    If no function wrapper is found, returns as-is.
     """
     if not code_str:
         return ""
 
-    # Find the function wrapper
-    if "void test(" not in code_str:
-        # No wrapper, return as-is
+    # Match any function definition: optional qualifiers, return type, name, params
+    match = re.search(r'(?:static\s+|inline\s+|__attribute__\S+\s+)*\w[\w\s*]*\s+\w+\s*\([^)]*\)[^{]*\{', code_str, re.DOTALL)
+    if not match:
         return code_str
 
-    after_void_test_str = code_str[code_str.find("void test("):]
-    start = after_void_test_str.find('{') + 1
-    end = after_void_test_str.rfind('}')
-    body = after_void_test_str[start:end]
-    return body
+    # Find the opening brace of the function body
+    brace_pos = match.end() - 1  # position of '{'
+    after_brace = code_str[brace_pos + 1:]
+
+    # Find matching closing brace
+    depth = 1
+    for i, ch in enumerate(after_brace):
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return after_brace[:i]
+
+    # No matching brace found, return as-is
+    return code_str
 
 
 class SaturnTest(Test):
@@ -174,17 +173,29 @@ def _build_and_run_spike(args: tuple) -> tuple:
         return (candidate_idx, f"Spike error: {str(e)}")
 
 
+def _run_slot(args: tuple) -> list[tuple]:
+    """Run all tasks for a single build slot sequentially."""
+    slot_id, task_list = args
+    return [_build_and_run_spike((code, slot_id, idx)) for code, idx in task_list]
+
+
 def run_spike_mp(code_contents_lst: list[str]) -> list[str]:
 
     results = ["Error"] * len(code_contents_lst)
 
-    tasks = [(code, i % MAX_BUILD_SLOTS, i) for i, code in enumerate(code_contents_lst)]
+    num_slots = min(len(code_contents_lst), MAX_BUILD_SLOTS)
     logger.info("Building & running spike on %d candidates across %d slots...",
-                len(code_contents_lst), min(len(code_contents_lst), MAX_BUILD_SLOTS))
+                len(code_contents_lst), num_slots)
 
-    with multiprocessing.Pool(MAX_BUILD_SLOTS) as pool:
-        for candidate_idx, stdout in pool.imap_unordered(_build_and_run_spike, tasks):
-            results[candidate_idx] = stdout
+    # Group tasks by slot so each slot is only accessed by one worker
+    slot_tasks: list[list[tuple]] = [[] for _ in range(num_slots)]
+    for i, code in enumerate(code_contents_lst):
+        slot_tasks[i % num_slots].append((code, i))
+
+    with multiprocessing.Pool(num_slots) as pool:
+        for slot_results in pool.imap_unordered(_run_slot, enumerate(slot_tasks)):
+            for candidate_idx, stdout in slot_results:
+                results[candidate_idx] = stdout
 
     return results
 
@@ -242,100 +253,119 @@ def build_firesim_binary(code_contents: str) -> pathlib.Path | str:
 
 def run_firesim_batch(binary_path: pathlib.Path,
                       firesim_path: pathlib.Path,
-                      timeout: float = SATURN_FIRESIM_TIMEOUT) -> dict[int, int]:
+                      n_expected: int,
+                      candidate_order: list[int] = None,
+                      per_candidate_timeout: float = SATURN_FIRESIM_PER_CANDIDATE_TIMEOUT,
+                      min_timeout: float = SATURN_FIRESIM_MIN_TIMEOUT) -> tuple[dict[int, int], str | None]:
     """
-    Run binary on FireSim and parse results.
+    Run binary on FireSim with uartlog polling for hang detection.
 
+    Monitors the live uartlog in sim_slot_0 for "ID X latency:" lines.
+    If no new result appears within per_candidate_timeout, declares a hang,
+    kills FireSim, and returns partial results collected so far.
     """
-    results_dir = firesim_path / "deploy" / "results-workload"
-
     # 1. Copy binary to workload directory
     workload_dir = firesim_path / "deploy" / "workloads" / "saturn"
     workload_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(binary_path, workload_dir / "saturn_test-baremetal")
 
-    # Get current results dirs for comparison
-    orig_results_dirs = sorted(results_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True) if results_dir.exists() else []
-
-    # FireSim commands need environment from sourceme-manager.sh
     firesim_setup = f"cd {firesim_path} && source {firesim_path}/sourceme-manager.sh"
 
-    # 2. Run infrasetup
+    # 2. Run infrasetup (blocking)
     logger.info("Running `firesim infrasetup`")
-    infrasetup_cmd = f"{firesim_setup} && firesim infrasetup"
     infrasetup = subprocess.run(
-        ["bash", "-c", infrasetup_cmd],
-        capture_output=True,
-        text=True
+        ["bash", "-c", f"{firesim_setup} && firesim infrasetup"],
+        capture_output=True, text=True
     )
-
     if infrasetup.returncode != 0:
-        logger.error("firesim infrasetup failed with return code %d", infrasetup.returncode)
-        logger.error("FireSim stdout:\n%s", infrasetup.stdout or "")
-        logger.error("FireSim stderr:\n%s", infrasetup.stderr or "")
+        logger.error("firesim infrasetup failed: %s", infrasetup.stderr or infrasetup.stdout)
         raise RuntimeError(f"firesim infrasetup failed with return code {infrasetup.returncode}")
 
-    # 3. Run workload with timeout
-    logger.info("Running `firesim runworkload`")
-    runworkload_cmd = f"{firesim_setup} && firesim runworkload"
+    # 3. Clear old uartlog so we only see fresh output
+    uartlog_path = SATURN_FIRESIM_SIM_SLOT_DIR / "uartlog"
+    if uartlog_path.exists():
+        uartlog_path.write_text("")
+
+    # 4. Launch runworkload in background
+    logger.info("Running `firesim runworkload` (polling uartlog for results)")
+    firesim_start = time.time()
+    proc = subprocess.Popen(
+        ["bash", "-c", f"{firesim_setup} && firesim runworkload"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
+    # 5. Poll uartlog for results
+    pattern = re.compile(r"ID (\d+) latency: (\d+) cycles")
+    results = {}
+    last_result_time = time.time()
+    poll_interval = 1.0
+    hung_candidate = None
+
     try:
-        runworkload = subprocess.run(
-            ["bash", "-c", runworkload_cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("FireSim runworkload timed out after %d seconds.", timeout)
-        # Kill any remaining FireSim processes
-        logger.info("Running `firesim kill`")
-        kill_cmd = f"{firesim_setup} && firesim kill"
-        subprocess.run(
-            ["bash", "-c", kill_cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
-        raise RuntimeError(f"firesim runworkload timed out after {timeout} seconds")
+        while len(results) < n_expected:
+            # Check if process exited
+            if proc.poll() is not None:
+                # Process finished — parse final uartlog
+                if uartlog_path.exists():
+                    for m in pattern.finditer(uartlog_path.read_text()):
+                        results[int(m.group(1))] = int(m.group(2))
+                break
 
-    if runworkload.returncode != 0:
-        logger.error("firesim runworkload failed with return code %d", runworkload.returncode)
-        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
-        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
-        raise RuntimeError(f"firesim runworkload failed with return code {runworkload.returncode}")
+            # Read current uartlog
+            if uartlog_path.exists():
+                content = uartlog_path.read_text()
+                new_found = False
+                for m in pattern.finditer(content):
+                    idx, latency = int(m.group(1)), int(m.group(2))
+                    if idx not in results:
+                        results[idx] = latency
+                        logger.info("FireSim: candidate %d = %d cycles", idx, latency)
+                        new_found = True
+                if new_found:
+                    last_result_time = time.time()
 
-    logger.info("FireSim runworkload finished")
-    time.sleep(2)
+            # Check for hang — kill if no new result in per_candidate_timeout
+            # First candidate gets extra time for runworkload setup
+            hang_timeout = per_candidate_timeout + (15 if not results else 0)
+            elapsed = time.time() - last_result_time
+            if elapsed > hang_timeout:
+                hung_candidate = _identify_hung_candidate(content if uartlog_path.exists() else "", results, candidate_order)
+                logger.warning("FireSim: no new result for %.0fs, candidate %s appears to hang",
+                               elapsed, hung_candidate)
+                break
 
-    current_results_dirs = sorted(results_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True) if results_dir.exists() else []
-    new_dirs = [d for d in current_results_dirs if d not in orig_results_dirs]
+            time.sleep(poll_interval)
 
-    if not new_dirs:
-        logger.error("No new results directory found after running FireSim.")
-        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
-        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
-        raise RuntimeError("No new results directory found after running FireSim.")
+    finally:
+        # Kill FireSim if still running
+        if proc.poll() is None:
+            logger.info("Killing FireSim (poll exit)")
+            kill_cmd = f"{firesim_setup} && firesim kill"
+            subprocess.run(["bash", "-c", kill_cmd],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            proc.wait(timeout=120)
 
-    relevant_logs = []
-    for dir in new_dirs:
-        dir_logs = glob.glob(f"{dir}/*/uartlog", recursive=True)
-        relevant_logs.extend(dir_logs)
+    firesim_wall = time.time() - firesim_start
+    if hung_candidate is not None:
+        logger.warning("FireSim: hung on candidate %s, returning %d partial results (%.1fs wall)",
+                       hung_candidate, len(results), firesim_wall)
+    else:
+        logger.info("FireSim: collected %d/%d results (%.1fs wall)", len(results), n_expected, firesim_wall)
 
-    if not relevant_logs:
-        logger.error("No uartlog found after running FireSim.")
-        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
-        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
-        raise RuntimeError("No uartlog found after running FireSim.")
+    return results, hung_candidate
 
-    if len(relevant_logs) > 1:
-        logger.warning("Multiple logs found, using first one: %s", relevant_logs)
 
-    logger.info("Parsing FireSim results from: %s", relevant_logs[0])
-    results = parse_firesim_uartlog(relevant_logs[0])
+def _identify_hung_candidate(uartlog_content: str, results: dict[int, int],
+                             candidate_order: list[int] = None) -> str:
+    """Try to identify which candidate hung based on uartlog content and run order."""
+    if candidate_order:
+        for idx in candidate_order:
+            if idx not in results:
+                return str(idx)
     if not results:
-        logger.error("FireSim stdout:\n%s", (infrasetup.stdout or "") + (runworkload.stdout or ""))
-        logger.error("FireSim stderr:\n%s", (infrasetup.stderr or "") + (runworkload.stderr or ""))
-        raise RuntimeError("No latency results found in FireSim uartlog.")
-    return results
+        return "unknown (no results before hang)"
+    last_id = max(results.keys())
+    return str(last_id + 1)
 
 
 def parse_firesim_uartlog(log_path: str) -> dict[int, int]:
@@ -498,34 +528,69 @@ class SaturnEvalBackend(EvalBackend):
                            passing_indices: list[int],
                            prob: Prob) -> dict[int, int]:
         """
-        Run a batch of passing codes on FireSim.
+        Run passing candidates on FireSim with uartlog polling.
 
+        Monitors the live uartlog for results. If a candidate hangs,
+        kills FireSim, removes the hanging candidate, and re-runs
+        the remaining untimed candidates. Repeats until all candidates
+        are timed or all remaining ones hang.
         """
-        # Get test template for concatenation
         saturn_tests = [SaturnTest(t.test_file) for t in prob.tests]
         if not saturn_tests:
             raise ValueError("No tests available for FireSim template")
-
         first_test = saturn_tests[0]
 
-        # Build concatenated test code
-        # We use the test's template but with all passing codes as separate functions
-        combined_code = self._build_firesim_combined_code(
-            passing_codes, passing_indices, first_test, prob
-        )
+        all_results = {}
+        remaining_codes = list(passing_codes)
+        remaining_indices = list(passing_indices)
+        hung_indices = set()
 
-        # Compile for FireSim (uses stable build slot for incremental builds)
-        binary_result = build_firesim_binary(combined_code)
+        while remaining_indices:
+            combined_code = self._build_firesim_combined_code(
+                remaining_codes, remaining_indices, first_test, prob
+            )
+            binary_result = build_firesim_binary(combined_code)
+            if isinstance(binary_result, str):
+                raise RuntimeError(f"Failed to compile FireSim binary: {binary_result}")
 
-        if isinstance(binary_result, str):
-            raise RuntimeError(f"Failed to compile FireSim binary: {binary_result}")
+            results, hung_candidate = run_firesim_batch(
+                binary_result, self.firesim_path,
+                n_expected=len(remaining_indices),
+                candidate_order=remaining_indices
+            )
 
-        # Run on FireSim
-        return run_firesim_batch(
-            binary_result,
-            self.firesim_path,
-            timeout=SATURN_FIRESIM_TIMEOUT
-        )
+            # Collect successful results
+            all_results.update(results)
+
+            if hung_candidate is None:
+                break
+
+            try:
+                hung_idx = int(hung_candidate)
+            except (ValueError, TypeError):
+                logger.warning("Could not identify hung candidate (%s), stopping retries", hung_candidate)
+                break
+
+            hung_indices.add(hung_idx)
+            logger.info("Removing hung candidate %d, re-running %d remaining",
+                        hung_idx, len(remaining_indices) - len(results) - 1)
+
+            # Rebuild remaining list: exclude already-timed and hung candidates
+            timed_or_hung = set(all_results.keys()) | hung_indices
+            new_codes = []
+            new_indices = []
+            for code, idx in zip(passing_codes, passing_indices):
+                if idx not in timed_or_hung:
+                    new_codes.append(code)
+                    new_indices.append(idx)
+
+            remaining_codes = new_codes
+            remaining_indices = new_indices
+
+            if not remaining_indices:
+                logger.info("No more candidates to re-run after removing hung ones")
+
+        return all_results
 
     @staticmethod
     def _extract_candidate_params(code_str: str) -> list[tuple[str, str]]:

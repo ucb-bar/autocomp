@@ -13,48 +13,47 @@
 
 #define BATCH_SIZE 256
 
-static inline unsigned long read_cycles() {
-    unsigned long cycles;
-    __asm__ volatile("rdcycle %0" : "=r"(cycles));
-    return cycles;
-}
-
-static inline void fence() {
-    __asm__ volatile("fence" ::: "memory");
-    __asm__ volatile("fence.i");
-}
-
-// Candidate kernel — body injected by autocomp
-static void candidate_kernel(
+typedef void (*candidate_fn_t)(
     size_t batch,
     const float* input,
     const float* max,
     float* output,
     float* sum,
-    const void* params)
-{
-// SUBSTITUTE HERE
-// SUBSTITUTE END
-}
+    const void* params);
+
+// SUBSTITUTE CANDIDATES
+// SUBSTITUTE CANDIDATES END
 
 int main() {
-
     volatile double dummy = 1.0;
     dummy = dummy / 1.0000001;
 
-    RAddStoreExpMinusMaxMicrokernelTester tester;
-    for (size_t elems = BATCH_SIZE - 8; elems <= BATCH_SIZE + 8; elems++) {
-        tester.elements(elems)
-              .iterations(1)
-              .Test(candidate_kernel, nullptr);
-        if (testing::UnitTest::GetInstance()->ad_hoc_test_result().Failed()) {
-            printf("INCORRECT: assertion failed\n");
-            sys_reboot(SYS_REBOOT_COLD);
-        }
-    }
+    for (int _ci = 0; _ci < NUM_CANDIDATES; _ci++) {
+        candidate_fn_t test_fn = candidate_fns[_ci];
+        int _cand_id = candidate_ids[_ci];
 
-    printf("Correct result\n");
-    printf("Generated implementation latency: %lu cycles\n", tester.kernel_cycles());
+        xnn_f32_raddstoreexpminusmax_ukernel_fn kernel_fn =
+            (xnn_f32_raddstoreexpminusmax_ukernel_fn)test_fn;
+
+        RAddStoreExpMinusMaxMicrokernelTester tester;
+        for (size_t elems = BATCH_SIZE - 8; elems <= BATCH_SIZE + 8; elems++) {
+            tester.elements(elems)
+                  .iterations(1)
+                  .Test(kernel_fn, nullptr);
+            if (testing::UnitTest::GetInstance()->ad_hoc_test_result().Failed()) {
+                printf("INCORRECT: candidate %d assertion failed (elems=%zu)\n", _cand_id, elems);
+                if (NUM_CANDIDATES == 1) sys_reboot(SYS_REBOOT_COLD);
+                goto next_candidate;
+            }
+        }
+
+        printf("Correct result\n");
+        printf("ID %d latency: %lu cycles\n", _cand_id, tester.kernel_cycles());
+        if (NUM_CANDIDATES == 1) {
+            printf("Generated implementation latency: %lu cycles\n", tester.kernel_cycles());
+        }
+        next_candidate:;
+    }
 
     sys_reboot(SYS_REBOOT_COLD);
 }

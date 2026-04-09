@@ -16,7 +16,7 @@ from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn.trn_agent import TrnLLMAgent
 from autocomp.agent_builder.built_agent import BuiltLLMAgent
 from autocomp.agents.saturn.saturn_agent import SaturnLLMAgent
-from autocomp.agents.xnnpack.xnnpack_agent import XnnpackLLMAgent
+
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
@@ -80,13 +80,7 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         if agent_name.startswith("built:"):
             built_name = agent_name[len("built:"):]
             config_dir = _BUILT_DIR / built_name
-        elif agent_name == "saturn":
-        agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in models])
-        code_agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
-    elif agent_name == "xnnpack":
-        agent = LLMEnsemble([XnnpackLLMAgent(m, config=hw_config) for m in models])
-        code_agent = LLMEnsemble([XnnpackLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
-    else:
+        else:
             config_dir = Path(agent_name)
         if not config_dir.is_dir():
             available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
@@ -97,8 +91,23 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
         logger.info("Using built agent from %s", config_dir)
         agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in models])
         code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in code_models]) if code_models else None
+    elif agent_name == "saturn":
+        agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in models])
+        code_agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
+    elif agent_name == "xnnpack":
+        agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in models])
+        code_agent = LLMEnsemble([SaturnLLMAgent(m, config=hw_config) for m in code_models]) if code_models else None
     else:
-        raise ValueError(f"Unknown agent name: '{agent_name}'. Use 'cuda', 'gemmini', 'trn', 'built:<name>', or a path to a built agent directory.")
+        config_dir = Path(agent_name)
+        if not config_dir.is_dir():
+            available = [p.parent.name for p in _BUILT_DIR.glob("*/agent_config.yaml")] if _BUILT_DIR.is_dir() else []
+            raise ValueError(
+                f"Built agent config not found at '{config_dir}'. "
+                f"Available: {available}"
+            )
+        logger.info("Using built agent from %s", config_dir)
+        agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in models])
+        code_agent = LLMEnsemble([BuiltLLMAgent(m, config_dir, hw_config, eval_backend, menu_strategy, fine_grained_isa=fine_grained_isa, example_rate=example_rate, cache_dir=cache_dir) for m in code_models]) if code_models else None
     
     return eval_backend, agent, code_agent
 
@@ -862,7 +871,7 @@ def main():
     search_strategy = "beam"
     iterations = 8
     prob_type = "xnnpack-f32" # see README.md or sols directory for available problems
-    prob_id = 2
+    prob_id = 3
 
     # Reimplement failed implementations
     # Only works for agents for which it is implemented (trn, built agents)

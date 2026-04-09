@@ -9,9 +9,11 @@ The default configuration matches GENV256D128ShuttleConfig:
 from dataclasses import dataclass
 from typing import Literal
 
+from autocomp.hw_config.hardware_config import HardwareConfig
+
 
 @dataclass(frozen=True)
-class SaturnHardwareConfig:
+class SaturnHardwareConfig(HardwareConfig):
     """Hardware configuration for a Saturn vector unit instance.
     
     Default values match the recommended GENV256D128ShuttleConfig:
@@ -20,9 +22,9 @@ class SaturnHardwareConfig:
     """
     
     # Vector dimensions (bits)
-    vlen: int = 256  # Vector register length
-    dlen: int = 128  # Datapath width (VLEN/2 for dual-issue)
-    mlen: int = 128  # Memory interface width (typically equals DLEN)
+    vlen: int = 512  # Vector register length
+    dlen: int = 256  # Datapath width (VLEN/2 for dual-issue)
+    mlen: int = 256  # Memory interface width (typically equals DLEN)
     
     # Issue queue configuration
     # "split" = separate fp and int issue units (GENV256D128ShuttleConfig default)

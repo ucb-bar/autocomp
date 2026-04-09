@@ -13,86 +13,132 @@ from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 
 # Environment path variables
-XNNPACK_CHIPYARD_PATH = "/scratch/kchern2/chipyard"
-XNNPACK_ZEPHYR_BASE = "/scratch/kchern2/zephyr-chipyard-sw"  # Zephyr installation root
+XNNPACK_CHIPYARD_PATH = ""
+XNNPACK_ZEPHYR_BASE = ""  # Zephyr installation root
 
 # Timeouts (seconds)
 XNNPACK_SPIKE_TIMEOUT = 60.0
 XNNPACK_COMPILE_TIMEOUT = 300.0
-XNNPACK_FIRESIM_PER_CANDIDATE_TIMEOUT = 10.0
+XNNPACK_FIRESIM_PER_CANDIDATE_TIMEOUT = 60.0
 XNNPACK_FIRESIM_MIN_TIMEOUT = 45.0
 
 
 XNNPACK_TEMP_DIR = pathlib.Path(__file__).parent / "tmp_dir"
 XNNPACK_ZEPHYR_APP_PATH = pathlib.Path(__file__).parent / "rvv_bench" # Contains src/main.cpp, CMakeLists.txt, prj.conf
-XNNPACK_FIRESIM_SIM_SLOT_DIR = pathlib.Path("/scratch/kchern2/FIRESIM_RUNS_DIR/sim_slot_0")
+XNNPACK_FIRESIM_SIM_SLOT_DIR = pathlib.Path("")
 
 def clean_code(code_str: str) -> str:
     """
-    Takes LLM-generated code, removes the "test" wrapper function, and cleans up
-    anything that is not runnable C code.
+    Takes LLM-generated code, removes any outer function wrapper, and returns
+    just the function body.
 
-    For example:
-    '''
-    void test(...) {
-        // RVV vector code
-        vfloat32m1_t va = vle32_v_f32m1(a, vl);
-        ...
-    }
-    '''
-
-    becomes:
-
-    '''
-    // RVV vector code
-    vfloat32m1_t va = vle32_v_f32m1(a, vl);
-    ...
-    '''
+    Handles any function name (void test, void xnn_f32_..., static void ..., etc).
+    If no function wrapper is found, returns as-is.
     """
     if not code_str:
         return ""
 
-    # Find the function wrapper
-    if "void test(" not in code_str:
-        # No wrapper, return as-is
+    # Match any function definition: optional qualifiers, return type, name, params
+    # e.g. "static void xnn_x32_transposec_ukernel__16x8_rvv(\n  ...) XNN_OOB_READS\n{"
+    match = re.search(r'(?:static\s+|inline\s+|__attribute__\S+\s+)*\w[\w\s*]*\s+\w+\s*\([^)]*\)[^{]*\{', code_str, re.DOTALL)
+    if not match:
         return code_str
 
-    after_void_test_str = code_str[code_str.find("void test("):]
-    start = after_void_test_str.find('{') + 1
-    end = after_void_test_str.rfind('}')
-    body = after_void_test_str[start:end]
-    return body
+    # Find the opening brace of the function body
+    brace_pos = match.end() - 1  # position of '{'
+    after_brace = code_str[brace_pos + 1:]
+
+    # Find matching closing brace
+    depth = 1
+    for i, ch in enumerate(after_brace):
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return after_brace[:i]
+
+    # No matching brace found, return as-is
+    return code_str
 
 
 class XnnpackTest:
     """Test wrapper for XNNPACK microkernels.
 
-    Injects candidate function body between SUBSTITUTE markers in the test
-    harness. Correctness is checked by the XNNPACK tester class, not inline.
+    Injects candidate functions between SUBSTITUTE CANDIDATES markers in the
+    test harness. The function signature is parsed from the sol file's
+    `void test(...)` definition.
     """
-    def __init__(self, test_file: pathlib.Path):
+    def __init__(self, test_file: pathlib.Path, sol_file: pathlib.Path):
         self.test_file = test_file
+        self.sol_file = sol_file
+        self._fn_signature = None  # cached parsed signature
 
-    def _substitute(self, code_str: str) -> str:
-        """Inject code between SUBSTITUTE markers in the test harness."""
+    def _parse_fn_signature(self) -> str:
+        """Extract the function parameter signature from the sol file.
+
+        Parses the first void function definition, e.g.:
+            void kernel_name(
+                size_t batch,
+                const float* input,
+                float* output)
+        Returns the parameter string: "size_t batch, const float* input, float* output"
+        """
+        if self._fn_signature is not None:
+            return self._fn_signature
+
+        content = self.sol_file.read_text()
+        match = re.search(r'void\s+\w+\s*\((.*?)\)\s*\{', content, re.DOTALL)
+        if not match:
+            raise ValueError(f"No function definition found in {self.sol_file}")
+        raw_sig = match.group(1).strip()
+        self._fn_signature = re.sub(r'\s+', ' ', raw_sig)
+        return self._fn_signature
+
+    def inject_candidates(self, code_bodies: list[str], candidate_ids: list[int]) -> str:
+        """Inject candidate functions into the test harness.
+
+        Generates noinline wrapper functions, NUM_CANDIDATES define, and
+        function pointer + ID arrays between SUBSTITUTE CANDIDATES markers.
+
+        Works for both spike (1 candidate) and firesim (N candidates).
+        """
+        param_sig = self._parse_fn_signature()
+        n = len(code_bodies)
+
+        # Generate function definitions
+        func_defs = []
+        for i, body in enumerate(code_bodies):
+            func_defs.append(
+                f"__attribute__((noinline)) static void candidate_kernel_{i}({param_sig}) {{\n"
+                f"{body}\n"
+                f"}}"
+            )
+
+        # Generate arrays
+        fn_names = [f"candidate_kernel_{i}" for i in range(n)]
+        fn_array = f"static candidate_fn_t candidate_fns[] = {{{', '.join(fn_names)}}};"
+        id_array = f"static int candidate_ids[] = {{{', '.join(str(idx) for idx in candidate_ids)}}};"
+
+        injected = "\n".join(func_defs)
+        injected += f"\n#define NUM_CANDIDATES {n}\n"
+        injected += f"{fn_array}\n{id_array}"
+
+        # Replace between SUBSTITUTE CANDIDATES markers
         content = self.test_file.read_text().splitlines()
         result = []
         substituting = False
         for line in content:
-            if "// SUBSTITUTE HERE" in line:
-                substituting = True
-                result.append(line)
-                result.append(code_str)
-            elif "// SUBSTITUTE END" in line:
+            if "// SUBSTITUTE CANDIDATES END" in line:
                 substituting = False
                 result.append(line)
+            elif "// SUBSTITUTE CANDIDATES" in line:
+                substituting = True
+                result.append(line)
+                result.append(injected)
             elif not substituting:
                 result.append(line)
         return "\n".join(result)
-
-    def get_test_code(self, code_str: str) -> str:
-        """Inject candidate function body into the test harness."""
-        return self._substitute(code_str)
 
 
 
@@ -154,7 +200,7 @@ def _build_and_run_spike(args: tuple) -> tuple:
     # --- Run spike ---
     try:
         result = subprocess.run(
-            ["spike", "--isa=rv64gcv_zicntr", str(binary)],
+            ["spike", "--isa=rv64gcv_zvl512b_zicntr", str(binary)],
             capture_output=True,
             text=True,
             errors="ignore",
@@ -283,6 +329,7 @@ def run_firesim_batch(binary_path: pathlib.Path,
 
     # 4. Launch runworkload in background
     logger.info("Running `firesim runworkload` (polling uartlog for results)")
+    firesim_start = time.time()
     proc = subprocess.Popen(
         ["bash", "-c", f"{firesim_setup} && firesim runworkload"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -341,11 +388,12 @@ def run_firesim_batch(binary_path: pathlib.Path,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             proc.wait(timeout=120)
 
+    firesim_wall = time.time() - firesim_start
     if hung_candidate is not None:
-        logger.warning("FireSim: hung on candidate %s, returning %d partial results",
-                       hung_candidate, len(results))
+        logger.warning("FireSim: hung on candidate %s, returning %d partial results (%.1fs wall)",
+                       hung_candidate, len(results), firesim_wall)
     else:
-        logger.info("FireSim: collected %d/%d results", len(results), n_expected)
+        logger.info("FireSim: collected %d/%d results (%.1fs wall)", len(results), n_expected, firesim_wall)
 
     return results, hung_candidate
 
@@ -416,6 +464,16 @@ class XnnpackEvalBackend(EvalBackend):
     def __repr__(self):
         return f"XnnpackEvalBackend(vlen={self.vlen}, elen={self.elen})"
 
+    def _find_sol_file(self, prob: Prob) -> pathlib.Path:
+        """Find the sol file for a problem (used to extract function signature)."""
+        if prob.sol_file:
+            return prob.sol_file
+        sol_dir = SOLS_DIR / prob.prob_type
+        matches = list(sol_dir.glob(f"{prob.prob_id}_*.c"))
+        if not matches:
+            raise FileNotFoundError(f"No sol file matching {prob.prob_id}_*.c in {sol_dir}")
+        return matches[0]
+
     def evaluate_code_spike(self, prob: Prob, code_strs: list[str]) -> List[dict]:
         """Convenience method for spike-only evaluation."""
         return self.evaluate_code(prob, code_strs, "spike")
@@ -429,7 +487,8 @@ class XnnpackEvalBackend(EvalBackend):
         Evaluate code candidates and return results.
 
         """
-        xnnpack_tests = [XnnpackTest(t.test_file) for t in prob.tests]
+        sol_file = self._find_sol_file(prob)
+        xnnpack_tests = [XnnpackTest(t.test_file, sol_file) for t in prob.tests]
 
         if not self.xnnpack_path or not self.xnnpack_path.exists():
             raise ValueError(
@@ -449,8 +508,8 @@ class XnnpackEvalBackend(EvalBackend):
         for test_i, test in enumerate(xnnpack_tests):
             logger.info("Running spike on %d code candidates for test %d", len(code_strs), test_i)
 
-            # Get test code with each candidate injected
-            test_codes = [test.get_test_code(code_str) for code_str in clean_code_strs]
+            # Get test code with each candidate injected (one at a time for spike)
+            test_codes = [test.inject_candidates([code_str], [0]) for code_str in clean_code_strs]
 
             # Run spike in parallel
             test_output_per_code_str = run_spike_mp(test_codes)
@@ -531,7 +590,8 @@ class XnnpackEvalBackend(EvalBackend):
         the remaining untimed candidates. Repeats until all candidates
         are timed or all remaining ones hang.
         """
-        xnnpack_tests = [XnnpackTest(t.test_file) for t in prob.tests]
+        sol_file = self._find_sol_file(prob)
+        xnnpack_tests = [XnnpackTest(t.test_file, sol_file) for t in prob.tests]
         if not xnnpack_tests:
             raise ValueError("No tests available for FireSim template")
         first_test = xnnpack_tests[0]
@@ -543,7 +603,7 @@ class XnnpackEvalBackend(EvalBackend):
 
         while remaining_indices:
             combined_code = self._build_firesim_combined_code(
-                remaining_codes, remaining_indices, first_test, prob
+                remaining_codes, remaining_indices, first_test
             )
             binary_result = build_firesim_binary(combined_code)
             if isinstance(binary_result, str):
@@ -590,158 +650,18 @@ class XnnpackEvalBackend(EvalBackend):
 
         return all_results
 
-    @staticmethod
-    def _extract_candidate_params(code_str: str) -> list[tuple[str, str]]:
-        """
-        Extract function parameters from the first function definition in a
-        solution file. Works with any function name (void test, void xnn_f32_..., etc).
-
-        Returns list of (type, name) tuples. Empty if no function definition found
-        (e.g. gemm tests where candidates access globals directly).
-        """
-        # Find the first function definition: look for `) {` or `)\n{` pattern
-        # and work backwards to find the matching `(`
-        # Use regex to find: return_type func_name(
-        match = re.search(r'\b\w[\w\s*]*\s+(\w+)\s*\(', code_str)
-        if not match:
-            return []
-
-        # Find the opening paren position
-        paren_start = code_str.index('(', match.start())
-        after_paren = code_str[paren_start + 1:]
-
-        # Find matching closing paren (handle nested parens)
-        paren_depth = 1
-        param_end = 0
-        for j, ch in enumerate(after_paren):
-            if ch == '(':
-                paren_depth += 1
-            elif ch == ')':
-                paren_depth -= 1
-                if paren_depth == 0:
-                    param_end = j
-                    break
-        param_str = after_paren[:param_end]
-
-        # Parse comma-separated parameters
-        params = []
-        for param in param_str.split(','):
-            param = ' '.join(param.split())  # normalize whitespace
-            if not param:
-                continue
-            parts = param.rsplit(None, 1)
-            if len(parts) == 2:
-                var_type, var_name = parts
-                if var_name.startswith('*'):
-                    var_type += ' *'
-                    var_name = var_name[1:]
-                params.append((var_type, var_name))
-
-        return params
-
     def _build_firesim_combined_code(self,
                                       passing_codes: list[str],
                                       passing_indices: list[int],
-                                      test,
-                                      prob: Prob = None) -> str:
+                                      test) -> str:
         """
         Build combined C++ file with all passing candidates for FireSim.
 
-        Each candidate is wrapped in its own noinline function to isolate
-        vector register allocation. The file is generated from the test
-        harness preamble (includes/utilities) plus a new main() that runs
-        correctness checks via the XNNPACK tester and measures latency.
-
-        The function signature is derived from the solution file in sols/.
+        Uses the test harness's inject_candidates() to insert all passing
+        candidates at once. The test harness loop handles correctness and
+        latency measurement — no kernel-type-specific logic needed here.
         """
-        # Read the solution file to extract function parameters
-        params = []
-        if prob:
-            sol_dir = SOLS_DIR / prob.prob_type
-            sol_files = list(sol_dir.glob(f"{prob.prob_id}_*.c"))
-            if sol_files:
-                sol_content = sol_files[0].read_text()
-                params = self._extract_candidate_params(sol_content)
-
-        if params:
-            param_sig = ", ".join(f"{t} {n}" for t, n in params)
-            param_args = ", ".join(n for _, n in params)
-        else:
-            param_sig = "void"
-            param_args = ""
-
-        # Extract preamble from test harness (includes + utility functions,
-        # everything before the candidate_kernel definition)
-        test_content = test.test_file.read_text()
-        cut_points = ["static void candidate_kernel", "// SUBSTITUTE HERE"]
-        cut_pos = len(test_content)
-        for marker in cut_points:
-            pos = test_content.find(marker)
-            if pos != -1 and pos < cut_pos:
-                cut_pos = pos
-        preamble = test_content[:cut_pos]
-
-        # Generate noinline wrapper functions for each candidate
-        func_defs = []
-        for code, orig_idx in zip(passing_codes, passing_indices):
-            func_defs.append(
-                f"__attribute__((noinline)) void run_candidate_{orig_idx}({param_sig}) {{\n"
-                f"{code}\n"
-                f"}}\n"
-            )
-
-        # Generate per-candidate blocks: timing via tester.kernel_cycles()
-        # Correctness already verified on spike; FireSim is for accurate latency only.
-        is_dwconv2d = "DWConv2DMicrokernelTester" in test_content
-
-        candidate_blocks = []
-        for orig_idx in passing_indices:
-            if is_dwconv2d:
-                candidate_blocks.append(f"""
-    {{
-        static const size_t test_sizes[][2] = {{
-            {{7, 7}}, {{12, 8}}, {{14, 14}}, {{28, 28}}, {{256, 256}}
-        }};
-        DWConv2DMicrokernelTester tester;
-        tester.kernel_height(3)
-              .kernel_width(3)
-              .subsampling(1)
-              .padding_left(1)
-              .padding_right(1)
-              .padding_top(1)
-              .padding_bottom(1)
-              .iterations(1);
-        for (size_t i = 0; i < sizeof(test_sizes) / sizeof(test_sizes[0]); i++) {{
-            tester.input_height(test_sizes[i][0])
-                  .input_width(test_sizes[i][1])
-                  .Test(run_candidate_{orig_idx}, xnn_init_f32_minmax_scalar_params);
-        }}
-        printf("ID {orig_idx} latency: %lu cycles\\n", tester.kernel_cycles());
-    }}""")
-            else:
-                candidate_blocks.append(f"""
-    {{
-        RAddStoreExpMinusMaxMicrokernelTester tester;
-        for (size_t elems = BATCH_SIZE - 8; elems <= BATCH_SIZE + 8; elems++) {{
-            tester.elements(elems)
-                  .iterations(1)
-                  .Test(run_candidate_{orig_idx}, nullptr);
-        }}
-        printf("ID {orig_idx} latency: %lu cycles\\n", tester.kernel_cycles());
-    }}""")
-
-        combined = preamble
-        combined += "\n".join(func_defs)
-        combined += f"""
-int main() {{
-    volatile double dummy = 1.0;
-    dummy = dummy / 1.0000001;
-{"".join(candidate_blocks)}
-
-    sys_reboot(SYS_REBOOT_COLD);
-}}
-"""
-        return combined
+        return test.inject_candidates(passing_codes, passing_indices)
 
 
 if __name__ == "__main__":
