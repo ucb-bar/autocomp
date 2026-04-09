@@ -65,6 +65,8 @@ Each hardware target requires two things: an **optimization agent** that knows h
 | Google TPU | `built:tpu-v6e` (TPU v6e) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
 | NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
+| Saturn (RVV) | `built:saturn-rvv` | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md)) |
+| Saturn + XNNPACK (RVV) | `built:saturn-rvv` | `xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
@@ -193,11 +195,13 @@ The most important parameters are:
   - `TpuHardwareConfig("v6e-1")`
   - `GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)`
   - `CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")`
+  - `SaturnHardwareConfig(vlen=512, dlen=256)`
 
 **Evaluation Backend**
-- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, and `gpumode`.
+- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `saturn`, and `xnnpack`.
 - `simulator`: The evaluation method to use, if the backend supports multiple. For all others, put `None`.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
+  - For Saturn/XNNPACK, `spike` or `firesim`
   - For CUDA/GPU MODE, `gpumode-local` or `gpumode-cli`
 
 **Benchmark**
@@ -207,6 +211,8 @@ The most important parameters are:
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
+  - For Saturn, `f32` or `qs8`.
+  - For XNNPACK, `xnnpack-f32`.
 - `prob_id`: The problem ID to use.
 
 **Optimization Agent**
