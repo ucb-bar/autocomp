@@ -278,17 +278,18 @@ class TrnNki1LLMAgent(LLMAgent):
             prompt_text += "The following conversion strategies are available:\n"
             prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
             prompt_text += "You are an expert NKI performance engineer. "
-            prompt_text += "Apply one of the <optimizations> to convert the above code to NKI and output the complete code directly.\n"
+            prompt_text += "Apply one of the <optimizations> to convert the above code to NKI. "
+            prompt_text += "First, plan your approach, then output the complete code.\n"
         else:
             prompt_text += "Please carefully review the NKI code to identify any inefficiencies. "
             prompt_text += "Performance can be improved by using the following optimizations:\n"
             prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
             prompt_text += "You are an expert NKI performance engineer generating high-performance Trainium/Inferentia kernels. "
             prompt_text += "Apply one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. "
-            prompt_text += "Output the complete optimized code directly.\n"
+            prompt_text += "First, plan your approach, then output the complete optimized code.\n"
 
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
+        prompt_text += self._get_prompt_rules(planning=True, coding=True, prob=prob)
 
         if cur_iter is not None and num_iters is not None:
             prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."

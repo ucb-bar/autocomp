@@ -383,14 +383,19 @@ class SearchStrategy:
         except Exception as e:
             logger.warning("Failed to save run metadata: %s", e)
 
-    def _save_best_candidate(self):
-        """Find the global best candidate and write its source code to disk."""
+    def _get_best_candidate(self):
+        """Find the global best candidate across all iterations."""
         best = None
         for candidates in self.repository.candidates_per_iteration:
             for c in candidates:
                 if c.score is not None and c.score != float("inf"):
                     if best is None or c.score < best.score:
                         best = c
+        return best
+
+    def _save_best_candidate(self):
+        """Find the global best candidate and write its source code to disk."""
+        best = self._get_best_candidate()
         if best is None:
             return None
         ext = self.prob.sol_file.suffix if self.prob.sol_file else ".txt"
@@ -982,7 +987,7 @@ class BeamSearchStrategy(SearchStrategy):
             run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
         except Exception as e:
             logger.warning("Failed to aggregate run metrics: %s", e)
-        best = self._save_best_candidate()
+        best = self._get_best_candidate()
         if best is not None:
             run_metrics["best_score"] = best.score
         try:
@@ -1101,20 +1106,36 @@ class BeamSearchStrategy(SearchStrategy):
                 save_strs = [f"parent{p_i}" for p_i in range(len(current_candidates))]
                 num_direct_samples = self.num_plan_candidates * self.num_code_candidates
                 code_t0 = time.perf_counter()
-                impl_candidates = self.code_agent.direct_implement_code_parallel(
-                    current_candidates,
-                    num_direct_samples,
-                    save_dir,
-                    save_strs=save_strs,
-                    prob=self.prob,
-                    give_score_feedback=self.give_score_feedback,
-                    give_hw_feedback=self.give_hw_feedback,
-                    include_ancestors=self.include_ancestors,
-                    dropout_menu_options=self.dropout_menu_options,
-                    cur_iter=i,
-                    num_iters=iterations,
-                    translate=translate,
-                )
+                if self.use_edits:
+                    impl_candidates = self.code_agent.direct_implement_code_edits_parallel(
+                        current_candidates,
+                        num_direct_samples,
+                        save_dir,
+                        save_strs=save_strs,
+                        prob=self.prob,
+                        give_score_feedback=self.give_score_feedback,
+                        give_hw_feedback=self.give_hw_feedback,
+                        include_ancestors=self.include_ancestors,
+                        dropout_menu_options=self.dropout_menu_options,
+                        cur_iter=i,
+                        num_iters=iterations,
+                        translate=translate,
+                    )
+                else:
+                    impl_candidates = self.code_agent.direct_implement_code_parallel(
+                        current_candidates,
+                        num_direct_samples,
+                        save_dir,
+                        save_strs=save_strs,
+                        prob=self.prob,
+                        give_score_feedback=self.give_score_feedback,
+                        give_hw_feedback=self.give_hw_feedback,
+                        include_ancestors=self.include_ancestors,
+                        dropout_menu_options=self.dropout_menu_options,
+                        cur_iter=i,
+                        num_iters=iterations,
+                        translate=translate,
+                    )
                 code_duration = round(time.perf_counter() - code_t0, 3)
                 iter_metrics["plan_duration_s"] = 0
                 iter_metrics["code_duration_s"] = code_duration

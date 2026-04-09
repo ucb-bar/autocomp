@@ -262,17 +262,18 @@ Speedup can be increased by using the following optimizations:
             prompt_text += "The following conversion strategies are available:\n"
             prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
             prompt_text += "You are an expert GPU performance engineer. "
-            prompt_text += "Apply one of the <optimizations> to convert the above code and output the complete code directly.\n"
+            prompt_text += "Apply one of the <optimizations> to convert the above code. "
+            prompt_text += "First, plan your approach, then output the complete code.\n"
         else:
             prompt_text += "Please carefully review the program to identify any inefficiencies. "
             prompt_text += "Speedup can be increased by using the following optimizations:\n"
             prompt_text += "<optimizations>:\n" + menu_options_text + "\n"
             prompt_text += "You are an expert GPU performance engineer generating high-performance PyTorch and CUDA code. "
             prompt_text += "Apply one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time. "
-            prompt_text += "Output the complete optimized code directly.\n"
+            prompt_text += "First, plan your approach, then output the complete optimized code.\n"
 
         prompt_text += "\nMake sure to follow these rules:"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True)
+        prompt_text += self._get_prompt_rules(planning=True, coding=True)
 
         if cur_iter is not None and num_iters is not None:
             prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."

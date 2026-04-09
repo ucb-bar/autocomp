@@ -849,17 +849,18 @@ class BuiltLLMAgent(LLMAgent):
             prompt_text += "The following conversion strategies are available:\n"
             prompt_text += "<strategies>:\n" + menu_text + "\n"
             prompt_text += "You are an expert at translating code to this hardware target. "
-            prompt_text += "Apply one of the <strategies> to convert the above code and output the complete code directly.\n"
+            prompt_text += "Apply one of the <strategies> to convert the above code. "
+            prompt_text += "First, plan your approach, then output the complete code.\n"
         else:
             prompt_text += "Please carefully review the code to identify any inefficiencies. "
             prompt_text += "Performance can be improved by using the following strategies:\n"
             prompt_text += "<strategies>:\n" + menu_text + "\n"
             prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
             prompt_text += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
-            prompt_text += "Output the complete optimized code directly.\n"
+            prompt_text += "First, plan your approach, then output the complete optimized code.\n"
 
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob, translate=translate)
+        prompt_text += self._get_prompt_rules(planning=True, coding=True, prob=prob, translate=translate)
 
         if cur_iter is not None and num_iters is not None:
             prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
@@ -875,7 +876,8 @@ class BuiltLLMAgent(LLMAgent):
             "You are an expert performance engineer. "
             "You modify high-performance code by outputting precise code edits.\n\n"
             "You MUST respond with ONLY a JSON object in this exact format:\n"
-            '{"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            '{"plan": "<brief reasoning about which optimization to apply and why>", '
+            '"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
             "Rules for edits:\n"
             "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
             "- Include enough context in old_str to target specific locations.\n"
@@ -892,6 +894,84 @@ class BuiltLLMAgent(LLMAgent):
         user += candidate.plan
         user += "\n\nRules:\n"
         user += self._get_prompt_rules(planning=False, coding=False, prob=prob)
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def _get_direct_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob,
+                                             give_score_feedback: float = 1.0,
+                                             give_hw_feedback: float = 1.0,
+                                             include_ancestors: bool = False,
+                                             dropout_menu_options: float = 1.0,
+                                             cur_iter: int = None,
+                                             num_iters: int = None,
+                                             translate: bool = False) -> list[dict]:
+        if prob is None:
+            raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
+
+        system = (
+            "You are an expert performance engineer. "
+            "You modify high-performance code by outputting precise code edits.\n\n"
+            "You MUST respond with ONLY a JSON object in this exact format:\n"
+            '{"plan": "<brief reasoning about which optimization to apply and why>", '
+            '"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            "Rules for edits:\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
+            "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
+            "- Do NOT output anything outside the JSON object.\n"
+        )
+
+        if translate:
+            if self._translate_menu:
+                opt_lst = list(self._translate_menu)
+            else:
+                if not self._translate_menu_warned:
+                    logger.warning(
+                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                        "Using generic default.",
+                        self.config_dir,
+                    )
+                    self._translate_menu_warned = True
+                opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
+        else:
+            opt_lst = self.get_opt_menu_options(prob, candidate)
+            if dropout_menu_options < 1:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
+
+        user = ""
+        if examples_text:
+            user += examples_text + "Use these reference patterns to inform your optimization.\n\n"
+        user += self._build_prompt_scaffold(
+            candidate, prob, "",
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
+        menu_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_text += f"{i + 1}. {opt}\n"
+
+        if translate:
+            user += "Please review the code and identify parts that should be converted to the target hardware representation.\n"
+            user += "The following conversion strategies are available:\n"
+            user += "<strategies>:\n" + menu_text + "\n"
+            user += "Apply one of the <strategies> to convert the above code. Output ONLY JSON edits.\n"
+        else:
+            user += "Please carefully review the code to identify any inefficiencies. "
+            user += "Performance can be improved by using the following strategies:\n"
+            user += "<strategies>:\n" + menu_text + "\n"
+            user += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
+            user += "Output ONLY JSON edits.\n"
+
+        user += "\nRules:\n"
+        user += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=translate)
+
+        if cur_iter is not None and num_iters is not None:
+            user += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
 
         return [
             {"role": "system", "content": system},
