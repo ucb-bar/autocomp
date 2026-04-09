@@ -1,0 +1,283 @@
+{'correct': False, 'latency': None, 'stdout': '', 'stderr': 'Traceback (most recent call last):
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/compile_11.py", line 128, in <module>
+    test_nki(_bm, _bm)
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/compile_11.py", line 97, in test_nki
+    result_1 = ref_func(*args)
+               ^^^^^^^^^^^^^^^
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 273, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 274, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 371, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.call_impl
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 385, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.specialize_and_call
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 388, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.specialize_and_call
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 396, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 423, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 408, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/impls/impl_11.py", line 55, in test
+    op1=np.multiply, operand1=scale, reverse1=True)
+                                               ^^^^
+ValueError: number of partitions mismatch in parameters (data[1, 8192], operand0[128, 1], operand1[128, 8192]) of \'tensor_scalar\'. Info on how to fix: https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/api/nki.errors.html#err-num-partition-mismatch
+'}
+Prev latency: 2.461
+New latency: N/A
+Plan: Looking at this LayerNorm kernel, I can identify a significant inefficiency in the compute pipeline.
+
+## Plan: Fuse Arithmetic Operations with `nki.isa.tensor_scalar` (Strategy #5)
+
+### Analysis
+
+The current code performs LayerNorm normalization in two separate steps with multiple distinct operations:
+1. **Five separate vector operations**: `subtract`, `multiply`, `rsqrt`, `multiply`, and `add`
+2. **Each operation costs ~N cycles** (where N is the free dimension size), plus instruction overhead
+
+The current implementation:
+```python
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+### Optimization
+
+Use `nki.isa.tensor_scalar` to fuse the normalized value computation (`gamma * (x - mean) * rsqrt(var + epsilon) + beta`) into a single-vectorized instruction. According to the API, `tensor_scalar` supports:
+- Two fused operators with the pattern: `(data <op0> operand0) <op1> operand1`
+- Broadcast operations over the free dimension via vector tiles
+
+The fused computation becomes:
+1. Compute `inv_std = 1/sqrt(var + epsilon)` using `nl.rsqrt`
+2. Compute `scale = gamma * inv_std` as a vector
+3. Compute `bias = -mean * scale + beta` as a vector  
+4. Use `tensor_scalar(input_sb, op0=nl.multiply, operand0=scale, op1=nl.add, operand1=bias)` to fuse the final normalization
+
+This reduces:
+- **From ~5N+ Vector Engine cycles** (subtract + multiply + rsqrt + multiply + add, each with their own loop)
+- **To ~2N+ Vector Engine cycles** (rsqrt + 2 fused vector operations for scale/bias computation + 1 fused tensor_scalar)
+
+### Implementation Changes
+
+Replace the compute section in the loop:
+```python
+# OLD CODE
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+With fused computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Compute inv_std = 1/sqrt(var + epsilon) as a column vector
+inv_std = nl.rsqrt(var + epsilon)
+
+# Compute scale and bias vectors from gamma, beta, mean, and inv_std
+# scale = gamma * inv_std  (broadcast multiply)
+scale = nisa.tensor_scalar(gamma_sb, op0=np.multiply, operand0=inv_std)
+# bias = (-mean * scale) + beta = -mean * (gamma * inv_std) + beta
+bias = nisa.tensor_scalar(beta_sb, op0=np.add, operand0=mean, reverse0=True, 
+                          op1=np.multiply, operand1=scale, reverse1=True)
+
+# Fused: output = scale * input + bias = gamma * inv_std * x + (-mean * scale + beta)
+output_sb = nisa.tensor_scalar(input_sb, op0=np.multiply, operand0=scale, 
+                               op1=np.add, operand1=bias)
+```
+
+The `gamma_sb` and `beta_sb` must be loaded to shape `[nl.tile_size.pmax, 1]` to broadcast correctly across partitions. The `mean`, `var`, `inv_std`, `scale`, and `bias` vectors naturally have shape `[nl.tile_size.pmax, 1]` from the reduction operations.
+
+### Expected Improvement
+- ~40-50% reduction in Vector Engine compute cycles
+- Fewer instruction dispatches and lower kernel latency
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''Looking at this LayerNorm kernel, I can identify a significant inefficiency in the compute pipeline.
+
+## Plan: Fuse Arithmetic Operations with `nki.isa.tensor_scalar` (Strategy #5)
+
+### Analysis
+
+The current code performs LayerNorm normalization in two separate steps with multiple distinct operations:
+1. **Five separate vector operations**: `subtract`, `multiply`, `rsqrt`, `multiply`, and `add`
+2. **Each operation costs ~N cycles** (where N is the free dimension size), plus instruction overhead
+
+The current implementation:
+```python
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+### Optimization
+
+Use `nki.isa.tensor_scalar` to fuse the normalized value computation (`gamma * (x - mean) * rsqrt(var + epsilon) + beta`) into a single-vectorized instruction. According to the API, `tensor_scalar` supports:
+- Two fused operators with the pattern: `(data <op0> operand0) <op1> operand1`
+- Broadcast operations over the free dimension via vector tiles
+
+The fused computation becomes:
+1. Compute `inv_std = 1/sqrt(var + epsilon)` using `nl.rsqrt`
+2. Compute `scale = gamma * inv_std` as a vector
+3. Compute `bias = -mean * scale + beta` as a vector  
+4. Use `tensor_scalar(input_sb, op0=nl.multiply, operand0=scale, op1=nl.add, operand1=bias)` to fuse the final normalization
+
+This reduces:
+- **From ~5N+ Vector Engine cycles** (subtract + multiply + rsqrt + multiply + add, each with their own loop)
+- **To ~2N+ Vector Engine cycles** (rsqrt + 2 fused vector operations for scale/bias computation + 1 fused tensor_scalar)
+
+### Implementation Changes
+
+Replace the compute section in the loop:
+```python
+# OLD CODE
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+With fused computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Compute inv_std = 1/sqrt(var + epsilon) as a column vector
+inv_std = nl.rsqrt(var + epsilon)
+
+# Compute scale and bias vectors from gamma, beta, mean, and inv_std
+# scale = gamma * inv_std  (broadcast multiply)
+scale = nisa.tensor_scalar(gamma_sb, op0=np.multiply, operand0=inv_std)
+# bias = (-mean * scale) + beta = -mean * (gamma * inv_std) + beta
+bias = nisa.tensor_scalar(beta_sb, op0=np.add, operand0=mean, reverse0=True, 
+                          op1=np.multiply, operand1=scale, reverse1=True)
+
+# Fused: output = scale * input + bias = gamma * inv_std * x + (-mean * scale + beta)
+output_sb = nisa.tensor_scalar(input_sb, op0=np.multiply, operand0=scale, 
+                               op1=np.add, operand1=bias)
+```
+
+The `gamma_sb` and `beta_sb` must be loaded to shape `[nl.tile_size.pmax, 1]` to broadcast correctly across partitions. The `mean`, `var`, `inv_std`, `scale`, and `bias` vectors naturally have shape `[nl.tile_size.pmax, 1]` from the reduction operations.
+
+### Expected Improvement
+- ~40-50% reduction in Vector Engine compute cycles
+- Fewer instruction dispatches and lower kernel latency''',
+code='''import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+import math
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with fused tensor_scalar operations.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta as row vectors [1, F]
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile with masking for edge cases
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance using vector engine reductions
+    mean = nl.mean(input_sb, axis=1, keepdims=True)
+    var = nl.mean(nl.square(input_sb), axis=1, keepdims=True) - mean * mean
+
+    # Compute 1/sqrt(var + epsilon)
+    inv_std = nl.rsqrt(var + epsilon)
+
+    # Compute scale = gamma * inv_std
+    # gamma_sb is [1, F], inv_std is [P, 1], result broadcast to [P, F]
+    scale = nl.multiply(gamma_sb, inv_std)
+
+    # Compute bias = beta - mean * scale
+    # beta_sb is [1, F], mean is [P, 1], scale is [P, F]
+    bias = nisa.tensor_scalar(beta_sb, op0=np.add, operand0=mean, reverse0=True, 
+                              op1=np.multiply, operand1=scale, reverse1=True)
+
+    # Fused output computation: out = (input * scale) + bias
+    # This replaces the sequence: shift = input - mean, norm = shift * rsqrt(...), 
+    # out = norm * gamma + beta
+    output_sb = nisa.tensor_scalar(input_sb, op0=np.multiply, operand0=scale, 
+                                   op1=np.add, operand1=bias)
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='zai.glm-5',
+code_gen_model='zai.glm-5',
+stdout=None,
+stderr=None)

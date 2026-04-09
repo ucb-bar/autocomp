@@ -15,7 +15,6 @@ dependencies = [
     "boto3",
     "numpy",
     "wandb",
-    "backoff",
     "together",
     "pyyaml",
 ]

@@ -1,0 +1,245 @@
+{'correct': False, 'latency': None, 'stdout': '', 'stderr': 'Traceback (most recent call last):
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003246/compile_1.py", line 128, in <module>
+    test_nki(_bm, _bm)
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003246/compile_1.py", line 97, in test_nki
+    result_1 = ref_func(*args)
+               ^^^^^^^^^^^^^^^
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 273, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 274, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 371, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.call_impl
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 385, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.specialize_and_call
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 388, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.specialize_and_call
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 396, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 423, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 408, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.TraceKernel.expand_kernel_with_ctx
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003246/impls/impl_1.py", line 78, in test
+    stats_sb[i_p_stats, j * 6 + i_f_stats_out] = bn_stats_result
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: local variable \'bn_stats_result\' is referenced outside of its parent scope (if/else block at f/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003246/impls/impl_1.py:71)! Info on how to fix: https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/api/nki.errors.html#err-local-variable-used-out-of-scope
+'}
+Prev latency: 2.461
+New latency: N/A
+Plan: The primary inefficiency in the provided code is the use of separate, high-level NKI operations for variance calculation and the final affine transformation. Specifically:
+1.  The variance is calculated using `nl.mean` and `nl.square` on line 35. The `nl.var` API exists but might be suboptimal compared to hardware-optimized instructions.
+2.  The final normalization and scaling (`shift_scale * gamma + beta`) is performed in two steps (subtract/multiply, then multiply/add) on lines 39-42. This results in separate instruction dispatches and intermediate tiles, increasing latency and sbuf pressure.
+3.  These operations involve reductions (mean, var) and element-wise broadcasts, which are ideal candidates for the specialized Vector Engine instructions provided by NKI ISA.
+
+My plan focuses on **Strategy 9: Use `nki.isa.tensor_scalar` with chained op0/op1** and implicitly **Strategy 3: fuse operations**, by leveraging specialized Vector Engine instructions to optimize the computation pipeline.
+
+**Optimization Plan:**
+
+1.  **Replace Variance Calculation with `nki.isa.bn_stats`**:
+    The current implementation computes variance as `mean(square(x)) - square(mean(x))` using `nl.mean` and `nl.square`. I will replace this with `nki.isa.bn_stats` followed by `nki.isa.bn_aggr`.
+    *   `nki.isa.bn_stats` computes mean and variance-related statistics for each partition in parallel on the Vector Engine. This is a highly optimized instruction specifically designed for batch normalization statistics.
+    *   `nki.isa.bn_aggr` aggregates these statistics into the final mean and variance.
+    *   This fuses the squaring, summation, and subtraction logic into single, efficient hardware instructions, reducing overhead and improving precision.
+
+2.  **Fuse Normalization and Affine Transformation using `nki.isa.tensor_scalar`**:
+    I will combine the shifts, scaling by `rsqrt(var)`, and the final `gamma`/`beta` application into chained `tensor_scalar` operations.
+    *   The original code does: `y = ((x - mean) * rsqrt(var + eps)) * gamma + beta`.
+    *   This requires four separate operations in the original code (subtract, multiply, rsqrt, multiply/add).
+    *   I will compute the scaling factor `rvar = rsqrt(var + epsilon)` using `nisa.reciprocal` (or `nl.rsqrt` if preferred, but `nisa` is often faster/lower level).
+    *   Then, I will use `nki.isa.tensor_scalar` to fuse the operations:
+        *   First, compute `shifted = input_sb - mean` (using `tensor_scalar` with `np.subtract`).
+        *   Second, compute `normalized = shifted * rvar` (using `tensor_scalar` with `np.multiply`).
+        *   Third, compute the affine transformation `y = normalized * gamma + beta` using a single `tensor_scalar` call with `op0=np.multiply` and `op1=np.add`. This "WYSIWYG" fusion executes the multiply and add in a single instruction on the Vector Engine, significantly reducing kernel latency compared to the separate `nl.multiply` and `nl.add` in the original code.
+
+By implementing these changes, the hot loop body will transition from high-level `nl` calls (which compile to multiple instructions) to fused `nisa` calls, minimizing instruction dispatch overhead and maximizing the throughput of the Vector Engine.
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''The primary inefficiency in the provided code is the use of separate, high-level NKI operations for variance calculation and the final affine transformation. Specifically:
+1.  The variance is calculated using `nl.mean` and `nl.square` on line 35. The `nl.var` API exists but might be suboptimal compared to hardware-optimized instructions.
+2.  The final normalization and scaling (`shift_scale * gamma + beta`) is performed in two steps (subtract/multiply, then multiply/add) on lines 39-42. This results in separate instruction dispatches and intermediate tiles, increasing latency and sbuf pressure.
+3.  These operations involve reductions (mean, var) and element-wise broadcasts, which are ideal candidates for the specialized Vector Engine instructions provided by NKI ISA.
+
+My plan focuses on **Strategy 9: Use `nki.isa.tensor_scalar` with chained op0/op1** and implicitly **Strategy 3: fuse operations**, by leveraging specialized Vector Engine instructions to optimize the computation pipeline.
+
+**Optimization Plan:**
+
+1.  **Replace Variance Calculation with `nki.isa.bn_stats`**:
+    The current implementation computes variance as `mean(square(x)) - square(mean(x))` using `nl.mean` and `nl.square`. I will replace this with `nki.isa.bn_stats` followed by `nki.isa.bn_aggr`.
+    *   `nki.isa.bn_stats` computes mean and variance-related statistics for each partition in parallel on the Vector Engine. This is a highly optimized instruction specifically designed for batch normalization statistics.
+    *   `nki.isa.bn_aggr` aggregates these statistics into the final mean and variance.
+    *   This fuses the squaring, summation, and subtraction logic into single, efficient hardware instructions, reducing overhead and improving precision.
+
+2.  **Fuse Normalization and Affine Transformation using `nki.isa.tensor_scalar`**:
+    I will combine the shifts, scaling by `rsqrt(var)`, and the final `gamma`/`beta` application into chained `tensor_scalar` operations.
+    *   The original code does: `y = ((x - mean) * rsqrt(var + eps)) * gamma + beta`.
+    *   This requires four separate operations in the original code (subtract, multiply, rsqrt, multiply/add).
+    *   I will compute the scaling factor `rvar = rsqrt(var + epsilon)` using `nisa.reciprocal` (or `nl.rsqrt` if preferred, but `nisa` is often faster/lower level).
+    *   Then, I will use `nki.isa.tensor_scalar` to fuse the operations:
+        *   First, compute `shifted = input_sb - mean` (using `tensor_scalar` with `np.subtract`).
+        *   Second, compute `normalized = shifted * rvar` (using `tensor_scalar` with `np.multiply`).
+        *   Third, compute the affine transformation `y = normalized * gamma + beta` using a single `tensor_scalar` call with `op0=np.multiply` and `op1=np.add`. This "WYSIWYG" fusion executes the multiply and add in a single instruction on the Vector Engine, significantly reducing kernel latency compared to the separate `nl.multiply` and `nl.add` in the original code.
+
+By implementing these changes, the hot loop body will transition from high-level `nl` calls (which compile to multiple instructions) to fused `nisa` calls, minimizing instruction dispatch overhead and maximizing the throughput of the Vector Engine.''',
+code='''import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+import math
+
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with optimized Vector Engine instructions.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Number of rows and columns in the input tensor
+  num_rows = input_tensor.shape[0]
+  num_cols = input_tensor.shape[1]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(num_cols)[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, num_cols))
+
+  # Number of bn_stats tiles needed (each handles up to 512 elements)
+  bn_tile_size = nl.tile_size.bn_stats_fmax  # 512
+  num_bn_tiles = math.ceil(num_cols / bn_tile_size)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(num_rows / nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Use bn_stats and bn_aggr for optimized mean/variance calculation
+    # bn_stats produces 6 elements per partition per tile
+    stats_sb = nl.ndarray((nl.tile_size.pmax, 6 * num_bn_tiles), dtype=nl.float32, buffer=nl.sbuf)
+    
+    i_p_stats = nl.arange(nl.tile_size.pmax)[:, None]
+    i_f_stats_out = nl.arange(6)[None, :]
+    
+    for j in nl.affine_range(num_bn_tiles):
+      # Calculate the actual tile size for this iteration (handle last tile)
+      tile_start = j * bn_tile_size
+      tile_end = min((j + 1) * bn_tile_size, num_cols)
+      actual_tile_size = tile_end - tile_start
+      
+      i_f_bn = nl.arange(bn_tile_size)[None, :]
+      
+      # Load the bn_stats tile and compute statistics
+      bn_input = input_sb[i_p_stats, tile_start + i_f_bn]
+      
+      # Apply mask for the last tile if needed
+      if actual_tile_size < bn_tile_size:
+        bn_stats_result = nisa.bn_stats(bn_input, dtype=nl.float32, 
+                                        mask=(i_f_bn < actual_tile_size))
+      else:
+        bn_stats_result = nisa.bn_stats(bn_input, dtype=nl.float32)
+      
+      # Store the bn_stats result into the aggregation buffer
+      stats_sb[i_p_stats, j * 6 + i_f_stats_out] = bn_stats_result
+
+    # Aggregate all bn_stats results to get mean and variance
+    i_f_all_stats = nl.arange(6 * num_bn_tiles)[None, :]
+    mean_var = nisa.bn_aggr(stats_sb[i_p_stats, i_f_all_stats], dtype=nl.float32)
+    
+    # Extract mean and variance (shape: [pmax, 2])
+    # mean is at index 0, variance is at index 1
+    i_f_0 = nl.arange(1)[None, :]
+    i_f_1 = nl.arange(1)[None, :]
+    mean = mean_var[i_p_stats, i_f_0]  # shape: [pmax, 1]
+    var = mean_var[i_p_stats, 1 + i_f_1]  # shape: [pmax, 1]
+
+    # Compute rsqrt(var + epsilon) using tensor_scalar for the addition
+    # then use rsqrt
+    var_plus_eps = nisa.tensor_scalar(var, np.add, epsilon, dtype=nl.float32)
+    rvar = nl.rsqrt(var_plus_eps)  # shape: [pmax, 1]
+
+    # Normalize: shifted = input_sb - mean (broadcast subtract)
+    shifted = nisa.tensor_scalar(input_sb, np.subtract, mean, dtype=nl.float32)
+    
+    # Scale by rsqrt(var + eps): normalized = shifted * rvar (broadcast multiply)
+    normalized = nisa.tensor_scalar(shifted, np.multiply, rvar, dtype=nl.float32)
+
+    # Apply affine transformation: output = normalized * gamma + beta
+    # Use tensor_tensor for element-wise multiply with gamma
+    scaled = nisa.tensor_tensor(normalized, gamma_sb_bcast, np.multiply, dtype=nl.float32)
+    
+    # Add beta using tensor_tensor
+    output_sb = nisa.tensor_tensor(scaled, beta_sb_bcast, np.add, dtype=input_tensor.dtype)
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='zai.glm-5',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout=None,
+stderr=None)

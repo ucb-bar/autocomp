@@ -7,10 +7,18 @@ from autocomp.search.prob import Prob
 
 
 class DummyEvalBackend(EvalBackend):
-    """Eval backend that always reports correct with a fixed latency."""
+    """Eval backend that returns decreasing latencies to simulate improvement."""
+
+    def __init__(self):
+        self._call_count = 0
 
     def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> list[dict]:
-        return [{"correct": True, "p99_latency": 1.0} for _ in code_strs]
+        results = []
+        for _ in code_strs:
+            self._call_count += 1
+            latency = 1.0 / self._call_count
+            results.append({"correct": True, "p99_latency": latency})
+        return results
 
 
 @pytest.fixture
@@ -32,4 +40,4 @@ def dummy_prob(tmp_path):
     test_file.write_text("# dummy test file")
     sol_file = tmp_path / "0_dummy.py"
     sol_file.write_text("def nki_kernel():\n    pass\n")
-    return Prob("trn-tutorial", 0, test_file=test_file, sol_file=sol_file)
+    return Prob("trn-tutorial-nki1", 0, test_file=test_file, sol_file=sol_file)

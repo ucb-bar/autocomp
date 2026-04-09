@@ -1,5 +1,5 @@
 def PROMPT():
-    orig_code = """void test(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
+    orig_code = """void solution(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
   // 3,435,455 cycles
   ...
   uint32_t a = 0;
@@ -33,7 +33,7 @@ def PROMPT():
   }
   fence();
 }"""
-    new_code = """void test(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
+    new_code = """void solution(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
   // 1,519,076 cycles
   ...
   uint32_t a = 0;

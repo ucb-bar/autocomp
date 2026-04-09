@@ -3,6 +3,8 @@ import json
 import asyncio
 import random
 import copy
+import time
+import contextvars
 
 import boto3
 from openai import OpenAI, AsyncOpenAI
@@ -14,11 +16,15 @@ from together import Together, AsyncTogether
 
 from autocomp.common import logger
 
+# Context variable for tagging LLM calls by phase (e.g. "plan_generation")
+llm_phase: contextvars.ContextVar[str] = contextvars.ContextVar("llm_phase", default="unknown")
+
 # Try to import keys from keys.py, use as fallback if env vars not set
 try:
     from autocomp.common import keys
 except ImportError:
     keys = None
+
 
 def _get_key(env_var: str, default: str = "EMPTY"):
     """Get key from environment variable, falling back to keys.py."""
@@ -30,6 +36,7 @@ def _get_key(env_var: str, default: str = "EMPTY"):
         if file_value is not None:
             return file_value
     return default
+
 
 openai_key_str = _get_key("OPENAI_API_KEY")
 anthropic_key_str = _get_key("ANTHROPIC_API_KEY")
@@ -60,12 +67,15 @@ if _available:
 if _unavailable:
     logger.info(f"Keys unavailable: {', '.join(_unavailable)}")
 
+
 def is_openai_reasoning_model(model: str) -> bool:
     return model.startswith(("o1", "o3", "o4", "gpt-5"))
+
 
 ##############################################################################
 # Provider-specific translation helpers for tool calling / structured output
 ##############################################################################
+
 
 def _openai_tools_from_schema(tools: list[dict]) -> list[dict]:
     """OpenAI/vLLM/Together: pass through as-is."""
@@ -77,11 +87,15 @@ def _anthropic_tools_from_schema(tools: list[dict]) -> list[dict]:
     out = []
     for t in tools:
         fn = t["function"]
-        out.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        out.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
     return out
 
 
@@ -90,11 +104,13 @@ def _gemini_tools_from_schema(tools: list[dict]) -> list[types.Tool]:
     declarations = []
     for t in tools:
         fn = t["function"]
-        declarations.append(types.FunctionDeclaration(
-            name=fn["name"],
-            description=fn.get("description", ""),
-            parameters=fn.get("parameters"),
-        ))
+        declarations.append(
+            types.FunctionDeclaration(
+                name=fn["name"],
+                description=fn.get("description", ""),
+                parameters=fn.get("parameters"),
+            )
+        )
     return [types.Tool(function_declarations=declarations)]
 
 
@@ -103,15 +119,19 @@ def _bedrock_tools_from_schema(tools: list[dict]) -> dict:
     tool_specs = []
     for t in tools:
         fn = t["function"]
-        tool_specs.append({
-            "toolSpec": {
-                "name": fn["name"],
-                "description": fn.get("description", ""),
-                "inputSchema": {
-                    "json": fn.get("parameters", {"type": "object", "properties": {}}),
-                },
+        tool_specs.append(
+            {
+                "toolSpec": {
+                    "name": fn["name"],
+                    "description": fn.get("description", ""),
+                    "inputSchema": {
+                        "json": fn.get(
+                            "parameters", {"type": "object", "properties": {}}
+                        ),
+                    },
+                }
             }
-        })
+        )
     return {"tools": tool_specs}
 
 
@@ -120,14 +140,21 @@ def _normalize_openai_response(message) -> dict:
     tool_calls = []
     if message.tool_calls:
         for tc in message.tool_calls:
-            tool_calls.append({
-                "id": tc.id,
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-            })
+            tool_calls.append(
+                {
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+            )
     return {"role": "assistant", "content": message.content, "tool_calls": tool_calls}
 
 
-def _messages_for_openai_responses(messages: list[dict]) -> tuple[str | None, list[dict]]:
+def _messages_for_openai_responses(
+    messages: list[dict],
+) -> tuple[str | None, list[dict]]:
     """Extract system→instructions; convert tool history to Responses API format."""
     instructions = None
     input_items = []
@@ -136,17 +163,28 @@ def _messages_for_openai_responses(messages: list[dict]) -> tuple[str | None, li
         if role == "system":
             instructions = m["content"]
         elif role == "tool":
-            input_items.append({"type": "function_call_output", "call_id": m["tool_call_id"], "output": m["content"]})
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": m["tool_call_id"],
+                    "output": m["content"],
+                }
+            )
         elif role == "assistant" and m.get("tool_calls"):
             if m.get("content"):
                 input_items.append({"role": "assistant", "content": m["content"]})
             for tc in m["tool_calls"]:
                 args = tc["function"]["arguments"]
-                input_items.append({
-                    "type": "function_call", "call_id": tc["id"],
-                    "name": tc["function"]["name"],
-                    "arguments": args if isinstance(args, str) else json.dumps(args),
-                })
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "arguments": args
+                        if isinstance(args, str)
+                        else json.dumps(args),
+                    }
+                )
         else:
             input_items.append({"role": role, "content": m.get("content", "")})
     return instructions, input_items
@@ -162,8 +200,17 @@ def _normalize_openai_responses_response(response) -> dict:
                 if part.type == "output_text":
                     content_text += part.text
         elif item.type == "function_call":
-            tool_calls.append({"id": item.call_id, "function": {"name": item.name, "arguments": item.arguments}})
-    return {"role": "assistant", "content": content_text or None, "tool_calls": tool_calls}
+            tool_calls.append(
+                {
+                    "id": item.call_id,
+                    "function": {"name": item.name, "arguments": item.arguments},
+                }
+            )
+    return {
+        "role": "assistant",
+        "content": content_text or None,
+        "tool_calls": tool_calls,
+    }
 
 
 def _normalize_anthropic_response(response) -> dict:
@@ -174,11 +221,20 @@ def _normalize_anthropic_response(response) -> dict:
         if block.type == "text":
             content_text += block.text
         elif block.type == "tool_use":
-            tool_calls.append({
-                "id": block.id,
-                "function": {"name": block.name, "arguments": json.dumps(block.input)},
-            })
-    return {"role": "assistant", "content": content_text or None, "tool_calls": tool_calls}
+            tool_calls.append(
+                {
+                    "id": block.id,
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.input),
+                    },
+                }
+            )
+    return {
+        "role": "assistant",
+        "content": content_text or None,
+        "tool_calls": tool_calls,
+    }
 
 
 def _normalize_gemini_response(response) -> dict:
@@ -190,11 +246,20 @@ def _normalize_gemini_response(response) -> dict:
             content_text += part.text
         if part.function_call:
             fc = part.function_call
-            tool_calls.append({
-                "id": f"gemini_{fc.name}_{id(fc)}",
-                "function": {"name": fc.name, "arguments": json.dumps(dict(fc.args) if fc.args else {})},
-            })
-    return {"role": "assistant", "content": content_text or None, "tool_calls": tool_calls}
+            tool_calls.append(
+                {
+                    "id": f"gemini_{fc.name}_{id(fc)}",
+                    "function": {
+                        "name": fc.name,
+                        "arguments": json.dumps(dict(fc.args) if fc.args else {}),
+                    },
+                }
+            )
+    return {
+        "role": "assistant",
+        "content": content_text or None,
+        "tool_calls": tool_calls,
+    }
 
 
 def _normalize_bedrock_response(response) -> dict:
@@ -206,11 +271,20 @@ def _normalize_bedrock_response(response) -> dict:
             content_text += block["text"]
         elif "toolUse" in block:
             tu = block["toolUse"]
-            tool_calls.append({
-                "id": tu["toolUseId"],
-                "function": {"name": tu["name"], "arguments": json.dumps(tu["input"])},
-            })
-    return {"role": "assistant", "content": content_text or None, "tool_calls": tool_calls}
+            tool_calls.append(
+                {
+                    "id": tu["toolUseId"],
+                    "function": {
+                        "name": tu["name"],
+                        "arguments": json.dumps(tu["input"]),
+                    },
+                }
+            )
+    return {
+        "role": "assistant",
+        "content": content_text or None,
+        "tool_calls": tool_calls,
+    }
 
 
 def _messages_for_anthropic(messages: list[dict]) -> tuple[str | None, list[dict]]:
@@ -228,8 +302,13 @@ def _messages_for_anthropic(messages: list[dict]) -> tuple[str | None, list[dict
                 "tool_use_id": m["tool_call_id"],
                 "content": m["content"],
             }
-            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list) \
-                    and out[-1]["content"] and out[-1]["content"][0].get("type") == "tool_result":
+            if (
+                out
+                and out[-1]["role"] == "user"
+                and isinstance(out[-1]["content"], list)
+                and out[-1]["content"]
+                and out[-1]["content"][0].get("type") == "tool_result"
+            ):
                 out[-1]["content"].append(block)
             else:
                 out.append({"role": "user", "content": [block]})
@@ -239,12 +318,14 @@ def _messages_for_anthropic(messages: list[dict]) -> tuple[str | None, list[dict
                 content.append({"type": "text", "text": m["content"]})
             for tc in m["tool_calls"]:
                 args = tc["function"]["arguments"]
-                content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["function"]["name"],
-                    "input": json.loads(args) if isinstance(args, str) else args,
-                })
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "input": json.loads(args) if isinstance(args, str) else args,
+                    }
+                )
             out.append({"role": "assistant", "content": content})
         else:
             out.append({"role": m["role"], "content": m["content"]})
@@ -268,27 +349,39 @@ def _messages_for_gemini(messages: list[dict]) -> tuple[str | None, list]:
             system = m["content"]
         elif m["role"] == "tool":
             fn_name = tc_id_to_name.get(m.get("tool_call_id"), "tool_result")
-            contents.append(types.Content(
-                role="user",
-                parts=[types.Part(function_response=types.FunctionResponse(
-                    name=fn_name,
-                    response={"result": m["content"]},
-                ))],
-            ))
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=fn_name,
+                                response={"result": m["content"]},
+                            )
+                        )
+                    ],
+                )
+            )
         elif m["role"] == "assistant" and m.get("tool_calls"):
             parts = []
             if m.get("content"):
                 parts.append(types.Part(text=m["content"]))
             for tc in m["tool_calls"]:
                 args = tc["function"]["arguments"]
-                parts.append(types.Part(function_call=types.FunctionCall(
-                    name=tc["function"]["name"],
-                    args=json.loads(args) if isinstance(args, str) else args,
-                )))
+                parts.append(
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name=tc["function"]["name"],
+                            args=json.loads(args) if isinstance(args, str) else args,
+                        )
+                    )
+                )
             contents.append(types.Content(role="model", parts=parts))
         else:
             role = "model" if m["role"] == "assistant" else "user"
-            contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
+            contents.append(
+                types.Content(role=role, parts=[types.Part(text=m["content"])])
+            )
     return system, contents
 
 
@@ -301,12 +394,19 @@ def _messages_for_bedrock(messages: list[dict]) -> tuple[list[dict] | None, list
         if m["role"] == "system":
             system = [{"text": m["content"]}]
         elif m["role"] == "tool":
-            block = {"toolResult": {
-                "toolUseId": m["tool_call_id"],
-                "content": [{"text": m["content"]}],
-            }}
-            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list) \
-                    and out[-1]["content"] and "toolResult" in out[-1]["content"][0]:
+            block = {
+                "toolResult": {
+                    "toolUseId": m["tool_call_id"],
+                    "content": [{"text": m["content"]}],
+                }
+            }
+            if (
+                out
+                and out[-1]["role"] == "user"
+                and isinstance(out[-1]["content"], list)
+                and out[-1]["content"]
+                and "toolResult" in out[-1]["content"][0]
+            ):
                 out[-1]["content"].append(block)
             else:
                 out.append({"role": "user", "content": [block]})
@@ -316,15 +416,70 @@ def _messages_for_bedrock(messages: list[dict]) -> tuple[list[dict] | None, list
                 content.append({"text": m["content"]})
             for tc in m["tool_calls"]:
                 args = tc["function"]["arguments"]
-                content.append({"toolUse": {
-                    "toolUseId": tc["id"],
-                    "name": tc["function"]["name"],
-                    "input": json.loads(args) if isinstance(args, str) else args,
-                }})
+                content.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": tc["id"],
+                            "name": tc["function"]["name"],
+                            "input": json.loads(args)
+                            if isinstance(args, str)
+                            else args,
+                        }
+                    }
+                )
             out.append({"role": "assistant", "content": content})
         else:
             out.append({"role": m["role"], "content": [{"text": m["content"]}]})
     return system, out
+
+
+def _extract_usage(provider: str, resp) -> dict:
+    """Extract token usage from a provider-specific response object.
+
+    Always returns a valid dict with at least input_tokens and output_tokens,
+    even if the response object has an unexpected shape (e.g. SDK version
+    mismatch).
+    """
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    try:
+        if provider == "openai":
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or getattr(resp.usage, "prompt_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or getattr(resp.usage, "completion_tokens", 0) or 0
+        elif provider in ("vllm", "together"):
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "prompt_tokens", 0) or getattr(resp.usage, "input_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "completion_tokens", 0) or getattr(resp.usage, "output_tokens", 0) or 0
+        elif provider in ("anthropic", "aws"):
+            if hasattr(resp, "usage") and resp.usage:
+                usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or 0
+        elif provider == "gcp":
+            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+                usage["input_tokens"] = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
+                usage["output_tokens"] = getattr(resp.usage_metadata, "candidates_token_count", 0) or 0
+        elif provider == "aws-bedrock":
+            if isinstance(resp, dict) and "usage" in resp:
+                usage["input_tokens"] = resp["usage"].get("inputTokens", 0) or 0
+                usage["output_tokens"] = resp["usage"].get("outputTokens", 0) or 0
+    except Exception:
+        pass
+    return usage
+
+
+def _attach_usage(normalized: dict, provider: str, resp, t0: float, model: str) -> None:
+    """Attach usage metrics to a normalized response dict. Never raises."""
+    try:
+        usage = _extract_usage(provider, resp)
+        usage["duration_s"] = round(time.perf_counter() - t0, 3)
+        usage["model"] = model
+        usage["phase"] = llm_phase.get("unknown")
+        normalized["usage"] = usage
+    except Exception:
+        normalized.setdefault("usage", {
+            "input_tokens": 0, "output_tokens": 0, "duration_s": 0,
+            "model": model, "phase": llm_phase.get("unknown"),
+        })
 
 
 async def fetch_tool_completion(
@@ -342,11 +497,12 @@ async def fetch_tool_completion(
 ) -> dict:
     """Provider-dispatching async helper for chat-completions with tool calling.
 
-    Returns a normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...]}.
+    Returns a normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...], "usage": {...}}.
     """
     max_retries = 8
     for attempt in range(max_retries):
         try:
+            t0 = time.perf_counter()
             async with semaphore:
                 if provider == "openai":
                     instructions, input_items = _messages_for_openai_responses(messages)
@@ -356,12 +512,19 @@ async def fetch_tool_completion(
                     if max_tokens is not None:
                         kwargs["max_tokens"] = max_tokens
                     if tools:
+
                         def _conv(t):
                             if "function" not in t:
                                 return t
                             fn = t["function"]
-                            return {"type": "function", "name": fn["name"], "description": fn.get("description", ""),
-                                    "parameters": fn.get("parameters", {}), "strict": fn.get("strict", False)}
+                            return {
+                                "type": "function",
+                                "name": fn["name"],
+                                "description": fn.get("description", ""),
+                                "parameters": fn.get("parameters", {}),
+                                "strict": fn.get("strict", False),
+                            }
+
                         kwargs["tools"] = [_conv(t) for t in tools]
                     if temperature is not None:
                         kwargs["temperature"] = temperature
@@ -369,14 +532,18 @@ async def fetch_tool_completion(
                         kwargs["reasoning"] = reasoning
                     if response_format:
                         inner = response_format.get("json_schema", {})
-                        kwargs["text"] = {"format": {
-                            "type": "json_schema",
-                            "name": inner.get("name", "structured_output"),
-                            "strict": inner.get("strict", True),
-                            "schema": inner.get("schema", {}),
-                        }}
+                        kwargs["text"] = {
+                            "format": {
+                                "type": "json_schema",
+                                "name": inner.get("name", "structured_output"),
+                                "strict": inner.get("strict", True),
+                                "schema": inner.get("schema", {}),
+                            }
+                        }
                     resp = await client.responses.create(**kwargs)
-                    return _normalize_openai_responses_response(resp)
+                    normalized = _normalize_openai_responses_response(resp)
+                    _attach_usage(normalized, "openai", resp, t0, model)
+                    return normalized
 
                 elif provider in ("vllm", "together"):
                     kwargs = {"model": model, "messages": messages}
@@ -389,11 +556,17 @@ async def fetch_tool_completion(
                     if response_format:
                         kwargs["response_format"] = response_format
                     resp = await client.chat.completions.create(**kwargs)
-                    return _normalize_openai_response(resp.choices[0].message)
+                    normalized = _normalize_openai_response(resp.choices[0].message)
+                    _attach_usage(normalized, provider, resp, t0, model)
+                    return normalized
 
                 elif provider in ("anthropic", "aws"):
                     system, anth_messages = _messages_for_anthropic(messages)
-                    kwargs = {"model": model, "messages": anth_messages, "max_tokens": max_tokens or 16384}
+                    kwargs = {
+                        "model": model,
+                        "messages": anth_messages,
+                        "max_tokens": max_tokens or 16384,
+                    }
                     if system:
                         kwargs["system"] = system
                     if tools:
@@ -401,8 +574,12 @@ async def fetch_tool_completion(
                     if temperature is not None:
                         kwargs["temperature"] = temperature
                     if response_format:
-                        schema_body = response_format.get("json_schema", {}).get("schema", {})
-                        schema_name = response_format.get("json_schema", {}).get("name", "structured_output")
+                        schema_body = response_format.get("json_schema", {}).get(
+                            "schema", {}
+                        )
+                        schema_name = response_format.get("json_schema", {}).get(
+                            "name", "structured_output"
+                        )
                         so_tool = {
                             "name": schema_name,
                             "description": "Respond with structured JSON matching this schema.",
@@ -414,12 +591,15 @@ async def fetch_tool_completion(
                     resp = await client.messages.create(**kwargs)
                     normalized = _normalize_anthropic_response(resp)
                     if response_format and normalized["tool_calls"]:
-                        schema_name = response_format.get("json_schema", {}).get("name", "structured_output")
+                        schema_name = response_format.get("json_schema", {}).get(
+                            "name", "structured_output"
+                        )
                         for tc in normalized["tool_calls"]:
                             if tc["function"]["name"] == schema_name:
                                 normalized["content"] = tc["function"]["arguments"]
                                 normalized["tool_calls"] = []
                                 break
+                    _attach_usage(normalized, "anthropic", resp, t0, model)
                     return normalized
 
                 elif provider == "gcp":
@@ -435,13 +615,19 @@ async def fetch_tool_completion(
                         config.tools = _gemini_tools_from_schema(tools)
                     if response_format:
                         config.response_mime_type = "application/json"
-                        schema_body = response_format.get("json_schema", {}).get("schema")
+                        schema_body = response_format.get("json_schema", {}).get(
+                            "schema"
+                        )
                         if schema_body:
                             config.response_schema = schema_body
                     resp = await client.aio.models.generate_content(
-                        model=model, contents=contents, config=config,
+                        model=model,
+                        contents=contents,
+                        config=config,
                     )
-                    return _normalize_gemini_response(resp)
+                    normalized = _normalize_gemini_response(resp)
+                    _attach_usage(normalized, "gcp", resp, t0, model)
+                    return normalized
 
                 elif provider == "aws-bedrock":
                     system, br_messages = _messages_for_bedrock(messages)
@@ -459,13 +645,19 @@ async def fetch_tool_completion(
                     if tools:
                         kwargs["toolConfig"] = _bedrock_tools_from_schema(tools)
                     if response_format:
-                        schema_body = response_format.get("json_schema", {}).get("schema", {})
-                        schema_name = response_format.get("json_schema", {}).get("name", "structured_output")
-                        so_spec = {"toolSpec": {
-                            "name": schema_name,
-                            "description": "Respond with structured JSON matching this schema.",
-                            "inputSchema": {"json": schema_body},
-                        }}
+                        schema_body = response_format.get("json_schema", {}).get(
+                            "schema", {}
+                        )
+                        schema_name = response_format.get("json_schema", {}).get(
+                            "name", "structured_output"
+                        )
+                        so_spec = {
+                            "toolSpec": {
+                                "name": schema_name,
+                                "description": "Respond with structured JSON matching this schema.",
+                                "inputSchema": {"json": schema_body},
+                            }
+                        }
                         tc = kwargs.get("toolConfig", {"tools": []})
                         tc["tools"].append(so_spec)
                         tc["toolChoice"] = {"tool": {"name": schema_name}}
@@ -473,40 +665,81 @@ async def fetch_tool_completion(
                     resp = await asyncio.to_thread(bedrock_client.converse, **kwargs)
                     normalized = _normalize_bedrock_response(resp)
                     if response_format and normalized["tool_calls"]:
-                        schema_name = response_format.get("json_schema", {}).get("name", "structured_output")
+                        schema_name = response_format.get("json_schema", {}).get(
+                            "name", "structured_output"
+                        )
                         for tc in normalized["tool_calls"]:
                             if tc["function"]["name"] == schema_name:
                                 normalized["content"] = tc["function"]["arguments"]
                                 normalized["tool_calls"] = []
                                 break
+                    _attach_usage(normalized, "aws-bedrock", resp, t0, model)
                     return normalized
 
                 else:
-                    raise ValueError(f"Unsupported provider for tool completion: {provider} for model: {model}")
+                    raise ValueError(
+                        f"Unsupported provider for tool completion: {provider} for model: {model}"
+                    )
 
         except Exception as e:
             err_str = str(e)
             if "temperature" in err_str and "not supported" in err_str:
-                logger.info(f"fetch_tool_completion: model {model} does not support temperature, retrying without it")
+                logger.info(
+                    f"fetch_tool_completion: model {model} does not support temperature, retrying without it"
+                )
                 temperature = None
                 continue
-            logger.info(f"fetch_tool_completion error (attempt {attempt+1}): {e}")
-            wait_time = 2 ** attempt + random.uniform(0, 1)
+            logger.info(f"fetch_tool_completion error (attempt {attempt + 1}): {e}")
+            wait_time = 2**attempt + random.uniform(0, 1)
             logger.info(f"Retrying in {wait_time:.2f}s...")
             await asyncio.sleep(wait_time)
 
     logger.info("fetch_tool_completion: max retries reached")
-    return {"role": "assistant", "content": "Error: max retries reached", "tool_calls": []}
+    return {
+        "role": "assistant",
+        "content": "Error: max retries reached",
+        "tool_calls": [],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "duration_s": 0, "model": model, "phase": llm_phase.get("unknown")},
+    }
 
 
+def aggregate_usage(results: list[dict]) -> dict:
+    """Aggregate usage stats from a list of normalized LLM responses.
+    Returns {model: {calls, input_tokens, output_tokens, duration_s}} grouped by (model, phase)
+    and a flat list under "by_phase" keyed by phase name.
 
-class LLMClient():
+    Accepts both bare usage dicts (from _usage_accumulator) and
+    response dicts containing a nested "usage" key.
+    """
+    by_phase: dict[str, dict[str, dict]] = {}
+    for r in results:
+        u = r.get("usage", r) if isinstance(r, dict) else {}
+        if not u or "phase" not in u:
+            continue
+        phase = u.get("phase", "unknown")
+        model = u.get("model", "unknown")
+        if phase not in by_phase:
+            by_phase[phase] = {}
+        if model not in by_phase[phase]:
+            by_phase[phase][model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "duration_s": 0.0, "max_duration_s": 0.0}
+        entry = by_phase[phase][model]
+        entry["calls"] += 1
+        entry["input_tokens"] += u.get("input_tokens", 0)
+        entry["output_tokens"] += u.get("output_tokens", 0)
+        call_dur = u.get("duration_s", 0)
+        entry["duration_s"] = round(entry["duration_s"] + call_dur, 3)
+        entry["max_duration_s"] = round(max(entry["max_duration_s"], call_dur), 3)
+    return by_phase
+
+
+class LLMClient:
     def __init__(self, model: str, provider: str | None = None):
         self.model = model
         self.client = None
         self.async_client = None
         self._vllm_api_base = None
-        # Persistent event loop so async clients can be reused across calls
+        self._last_usage: list[dict] = []
+        self._usage_accumulator: list[dict] = []
         self._loop = asyncio.new_event_loop()
 
         self.provider = provider
@@ -527,31 +760,36 @@ class LLMClient():
             if google_api_key and not google_cloud_project:
                 self.client = genai.Client(api_key=google_api_key)
             else:
-                self.client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+                self.client = genai.Client(
+                    vertexai=True,
+                    project=google_cloud_project,
+                    location=google_cloud_location,
+                )
             self.async_client = self.client
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
-            self.client = anthropic.AnthropicBedrock(
-                aws_access_key=aws_access_key,
-                aws_secret_key=aws_secret_key,
-                aws_region=aws_region,
-            )
-            self.async_client = anthropic.AsyncAnthropicBedrock(
-                aws_access_key=aws_access_key,
-                aws_secret_key=aws_secret_key,
-                aws_region=aws_region,
-            )
+            # Use explicit keys if provided, otherwise let boto3/anthropic
+            # pick up credentials from IAM role (instance metadata)
+            bedrock_kwargs = {"aws_region": aws_region}
+            if aws_access_key and aws_secret_key:
+                bedrock_kwargs["aws_access_key"] = aws_access_key
+                bedrock_kwargs["aws_secret_key"] = aws_secret_key
+            self.client = anthropic.AnthropicBedrock(**bedrock_kwargs)
+            self.async_client = anthropic.AsyncAnthropicBedrock(**bedrock_kwargs)
         elif self.provider == "aws":
             # Generic Bedrock models (Llama, Mistral, Nova, etc.) via Converse API
+            # Use explicit keys if provided, otherwise IAM role
             from botocore.config import Config as BotoConfig
-            self._bedrock_client = boto3.client(
-                "bedrock-runtime",
-                region_name=aws_region,
-                aws_access_key_id=aws_access_key,
-                aws_secret_access_key=aws_secret_key,
-                config=BotoConfig(read_timeout=120),
-            )
+
+            boto_kwargs = {
+                "region_name": aws_region,
+                "config": BotoConfig(read_timeout=120),
+            }
+            if aws_access_key and aws_secret_key:
+                boto_kwargs["aws_access_key_id"] = aws_access_key
+                boto_kwargs["aws_secret_access_key"] = aws_secret_key
+            self._bedrock_client = boto3.client("bedrock-runtime", **boto_kwargs)
             self.provider = "aws-bedrock"
         elif self.provider == "together":
             self.async_client = AsyncTogether(api_key=together_key_str)
@@ -575,12 +813,24 @@ class LLMClient():
         elif self.provider == "dummy":
             pass
         else:
-            raise ValueError(f"Invalid provider: {self.provider} for model: {self.model}")
+            raise ValueError(
+                f"Invalid provider: {self.provider} for model: {self.model}"
+            )
 
     def _run_async(self, coro):
         """Run an async coroutine on the persistent event loop.
         Uses a single long-lived loop so async clients can reuse connections."""
         return self._loop.run_until_complete(coro)
+
+    def reset_usage(self):
+        """Clear the usage accumulator. Call before a logical step."""
+        self._usage_accumulator.clear()
+
+    def collect_usage(self) -> list[dict]:
+        """Return and clear accumulated usage records since the last reset."""
+        records = list(self._usage_accumulator)
+        self._usage_accumulator.clear()
+        return records
 
     def web_search(self, query: str) -> str:
         messages = [{"role": "user", "content": query}]
@@ -593,8 +843,14 @@ class LLMClient():
         tools = [{"type": "web_search_preview"}]
         grouped = self.chat_messages_async(messages_lst, num_samples=1, tools=tools)
         return [r[0].get("content") or "" for r in grouped]
-    
-    def chat_async(self, prompts_lst: list[str], num_samples=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
+
+    def chat_async(
+        self,
+        prompts_lst: list[str],
+        num_samples=10,
+        temperature=None,
+        reasoning_effort="high",
+    ) -> list[list[str]]:
         if self.provider == "dummy":
             return [["dummy response"] * num_samples for _ in prompts_lst]
         messages_lst = [[{"role": "user", "content": p}] for p in prompts_lst]
@@ -603,14 +859,18 @@ class LLMClient():
             reasoning = {"effort": reasoning_effort}
             temperature = None
         grouped = self.chat_messages_async(
-            messages_lst, num_samples=num_samples,
-            temperature=temperature, reasoning=reasoning,
+            messages_lst,
+            num_samples=num_samples,
+            temperature=temperature,
+            reasoning=reasoning,
         )
         return [[r.get("content") or "" for r in samples] for samples in grouped]
 
     def chat(self, prompt: str, num_samples=10, temperature=None):
         """Synchronous convenience wrapper. Returns list of response strings."""
-        return self.chat_async([prompt], num_samples=num_samples, temperature=temperature)[0]
+        return self.chat_async(
+            [prompt], num_samples=num_samples, temperature=temperature
+        )[0]
 
     def chat_messages(
         self,
@@ -622,22 +882,27 @@ class LLMClient():
         reasoning: dict | None = None,
     ) -> dict:
         """Single LLM call with message array, optional tool schemas, optional structured output.
-        Returns normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...]}."""
+        Returns normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...], "usage": {...}}."""
         semaphore = asyncio.Semaphore(1)
         bedrock = getattr(self, "_bedrock_client", None)
-        return self._run_async(fetch_tool_completion(
-            semaphore,
-            self.async_client,
-            messages,
-            provider=self.provider,
-            model=self.model,
-            tools=tools,
-            response_format=response_format,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            reasoning=reasoning,
-            bedrock_client=bedrock,
-        ))
+        result = self._run_async(
+            fetch_tool_completion(
+                semaphore,
+                self.async_client,
+                messages,
+                provider=self.provider,
+                model=self.model,
+                tools=tools,
+                response_format=response_format,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                bedrock_client=bedrock,
+            )
+        )
+        self._last_usage = [result.get("usage", {})]
+        self._usage_accumulator.extend(self._last_usage)
+        return result
 
     def chat_messages_async(
         self,
@@ -671,26 +936,30 @@ class LLMClient():
             tasks = []
             for messages in messages_lst:
                 for _ in range(num_samples):
-                    tasks.append(fetch_tool_completion(
-                        semaphore,
-                        self.async_client,
-                        copy.deepcopy(messages),
-                        provider=self.provider,
-                        model=self.model,
-                        tools=tools,
-                        response_format=response_format,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        reasoning=reasoning,
-                        bedrock_client=bedrock,
-                    ))
+                    tasks.append(
+                        fetch_tool_completion(
+                            semaphore,
+                            self.async_client,
+                            copy.deepcopy(messages),
+                            provider=self.provider,
+                            model=self.model,
+                            tools=tools,
+                            response_format=response_format,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            reasoning=reasoning,
+                            bedrock_client=bedrock,
+                        )
+                    )
             return await asyncio.gather(*tasks)
 
         results = self._run_async(_run())
 
+        self._last_usage = [r.get("usage", {}) for r in results]
+        self._usage_accumulator.extend(self._last_usage)
         grouped: list[list[dict]] = []
         for i in range(len(messages_lst)):
-            grouped.append(list(results[i * num_samples:(i + 1) * num_samples]))
+            grouped.append(list(results[i * num_samples : (i + 1) * num_samples]))
         return grouped
 
     def agent_loop(
@@ -708,8 +977,10 @@ class LLMClient():
         messages = copy.deepcopy(messages)
         for _ in range(max_turns):
             response = self.chat_messages(
-                messages, tools=tools,
-                temperature=temperature, max_tokens=max_tokens,
+                messages,
+                tools=tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
             messages.append(response)
             if not response.get("tool_calls"):
@@ -718,9 +989,11 @@ class LLMClient():
                 args = tc["function"]["arguments"]
                 parsed_args = json.loads(args) if isinstance(args, str) else args
                 result = tool_executor(tc["function"]["name"], parsed_args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": str(result),
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": str(result),
+                    }
+                )
         return messages

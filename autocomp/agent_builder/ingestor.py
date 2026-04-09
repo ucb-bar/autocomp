@@ -62,6 +62,7 @@ def _build_file_tree(root: Path, max_depth: int = 6) -> tuple[str, dict[str, str
         try:
             entries = sorted(directory.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
         except PermissionError:
+            logger.warning("Skipping directory %s: permission denied", directory)
             return
 
         dirs = [e for e in entries if e.is_dir() and e.name not in _BINARY_SKIP_DIRS]
@@ -83,8 +84,13 @@ def _build_file_tree(root: Path, max_depth: int = 6) -> tuple[str, dict[str, str
                     rel = str(f.relative_to(root))
                     try:
                         content[rel] = f.read_text(errors="replace")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Failed to read %s: %s", rel, e)
+                else:
+                    logger.warning(
+                        "Skipping %s (%s bytes) -- exceeds %s byte file-size limit",
+                        f.relative_to(root), size, _MAX_FILE_SIZE,
+                    )
 
     _walk(root, "", 0)
     tree_str = "\n".join(tree_lines)
@@ -101,6 +107,9 @@ class DirectoryLoader(SourceLoader):
 
         logger.info("DirectoryLoader: indexing %s", root)
         tree_str, content, pdfs = _build_file_tree(root)
+        total_chars = sum(len(v) for v in content.values())
+        logger.info("DirectoryLoader: found %d text files (%d chars), %d PDFs in %s",
+                     len(content), total_chars, len(pdfs), root)
 
         if pdfs:
             pdf_loader = PDFLoader()
@@ -140,6 +149,9 @@ class FileLoader(SourceLoader):
 
         logger.info("FileLoader: reading %s", file_path)
         text = file_path.read_text(errors="replace")
+        if len(text) > _MAX_FILE_SIZE:
+            logger.warning("FileLoader: %s is large (%d bytes) -- processing may be slow",
+                           file_path.name, len(text))
         return SourceIndex(
             source_type="file",
             source_id=str(file_path),
@@ -259,8 +271,12 @@ class WebpageLoader(SourceLoader):
             if current_url in visited:
                 continue
             visited.add(current_url)
-            logger.debug("WebpageLoader: [%d/%d depth=%d] %s",
-                         len(visited), max_pages, depth, current_url)
+            if len(visited) % 10 == 0 or len(visited) == 1:
+                logger.info("WebpageLoader: fetching page %d/%d (depth=%d) %s",
+                            len(visited), max_pages, depth, current_url)
+            else:
+                logger.debug("WebpageLoader: [%d/%d depth=%d] %s",
+                             len(visited), max_pages, depth, current_url)
 
             try:
                 resp = requests.get(current_url, timeout=15, headers={"User-Agent": "autocomp-agent-builder/1.0"})
@@ -271,7 +287,21 @@ class WebpageLoader(SourceLoader):
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Remove script/style/nav elements
+            # Discover links BEFORE stripping nav (sidebar links are
+            # the primary navigation on Sphinx/ReadTheDocs sites).
+            if depth < max_depth:
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    abs_url = urljoin(current_url, href)
+                    parsed = urlparse(abs_url)
+                    abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    if parsed.netloc != base_domain or abs_url in visited:
+                        continue
+                    if not parsed.path.startswith(base_path):
+                        continue
+                    queue.append((abs_url, depth + 1))
+
+            # Remove script/style/nav elements for text extraction
             for tag in soup(["script", "style", "nav", "footer", "header"]):
                 tag.decompose()
 
@@ -287,21 +317,8 @@ class WebpageLoader(SourceLoader):
                 headings.append(f"{indent}{h.get_text(strip=True)}")
             headings_by_url[current_url] = headings
 
-            # Follow links under the same path prefix
-            if depth < max_depth:
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    abs_url = urljoin(current_url, href)
-                    parsed = urlparse(abs_url)
-                    abs_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    if parsed.netloc != base_domain or abs_url in visited:
-                        continue
-                    if not parsed.path.startswith(base_path):
-                        continue
-                    queue.append((abs_url, depth + 1))
-
-        logger.info("WebpageLoader: crawled %d pages (content from %d) for %s",
-                     len(visited), len(content), url)
+        logger.info("WebpageLoader: crawled %d pages (content from %d, %d empty/failed) for %s",
+                     len(visited), len(content), len(visited) - len(content), url)
         # Build structural metadata
         meta_lines = [f"Webpage: {url} ({len(content)} pages fetched)"]
         for page_url, headings in headings_by_url.items():
@@ -358,17 +375,25 @@ class KnowledgeIngestor:
 
     def ingest(self) -> list[SourceIndex]:
         """Ingest all added sources and return their indices."""
+        import time
+        t0 = time.time()
         indices = []
         for source_type, kwargs in self._sources:
             loader = _LOADER_REGISTRY[source_type]()
             try:
                 index = loader.load(**kwargs)
                 indices.append(index)
+                total_chars = sum(len(v) for v in index.content.values())
                 logger.info(
-                    "Ingested %s source '%s': %d content sections",
-                    source_type, index.source_id, len(index.content),
+                    "Ingested %s source '%s': %d content sections, %d chars",
+                    source_type, index.source_id, len(index.content), total_chars,
                 )
             except Exception as e:
                 logger.error("Failed to ingest %s source: %s", source_type, e)
                 raise
+        elapsed = time.time() - t0
+        total_sections = sum(len(idx.content) for idx in indices)
+        total_chars = sum(sum(len(v) for v in idx.content.values()) for idx in indices)
+        logger.info("Ingestion complete: %d sources, %d sections, %d chars in %.1fs",
+                     len(indices), total_sections, total_chars, elapsed)
         return indices

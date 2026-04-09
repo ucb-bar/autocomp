@@ -97,7 +97,7 @@ class GpuModeEvalBackend(EvalBackend):
             elif simulator == "gpumode-cli":
                 # Store code and outputs in tmp_files directory
                 submission_file_loc = tmp_files_dir / f"code_{i}.py"
-                template_dir = pathlib.Path(__file__).parent.parent.parent / "tests" / prob.prob_type
+                template_dir = pathlib.Path(__file__).parent.parent.parent / "harnesses" / prob.prob_type
                 matches = list(template_dir.glob(f"{prob.prob_id}_*.py"))
                 with open(matches[0], "r") as f:
                     template_str = f.read()

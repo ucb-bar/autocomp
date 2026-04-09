@@ -24,7 +24,7 @@ def autocomp_token_gen_nki(Q, K, V, past_key_value, attention_mask):
 import torch
 import math
 
-def test(Q, K, V, past_key_value, attention_mask):
+def solution(Q, K, V, past_key_value, attention_mask):
     def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
         """
         This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,

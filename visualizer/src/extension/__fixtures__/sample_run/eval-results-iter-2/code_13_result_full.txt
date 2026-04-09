@@ -1,0 +1,199 @@
+{'correct': False, 'latency': None, 'stdout': '', 'stderr': 'Traceback (most recent call last):
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/compile_13.py", line 128, in <module>
+    test_nki(_bm, _bm)
+  File "/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/compile_13.py", line 97, in test_nki
+    result_1 = ref_func(*args)
+               ^^^^^^^^^^^^^^^
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 273, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/TraceKernel.py", line 276, in neuronxcc.nki.compiler.backends.neuron.TraceKernel.Kernel.__call__
+  File "neuronxcc/nki/compiler/backends/neuron/NumpyKernel.py", line 151, in neuronxcc.nki.compiler.backends.neuron.NumpyKernel.BaremetalKernel.post_process_call
+  File "neuronxcc/nki/compiler/backends/neuron/NumpyKernel.py", line 154, in neuronxcc.nki.compiler.backends.neuron.NumpyKernel.BaremetalKernel.post_process_call
+  File "neuronxcc/nki/compiler/backends/neuron/NumpyKernel.py", line 239, in neuronxcc.nki.compiler.backends.neuron.NumpyKernel.BaremetalKernel._compile
+RuntimeError: Compilation failed for test with error Command \'[\'neuronx-cc\', \'compile\', \'--framework\', \'XLA\', \'penguin.py\', \'--internal-tensorizer-opt-level=nki\', \'--pipeline\', \'compile\', \'SaveTemps\', \'--target\', \'trn1\', \'--output=/home/ubuntu/main-autocomp/autocomp/autocomp/backend/trn/tmp_files/trn_eval/20260403_003745/neffs/impl_13.neff\']\' returned non-zero exit status 70.
+'}
+Prev latency: 2.461
+New latency: N/A
+Plan: 
+
+Looking at this Layer Normalization kernel, I can see several inefficiencies in how mean and variance are computed. Currently, the code uses a two-pass approach: first computing `mean`, then computing `mean(square(input))` to calculate variance. This approach is computationally expensive and doesn't leverage the hardware's specialized batch normalization statistics instructions.
+
+**Optimization Plan: Use `nki.isa.bn_stats` and `bn_aggr` instructions to compute mean and variance in a single engine pass**
+
+The key change is to replace the current mean and variance computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+```
+
+With the specialized BN stats instructions that compute both mean and variance in one pass through the Vector Engine:
+```python
+# Compute mean and variance in a single pass using bn_stats
+stats = nisa.bn_stats(input_sb)
+mean_var = nisa.bn_aggr(stats)
+mean = mean_var[:, 0]
+var = mean_var[:, 1]
+```
+
+This optimization:
+1. **Reduces instruction count**: Instead of two separate passes (one for mean, one for mean of squares), bn_stats computes both statistics in a single Vector Engine pass
+2. **Improves precision**: The bn_stats/bn_aggr approach computes mean and variance more accurately than the `mean(x²) - mean(x)²` trick, which suffers from catastrophic cancellation for small variances
+3. **Single engine pass**: All computation happens in one pass through the Vector Engine rather than requiring separate nl.mean and nl.square operations
+
+The code will need to import `nki.isa` to access these instructions:
+```python
+import neuronxcc.nki.isa as nisa
+```
+
+This change maintains semantic equivalence while significantly reducing the computational overhead of the statistics computation phase of LayerNorm.
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''
+
+Looking at this Layer Normalization kernel, I can see several inefficiencies in how mean and variance are computed. Currently, the code uses a two-pass approach: first computing `mean`, then computing `mean(square(input))` to calculate variance. This approach is computationally expensive and doesn\'t leverage the hardware\'s specialized batch normalization statistics instructions.
+
+**Optimization Plan: Use `nki.isa.bn_stats` and `bn_aggr` instructions to compute mean and variance in a single engine pass**
+
+The key change is to replace the current mean and variance computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+```
+
+With the specialized BN stats instructions that compute both mean and variance in one pass through the Vector Engine:
+```python
+# Compute mean and variance in a single pass using bn_stats
+stats = nisa.bn_stats(input_sb)
+mean_var = nisa.bn_aggr(stats)
+mean = mean_var[:, 0]
+var = mean_var[:, 1]
+```
+
+This optimization:
+1. **Reduces instruction count**: Instead of two separate passes (one for mean, one for mean of squares), bn_stats computes both statistics in a single Vector Engine pass
+2. **Improves precision**: The bn_stats/bn_aggr approach computes mean and variance more accurately than the `mean(x²) - mean(x)²` trick, which suffers from catastrophic cancellation for small variances
+3. **Single engine pass**: All computation happens in one pass through the Vector Engine rather than requiring separate nl.mean and nl.square operations
+
+The code will need to import `nki.isa` to access these instructions:
+```python
+import neuronxcc.nki.isa as nisa
+```
+
+This change maintains semantic equivalence while significantly reducing the computational overhead of the statistics computation phase of LayerNorm.''',
+code='''import neuronxcc.nki.isa as nisa
+import neuronxcc.nki.language as nl
+import math
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance in a single pass using bn_stats
+    stats = nisa.bn_stats(input_sb)
+    mean_var = nisa.bn_aggr(stats)
+    mean = mean_var[:, 0]
+    var = mean_var[:, 1]
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='minimax.minimax-m2.5',
+code_gen_model='zai.glm-5',
+stdout=None,
+stderr=None)

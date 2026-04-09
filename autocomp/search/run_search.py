@@ -36,10 +36,9 @@ def main():
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
-    # hw_config = SaturnHardwareConfig(vlen=512, dlen=256, issue_queue="split")
-    
-    prob_type = "trn-tutorial"      # see README.md or sols/ for available problems
-    prob_id = 2
+
+    prob_type = "trn-tutorial-nki1"      # see README.md or sols/ for available problems
+    prob_id = 1
 
     # ------------------------------------------------------------------
     # Models
@@ -47,8 +46,8 @@ def main():
     # Format: "provider::model" (openai, anthropic, together, aws, gcp, vllm)
     models = [
         "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "aws::zai.glm-4.7",
-        "aws::deepseek.v3.2",
+        "aws::zai.glm-5",
+        "aws::minimax.minimax-m2.5",
         "aws::moonshotai.kimi-k2.5",
     ]
     code_models = None  # None = same as planning models
@@ -65,7 +64,8 @@ def main():
     dropout_menu_options = 0.25
     early_stop_iters = 0            # 0 = disabled
     early_stop_threshold = 1.0
-    resume_from = ""
+    skip_planning = False           # True = bypass plan phase, generate code directly
+    continue_from = ""
 
     # ------------------------------------------------------------------
     # Code generation
@@ -166,15 +166,17 @@ def main():
         output_str += "_fgisa1"
     if example_rate > 0:
         output_str += f"_ex{example_rate}"
-    if resume_from:
-        output_str += "_resumed"
+    if continue_from:
+        output_str += "_continued"
     if use_edits:
         output_str += "_edits"
+    if skip_planning:
+        output_str += "_noplan"
     output_dir = pathlib.Path("output") / output_str
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import autocomp.common.my_logging
-    autocomp.common.my_logging.move_log(output_dir)
+    autocomp.common.my_logging.move_log(output_dir, tag="search")
     logger.info("Output directory: %s", output_dir)
 
     # ------------------------------------------------------------------
@@ -206,7 +208,7 @@ def main():
         code_agent=code_agent,
         early_stop_iters=early_stop_iters,
         early_stop_threshold=early_stop_threshold,
-        resume_from=resume_from,
+        continue_from=continue_from,
         use_edits=use_edits,
     )
 
@@ -225,6 +227,7 @@ def main():
             trigger_exhaustive_iters=trigger_exhaustive_iters,
             start_exhaustive_iters=start_exhaustive_iters,
             reimplement_failed=reimplement_failed,
+            skip_planning=skip_planning,
         )
     else:
         raise ValueError(f"Unknown search strategy: {search_strategy}")

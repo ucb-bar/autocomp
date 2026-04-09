@@ -12,6 +12,26 @@ class LLMEnsemble:
 
     def __repr__(self):
         return f"LLMEnsemble({self.llms})"
+
+    @property
+    def _usage_accumulator(self) -> list[dict]:
+        """Non-destructive read of usage records across all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client._usage_accumulator)
+        return records
+
+    def reset_usage(self):
+        """Clear usage accumulators on all agents' LLM clients."""
+        for llm in self.llms:
+            llm.llm_client.reset_usage()
+
+    def collect_usage(self) -> list[dict]:
+        """Collect and clear usage records from all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client.collect_usage())
+        return records
     
     def divide_work(self, num_to_gen: int):
         num_agents = len(self.llms)
@@ -146,6 +166,31 @@ class LLMEnsemble:
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
                 tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
+        return cands
+
+    def direct_implement_code_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str], prob: Prob,
+        give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
+        include_ancestors: bool = False, dropout_menu_options: float = 1.0,
+        cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
+    ) -> list[CodeCandidate]:
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        tasks = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str + "_" + self.llms[i].llm_client.model for save_str in save_strs]
+                tasks.append((
+                    llm.direct_implement_code_parallel,
+                    candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob,
+                    give_score_feedback, give_hw_feedback, include_ancestors,
+                    dropout_menu_options, cur_iter, num_iters, translate,
+                ))
 
         cands = []
         for result in self._run_parallel(tasks):

@@ -1,4 +1,4 @@
-void test(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
+void solution(int8_t A[12544][64], int8_t B[64][256], int8_t C[12544][256]) {
   tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
       A_MATRIX_NAME, B_MATRIX_NAME,
       NULL, C_MATRIX_NAME,

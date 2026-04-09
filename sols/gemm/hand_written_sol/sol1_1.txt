@@ -1,4 +1,4 @@
-void test(float A[12544][256], float B[256][64], float C[12544][64]) {
+void solution(float A[12544][256], float B[256][64], float C[12544][64]) {
     config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
     config_st(64 * sizeof(float)); // C in DRAM (64 columns in C)
     config_ld(256 * sizeof(float), 1, 0); // A in DRAM (256 columns in A)

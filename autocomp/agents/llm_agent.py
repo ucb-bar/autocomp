@@ -4,6 +4,7 @@ import random
 import re
 
 from autocomp.common import logger, LLMClient
+from autocomp.common.llm_utils import llm_phase
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate, copy_candidate
 
@@ -15,6 +16,7 @@ EDITS_JSON_SCHEMA = {
         "schema": {
             "type": "object",
             "properties": {
+                "plan": {"type": "string", "description": "Brief reasoning about which optimization to apply and why."},
                 "edits": {
                     "type": "array",
                     "items": {
@@ -28,7 +30,7 @@ EDITS_JSON_SCHEMA = {
                     },
                 },
             },
-            "required": ["edits"],
+            "required": ["plan", "edits"],
             "additionalProperties": False,
         },
     },
@@ -87,7 +89,7 @@ def extract(code_str: str) -> str:
     Tries, in order:
     1. Fenced code blocks (```<optional-lang> ... ```) — returns the *last*
        block, which is typically the final complete implementation.
-    2. Gemmini-style ``void test(...) { ... }`` brace matching.
+    2. Gemmini-style ``void solution(...) { ... }`` brace matching.
     3. Fallback: the entire string.
     """
     if not code_str:
@@ -97,17 +99,17 @@ def extract(code_str: str) -> str:
     if blocks:
         return blocks[-1]
 
-    if "void test" in code_str:
-        from_void_test_str = code_str[code_str.find("void test"):]
+    if "void solution" in code_str:
+        from_void_solution_str = code_str[code_str.find("void solution"):]
         open_braces = 0
         in_comment = False
         in_single_line_comment = False
-        for i, char in enumerate(from_void_test_str):
-            if from_void_test_str[i:i+2] == '/*':
+        for i, char in enumerate(from_void_solution_str):
+            if from_void_solution_str[i:i+2] == '/*':
                 in_comment = True
-            elif from_void_test_str[i:i+2] == '*/':
+            elif from_void_solution_str[i:i+2] == '*/':
                 in_comment = False
-            if from_void_test_str[i:i+2] == '//':
+            if from_void_solution_str[i:i+2] == '//':
                 in_single_line_comment = True
             elif char == '\n':
                 in_single_line_comment = False
@@ -121,9 +123,9 @@ def extract(code_str: str) -> str:
                     end = i
                     break
         try:
-            body = from_void_test_str[:end+1]
+            body = from_void_solution_str[:end+1]
         except:
-            return from_void_test_str
+            return from_void_solution_str
         return body
 
     return code_str
@@ -168,11 +170,42 @@ class LLMAgent:
                                    code_icl_examples: bool = True) -> str:
         raise NotImplementedError
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
+        """Build a prompt that generates optimized code directly, without a separate planning phase.
+
+        Subclasses should override to provide hardware-specific prompts.
+        When *translate* is True the prompt should ask for conversion to the
+        target representation rather than optimization.
+        """
+        raise NotImplementedError
+
     def _get_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
         """Return a messages list for the edit-based code generation path.
 
         Subclasses should override this to provide system/user messages that
         instruct the model to return structured JSON edits.
+        """
+        raise NotImplementedError
+
+    def _get_direct_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob,
+                                             give_score_feedback: float = 1.0,
+                                             give_hw_feedback: float = 1.0,
+                                             include_ancestors: bool = False,
+                                             dropout_menu_options: float = 1.0,
+                                             cur_iter: int = None,
+                                             num_iters: int = None,
+                                             translate: bool = False) -> list[dict]:
+        """Return messages for direct (plan-free) edit-based code generation.
+
+        Subclasses should override this to provide system/user messages that
+        combine optimization selection with structured JSON edit output.
         """
         raise NotImplementedError
 
@@ -204,6 +237,7 @@ class LLMAgent:
         """
         prompts_lst = [self._get_propose_new_menu_prompt(candidate, prob) for candidate in candidates]
 
+        llm_phase.set("menu_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=1,
@@ -345,6 +379,7 @@ class LLMAgent:
         temperature = 1
         samples_per_prompt = num_plans // num_unique_prompts_per_cand
 
+        llm_phase.set("plan_generation")
         extended_responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=samples_per_prompt,
@@ -432,6 +467,7 @@ class LLMAgent:
             prompts_lst.append(prompt_text)
 
         temperature = 1
+        llm_phase.set("code_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=num_samples,
@@ -464,13 +500,151 @@ class LLMAgent:
             candidates.extend(this_plan_cands)
         return candidates
 
-    def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,
-                                      save_dir: pathlib.Path, save_strs: list[str] = None,
-                                      code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
-        """Edit-based code generation: ask the LLM for structured JSON edits instead of full rewrites."""
+    def direct_implement_code_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str], prob: Prob,
+        give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
+        include_ancestors: bool = False, dropout_menu_options: float = 1.0,
+        cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
+    ) -> list[CodeCandidate]:
+        """Generate optimized code directly from parent candidates, bypassing the planning phase.
+
+        Each candidate in candidate_lst is a parent; we generate num_samples code
+        implementations per parent using a single prompt that combines planning and
+        implementation context.
+        """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
 
+        loaded_code = []
+        code_not_found = False
+        for c_i in range(len(candidate_lst)):
+            this_cand_loaded_code = []
+            save_str = save_strs[c_i]
+            for s_i in range(num_samples):
+                path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                if path.exists():
+                    with open(path, "r") as f:
+                        code = extract(f.read())
+                        this_cand_loaded_code.append(code)
+                else:
+                    code_not_found = True
+                    break
+            if code_not_found:
+                break
+            loaded_code.append(this_cand_loaded_code)
+        else:
+            loaded_candidates = []
+            for c_i in range(len(candidate_lst)):
+                cand = candidate_lst[c_i]
+                for s_i in range(num_samples):
+                    new_cand = CodeCandidate(cand, "direct implementation (no plan)", loaded_code[c_i][s_i],
+                                             plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
+                    loaded_candidates.append(new_cand)
+            logger.info("Loaded %d direct implementations from cache", len(loaded_candidates))
+            return loaded_candidates
+
+        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1):
+            num_unique_prompts_per_cand = num_samples
+        else:
+            num_unique_prompts_per_cand = 1
+
+        prompts_lst = []
+        for c_i, candidate in enumerate(candidate_lst):
+            save_str = save_strs[c_i]
+            for p in range(num_unique_prompts_per_cand):
+                prompt_text = self._get_direct_implement_prompt(
+                    candidate, prob,
+                    give_score_feedback=give_score_feedback,
+                    give_hw_feedback=give_hw_feedback,
+                    include_ancestors=include_ancestors,
+                    dropout_menu_options=dropout_menu_options,
+                    cur_iter=cur_iter, num_iters=num_iters,
+                    translate=translate,
+                )
+                prompt_path = save_dir / f"direct_prompt{'' if not save_str else '_' + save_str}_{p}.txt"
+                with open(prompt_path, "w") as f:
+                    f.write(prompt_text)
+                prompts_lst.append(prompt_text)
+
+        samples_per_prompt = num_samples // num_unique_prompts_per_cand
+
+        llm_phase.set("code_generation")
+        extended_responses = self.llm_client.chat_async(
+            prompts_lst=prompts_lst,
+            num_samples=samples_per_prompt,
+            temperature=1,
+        )
+        logger.info("%s: finished generating %d direct implementations for %d candidates.",
+                     self.llm_client.model, len(prompts_lst) * samples_per_prompt, len(candidate_lst))
+
+        full_responses = [[] for _ in range(len(candidate_lst))]
+        for r_i, per_prompt_responses in enumerate(extended_responses):
+            c_i = r_i // num_unique_prompts_per_cand
+            full_responses[c_i].extend(per_prompt_responses)
+
+        candidates: list[CodeCandidate] = []
+        for c_i in range(len(candidate_lst)):
+            save_str = save_strs[c_i]
+            for s_i, sample_response in enumerate(full_responses[c_i]):
+                full_path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}_full.txt"
+                with open(full_path, "w") as f:
+                    f.write(sample_response)
+                extracted_code = extract(sample_response)
+                if not extracted_code:
+                    logger.warning("Failed to extract code from direct impl %d response %d", c_i, s_i)
+                path = save_dir / f"direct_impl{'' if not save_str else '_' + save_str}_{s_i}.txt"
+                with open(path, "w") as f:
+                    f.write(extracted_code)
+                new_cand = CodeCandidate(candidate_lst[c_i], "direct implementation (no plan)", extracted_code,
+                                         plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
+                candidates.append(new_cand)
+        return candidates
+
+    def direct_implement_code_edits_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str], prob: Prob,
+        give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
+        include_ancestors: bool = False, dropout_menu_options: float = 1.0,
+        cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
+    ) -> list[CodeCandidate]:
+        """Direct (plan-free) edit-based code generation.
+
+        Like direct_implement_code_parallel but outputs structured JSON edits
+        instead of full code rewrites.
+        """
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+
+        messages_lst = []
+        for c_i, candidate in enumerate(candidate_lst):
+            messages = self._get_direct_implement_edits_messages(
+                candidate, prob,
+                give_score_feedback=give_score_feedback,
+                give_hw_feedback=give_hw_feedback,
+                include_ancestors=include_ancestors,
+                dropout_menu_options=dropout_menu_options,
+                cur_iter=cur_iter, num_iters=num_iters,
+                translate=translate,
+            )
+            messages_lst.append(messages)
+
+        return self._run_edits_pipeline(
+            messages_lst, candidate_lst, num_samples, save_dir, save_strs,
+            file_prefix="direct_edit", plan_label="direct implementation (no plan)",
+        )
+
+    def _run_edits_pipeline(
+        self, messages_lst: list[list[dict]], candidate_lst: list[CodeCandidate],
+        num_samples: int, save_dir: pathlib.Path, save_strs: list[str],
+        file_prefix: str, plan_label: str,
+    ) -> list[CodeCandidate]:
+        """Shared pipeline: call LLM with structured JSON edits, parse, and apply.
+
+        Returns one CodeCandidate per (candidate, sample) pair.
+        """
         # Check for cached results
         loaded_code = []
         code_not_found = False
@@ -478,7 +652,7 @@ class LLMAgent:
             this_cand_loaded = []
             save_str = save_strs[c_i]
             for s_i in range(num_samples):
-                path = save_dir / f"edit_impl{'' if not save_str else '_' + save_str}_{s_i}.txt"
+                path = save_dir / f"{file_prefix}{'' if not save_str else '_' + save_str}_{s_i}.txt"
                 if path.exists():
                     with open(path, "r") as f:
                         this_cand_loaded.append(f.read())
@@ -497,73 +671,85 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d edit-based implementations from cache", len(loaded_candidates))
+            logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), file_prefix)
             return loaded_candidates
 
-        # Build messages for structured output
-        messages_lst = []
+        # Save prompts
         for c_i in range(len(candidate_lst)):
-            messages = self._get_implement_edits_messages(candidate_lst[c_i], prob)
-            prompt_path = save_dir / f"edit_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
+            prompt_path = save_dir / f"{file_prefix}_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
-                f.write(str(messages))
-            messages_lst.append(messages)
+                f.write(str(messages_lst[c_i]))
 
-        # Call LLM with structured output
+        llm_phase.set("code_generation")
         grouped_results = self.llm_client.chat_messages_async(
             messages_lst,
             num_samples=num_samples,
             response_format=EDITS_JSON_SCHEMA,
             temperature=1,
         )
-        logger.info("%s: finished generating %d edit responses for %d plans.",
-                    self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
+        logger.info("%s: finished generating %d %s responses for %d candidates.",
+                    self.llm_client.model, len(messages_lst) * num_samples, file_prefix, len(candidate_lst))
 
-        # Process results
         candidates: list[CodeCandidate] = []
         for c_i in range(len(candidate_lst)):
-            parent_code = candidate_lst[c_i].parent.code
+            parent_code = candidate_lst[c_i].parent.code if candidate_lst[c_i].parent else candidate_lst[c_i].code
             for s_i in range(num_samples):
                 response = grouped_results[c_i][s_i]
                 response_text = response.get("content", "") or ""
 
-                # Save full response (pretty-print if JSON)
-                full_path = save_dir / f"edit_impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
+                full_path = save_dir / f"{file_prefix}{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}_full.txt"
                 with open(full_path, "w") as f:
                     try:
                         f.write(json.dumps(json.loads(response_text), indent=2))
                     except (json.JSONDecodeError, TypeError):
                         f.write(response_text)
 
-                # Parse and apply edits
                 edits = parse_edits_response(response_text)
                 edited_code = None
                 if edits is not None:
                     try:
                         edited_code = apply_edits(parent_code, edits)
                     except ValueError as e:
-                        logger.warning("%s: Edit application failed for plan %d implementation %d: %s", self.llm_client.model, c_i, s_i, e)
+                        logger.warning("%s: Edit application failed for %s %d implementation %d: %s",
+                                       self.llm_client.model, file_prefix, c_i, s_i, e)
 
                 if edited_code is None:
-                    # Fallback: try to extract code the old way in case the model
-                    # ignored structured output and wrote a full code block
                     edited_code = extract(response_text)
                     if edited_code and edited_code != response_text:
-                        logger.info("%s: Edit parse failed, fell back to full-code extraction for plan %d implementation %d", self.llm_client.model, c_i, s_i)
+                        logger.info("%s: Edit parse failed, fell back to full-code extraction for %s %d implementation %d",
+                                    self.llm_client.model, file_prefix, c_i, s_i)
                     else:
-                        logger.warning("%s: Failed to get edits or code for plan %d implementation %d", self.llm_client.model, c_i, s_i)
-                        edited_code = parent_code  # keep parent code as last resort
+                        logger.warning("%s: Failed to get edits or code for %s %d implementation %d",
+                                       self.llm_client.model, file_prefix, c_i, s_i)
+                        edited_code = parent_code
 
-                # Save final code
-                path = save_dir / f"edit_impl{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
+                path = save_dir / f"{file_prefix}{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
                 with open(path, "w") as f:
                     f.write(edited_code)
 
                 new_cand = copy_candidate(candidate_lst[c_i])
+                new_cand.plan = new_cand.plan or plan_label
                 new_cand.code = edited_code
                 new_cand.code_gen_model = self.llm_client.model
                 candidates.append(new_cand)
         return candidates
+
+    def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,
+                                      save_dir: pathlib.Path, save_strs: list[str] = None,
+                                      code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
+        """Edit-based code generation: ask the LLM for structured JSON edits instead of full rewrites."""
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+
+        messages_lst = []
+        for c_i in range(len(candidate_lst)):
+            messages = self._get_implement_edits_messages(candidate_lst[c_i], prob)
+            messages_lst.append(messages)
+
+        return self._run_edits_pipeline(
+            messages_lst, candidate_lst, num_samples, save_dir, save_strs,
+            file_prefix="edit_impl", plan_label=None,
+        )
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
         loaded_code = []
@@ -660,6 +846,7 @@ class LLMAgent:
                 f.write(prompt_text)
             prompts_lst.append(prompt_text)
 
+        llm_phase.set("code_generation")
         responses = self.llm_client.chat_async(
             prompts_lst=prompts_lst,
             num_samples=num_samples,

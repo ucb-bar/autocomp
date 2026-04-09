@@ -1,5 +1,6 @@
 """Integration test: run a full BeamSearchStrategy.optimize() loop with dummy LLM + eval backend."""
 
+import json
 import os
 
 os.environ.setdefault("WANDB_MODE", "disabled")
@@ -15,7 +16,7 @@ from autocomp.hw_config.trn_config import TrnHardwareConfig
 from autocomp.search.search import BeamSearchStrategy
 
 
-BUILT_AGENT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built" / "trn-nki1"
+BUILT_AGENT_DIR = REPO_ROOT / "autocomp" / "agent_builder" / ".built" / "trn1-nki1"
 
 
 @pytest.fixture
@@ -25,14 +26,13 @@ def built_agent(dummy_eval_backend):
     return LLMEnsemble([agent])
 
 
-def test_beam_search_two_iterations(built_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
-    """Run two iterations of beam search and verify candidates are produced."""
-    strategy = BeamSearchStrategy(
-        output_dir=tmp_output_dir,
-        eval_backend=dummy_eval_backend,
-        agent=built_agent,
+def _make_strategy(output_dir, eval_backend, agent, prob, **overrides):
+    defaults = dict(
+        output_dir=output_dir,
+        eval_backend=eval_backend,
+        agent=agent,
         orig_code="def nki_kernel():\n    pass\n",
-        prob=dummy_prob,
+        prob=prob,
         metric="p99_latency",
         simulator="dummy",
         give_score_feedback=1.0,
@@ -58,15 +58,87 @@ def test_beam_search_two_iterations(built_agent, dummy_eval_backend, dummy_prob,
         translate_drop_original=False,
         translate_score=False,
     )
+    defaults.update(overrides)
+    return BeamSearchStrategy(**defaults)
 
+
+def test_beam_search_two_iterations(built_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
+    """Run two iterations and verify candidates, artifacts, and metrics."""
+    strategy = _make_strategy(tmp_output_dir, dummy_eval_backend, built_agent, dummy_prob)
     strategy.optimize(iterations=2)
 
+    # --- Candidates are produced ---
     iter0 = strategy.repository.get_candidates(0)
-    assert len(iter0) >= 1, "Should have at least the initial candidate"
+    assert len(iter0) >= 1
     assert iter0[0].score == 1.0
 
     iter1 = strategy.repository.get_candidates(1)
-    assert len(iter1) >= 1, "Should have at least one candidate after iteration 1"
+    assert len(iter1) >= 1
 
     iter2 = strategy.repository.get_candidates(2)
-    assert len(iter2) >= 1, "Should have at least one candidate after iteration 2"
+    assert len(iter2) >= 1
+
+    # --- Output directory artifacts ---
+    for i in (1, 2):
+        assert (tmp_output_dir / f"candidates-iter-{i}").is_dir()
+        assert any((tmp_output_dir / f"candidates-iter-{i}").iterdir())
+        assert (tmp_output_dir / f"generated-plans-iter-{i}").is_dir()
+        assert (tmp_output_dir / f"generated-code-iter-{i}").is_dir()
+        assert (tmp_output_dir / f"eval-results-iter-{i}").is_dir()
+        assert any((tmp_output_dir / f"eval-results-iter-{i}").iterdir())
+
+    # --- Candidate scores are valid (not inf) ---
+    for i in (1, 2):
+        for cand in strategy.repository.get_candidates(i):
+            assert cand.score != float("inf"), f"Candidate in iter {i} should have a valid score"
+            assert cand.score > 0
+
+    # --- Candidate ancestry ---
+    for cand in strategy.repository.get_candidates(1):
+        assert cand.parent is not None, "Iter 1 candidates should have a parent"
+
+    # --- Scores improve (DummyEvalBackend returns decreasing latencies) ---
+    best_1 = min(c.score for c in strategy.repository.get_candidates(1))
+    best_2 = min(c.score for c in strategy.repository.get_candidates(2))
+    assert best_2 <= best_1, "Best score should not worsen (beam keeps best)"
+
+    # --- Per-iteration metrics ---
+    for i in (1, 2):
+        metrics_path = tmp_output_dir / f"metrics-iter-{i}.json"
+        assert metrics_path.exists()
+        metrics = json.loads(metrics_path.read_text())
+        assert metrics["iteration"] == i
+        assert metrics["iteration_total_s"] > 0
+        assert "plan_duration_s" in metrics
+        assert "code_duration_s" in metrics
+        assert "evaluation" in metrics
+        assert metrics["evaluation"]["duration_s"] >= 0
+
+    # --- Run-level aggregate metrics ---
+    run_metrics_path = tmp_output_dir / "run_metrics.json"
+    assert run_metrics_path.exists()
+    rm = json.loads(run_metrics_path.read_text())
+    assert rm["run_total_s"] > 0
+    assert len(rm["iterations"]) == 2
+    assert "total_input_tokens" in rm
+    assert "total_output_tokens" in rm
+    assert "total_llm_duration_s" in rm
+    assert "total_eval_duration_s" in rm
+
+
+def test_skip_planning(built_agent, dummy_eval_backend, dummy_prob, tmp_output_dir):
+    """Run two iterations in no-plan (direct) mode and verify artifacts."""
+    strategy = _make_strategy(
+        tmp_output_dir, dummy_eval_backend, built_agent, dummy_prob,
+        skip_planning=True,
+    )
+    strategy.optimize(iterations=2)
+
+    for i in (1, 2):
+        assert (tmp_output_dir / f"candidates-iter-{i}").is_dir()
+        assert (tmp_output_dir / f"generated-code-iter-{i}").is_dir()
+        assert not (tmp_output_dir / f"generated-plans-iter-{i}").exists()
+
+    rm = json.loads((tmp_output_dir / "run_metrics.json").read_text())
+    assert rm["run_total_s"] > 0
+    assert len(rm["iterations"]) == 2

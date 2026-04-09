@@ -76,5 +76,5 @@ def nki_matmul_tiled_reference_(lhsT, rhs):
 
     return result
 
-def test(hidden_states, lm_head_weight):
+def solution(hidden_states, lm_head_weight):
     return nki_matmul_tiled_reference_(hidden_states.view(2048, 1), lm_head_weight).view(1, 1, 64128)

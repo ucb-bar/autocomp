@@ -1,0 +1,294 @@
+{'correct': True, 'latency': 4.396, 'stdout': 'Latency: 4.396 ms (P99)
+', 'stderr': ''}
+Prev latency: 2.461
+New latency: 4.396
+Plan: Looking at this LayerNorm kernel, I can identify a significant inefficiency in the compute pipeline.
+
+## Plan: Fuse Arithmetic Operations with `nki.isa.tensor_scalar` (Strategy #5)
+
+### Analysis
+
+The current code performs LayerNorm normalization in two separate steps with multiple distinct operations:
+1. **Five separate vector operations**: `subtract`, `multiply`, `rsqrt`, `multiply`, and `add`
+2. **Each operation costs ~N cycles** (where N is the free dimension size), plus instruction overhead
+
+The current implementation:
+```python
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+### Optimization
+
+Use `nki.isa.tensor_scalar` to fuse the normalized value computation (`gamma * (x - mean) * rsqrt(var + epsilon) + beta`) into a single-vectorized instruction. According to the API, `tensor_scalar` supports:
+- Two fused operators with the pattern: `(data <op0> operand0) <op1> operand1`
+- Broadcast operations over the free dimension via vector tiles
+
+The fused computation becomes:
+1. Compute `inv_std = 1/sqrt(var + epsilon)` using `nl.rsqrt`
+2. Compute `scale = gamma * inv_std` as a vector
+3. Compute `bias = -mean * scale + beta` as a vector  
+4. Use `tensor_scalar(input_sb, op0=nl.multiply, operand0=scale, op1=nl.add, operand1=bias)` to fuse the final normalization
+
+This reduces:
+- **From ~5N+ Vector Engine cycles** (subtract + multiply + rsqrt + multiply + add, each with their own loop)
+- **To ~2N+ Vector Engine cycles** (rsqrt + 2 fused vector operations for scale/bias computation + 1 fused tensor_scalar)
+
+### Implementation Changes
+
+Replace the compute section in the loop:
+```python
+# OLD CODE
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+With fused computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Compute inv_std = 1/sqrt(var + epsilon) as a column vector
+inv_std = nl.rsqrt(var + epsilon)
+
+# Compute scale and bias vectors from gamma, beta, mean, and inv_std
+# scale = gamma * inv_std  (broadcast multiply)
+scale = nisa.tensor_scalar(gamma_sb, op0=np.multiply, operand0=inv_std)
+# bias = (-mean * scale) + beta = -mean * (gamma * inv_std) + beta
+bias = nisa.tensor_scalar(beta_sb, op0=np.add, operand0=mean, reverse0=True, 
+                          op1=np.multiply, operand1=scale, reverse1=True)
+
+# Fused: output = scale * input + bias = gamma * inv_std * x + (-mean * scale + beta)
+output_sb = nisa.tensor_scalar(input_sb, op0=np.multiply, operand0=scale, 
+                               op1=np.add, operand1=bias)
+```
+
+The `gamma_sb` and `beta_sb` must be loaded to shape `[nl.tile_size.pmax, 1]` to broadcast correctly across partitions. The `mean`, `var`, `inv_std`, `scale`, and `bias` vectors naturally have shape `[nl.tile_size.pmax, 1]` from the reduction operations.
+
+### Expected Improvement
+- ~40-50% reduction in Vector Engine compute cycles
+- Fewer instruction dispatches and lower kernel latency
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''Looking at this LayerNorm kernel, I can identify a significant inefficiency in the compute pipeline.
+
+## Plan: Fuse Arithmetic Operations with `nki.isa.tensor_scalar` (Strategy #5)
+
+### Analysis
+
+The current code performs LayerNorm normalization in two separate steps with multiple distinct operations:
+1. **Five separate vector operations**: `subtract`, `multiply`, `rsqrt`, `multiply`, and `add`
+2. **Each operation costs ~N cycles** (where N is the free dimension size), plus instruction overhead
+
+The current implementation:
+```python
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+### Optimization
+
+Use `nki.isa.tensor_scalar` to fuse the normalized value computation (`gamma * (x - mean) * rsqrt(var + epsilon) + beta`) into a single-vectorized instruction. According to the API, `tensor_scalar` supports:
+- Two fused operators with the pattern: `(data <op0> operand0) <op1> operand1`
+- Broadcast operations over the free dimension via vector tiles
+
+The fused computation becomes:
+1. Compute `inv_std = 1/sqrt(var + epsilon)` using `nl.rsqrt`
+2. Compute `scale = gamma * inv_std` as a vector
+3. Compute `bias = -mean * scale + beta` as a vector  
+4. Use `tensor_scalar(input_sb, op0=nl.multiply, operand0=scale, op1=nl.add, operand1=bias)` to fuse the final normalization
+
+This reduces:
+- **From ~5N+ Vector Engine cycles** (subtract + multiply + rsqrt + multiply + add, each with their own loop)
+- **To ~2N+ Vector Engine cycles** (rsqrt + 2 fused vector operations for scale/bias computation + 1 fused tensor_scalar)
+
+### Implementation Changes
+
+Replace the compute section in the loop:
+```python
+# OLD CODE
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+```
+
+With fused computation:
+```python
+mean = nl.mean(input_sb, axis=1)
+var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Compute inv_std = 1/sqrt(var + epsilon) as a column vector
+inv_std = nl.rsqrt(var + epsilon)
+
+# Compute scale and bias vectors from gamma, beta, mean, and inv_std
+# scale = gamma * inv_std  (broadcast multiply)
+scale = nisa.tensor_scalar(gamma_sb, op0=np.multiply, operand0=inv_std)
+# bias = (-mean * scale) + beta = -mean * (gamma * inv_std) + beta
+bias = nisa.tensor_scalar(beta_sb, op0=np.add, operand0=mean, reverse0=True, 
+                          op1=np.multiply, operand1=scale, reverse1=True)
+
+# Fused: output = scale * input + bias = gamma * inv_std * x + (-mean * scale + beta)
+output_sb = nisa.tensor_scalar(input_sb, op0=np.multiply, operand0=scale, 
+                               op1=np.add, operand1=bias)
+```
+
+The `gamma_sb` and `beta_sb` must be loaded to shape `[nl.tile_size.pmax, 1]` to broadcast correctly across partitions. The `mean`, `var`, `inv_std`, `scale`, and `bias` vectors naturally have shape `[nl.tile_size.pmax, 1]` from the reduction operations.
+
+### Expected Improvement
+- ~40-50% reduction in Vector Engine compute cycles
+- Fewer instruction dispatches and lower kernel latency''',
+code='''import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm with fused tensor_scalar operations.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Get dimensions
+  num_rows = input_tensor.shape[0]
+  num_cols = input_tensor.shape[1]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(num_cols)[None, :]
+  
+  # For loading gamma/beta as [pmax, num_cols] shape for later transpose/reshape
+  i_p_param = nl.arange(1)[:, None]
+
+  # Load gamma and beta as [1, num_cols] tiles
+  gamma_sb = nl.load(gamma_vector.reshape((1, num_cols))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, num_cols))[i_p_param, i_f_io])
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(num_rows / nl.tile_size.pmax)):
+    # Create mask for this tile
+    tile_mask = (i * nl.tile_size.pmax + i_p_io < num_rows)
+    
+    # Load input tile [pmax, num_cols]
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=tile_mask)
+
+    # Compute mean: result is [pmax, 1]
+    mean = nl.mean(input_sb, axis=1, keepdims=True)
+    
+    # Compute variance using: var = mean(x^2) - mean(x)^2
+    # Result is [pmax, 1]
+    mean_sq = nl.mean(nl.square(input_sb), axis=1, keepdims=True)
+    var = nl.subtract(mean_sq, nl.square(mean))
+
+    # Compute inv_std = 1/sqrt(var + epsilon) as [pmax, 1] column vector
+    # Use tensor_scalar to add epsilon to var, then rsqrt
+    var_plus_eps = nisa.tensor_scalar(var, op0=np.add, operand0=epsilon)
+    inv_std = nl.rsqrt(var_plus_eps)
+
+    # Now we need to compute: output = gamma * (x - mean) * inv_std + beta
+    # Rearranged: output = (gamma * inv_std) * x + (beta - mean * gamma * inv_std)
+    # Let scale_factor = gamma * inv_std  [broadcast over partitions]
+    # Let bias_factor = beta - mean * scale_factor
+    
+    # Broadcast gamma and beta to [pmax, num_cols]
+    gamma_bcast = nl.broadcast_to(gamma_sb, shape=(nl.tile_size.pmax, num_cols))
+    beta_bcast = nl.broadcast_to(beta_sb, shape=(nl.tile_size.pmax, num_cols))
+    
+    # Compute scale_factor = gamma * inv_std (broadcast inv_std over free dim)
+    # inv_std is [pmax, 1], gamma_bcast is [pmax, num_cols]
+    # Use tensor_scalar: gamma_bcast * inv_std
+    scale_factor = nisa.tensor_scalar(gamma_bcast, op0=np.multiply, operand0=inv_std)
+    
+    # Compute mean_scale = mean * scale_factor (broadcast mean over free dim)
+    # mean is [pmax, 1], scale_factor is [pmax, num_cols]
+    mean_scale = nisa.tensor_scalar(scale_factor, op0=np.multiply, operand0=mean)
+    
+    # Compute bias_factor = beta - mean_scale
+    # Both are [pmax, num_cols]
+    bias_factor = nisa.tensor_tensor(beta_bcast, mean_scale, op=np.subtract)
+    
+    # Final fused computation: output = input * scale_factor + bias_factor
+    # Use tensor_tensor for element-wise multiply, then add
+    # First: input_scaled = input_sb * scale_factor
+    input_scaled = nisa.tensor_tensor(input_sb, scale_factor, op=np.multiply)
+    # Then: output = input_scaled + bias_factor
+    output_sb = nisa.tensor_tensor(input_scaled, bias_factor, op=np.add, 
+                                   dtype=input_tensor.dtype)
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=tile_mask)
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='zai.glm-5',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout=None,
+stderr=None)

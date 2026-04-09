@@ -1,0 +1,6 @@
+{
+    "correct": true,
+    "latency": 2.951,
+    "stdout": "Latency: 2.951 ms (P99)\n",
+    "stderr": ""
+}

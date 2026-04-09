@@ -1,5 +1,5 @@
 @nki.jit
-def test(hidden_states, lm_head_weight):
+def solution(hidden_states, lm_head_weight):
     """
     Optimized for constant shapes (batch 32 version):
       hidden_states: [32, 1, 2048]

@@ -1,0 +1,42 @@
+{
+  "num_analyses": 0,
+  "num_plan_candidates": 4,
+  "num_code_candidates": 2,
+  "num_pairs_to_combine": 0,
+  "num_gen_per_combine": 0,
+  "beam_size": 4,
+  "trigger_exhaustive_threshold": 1,
+  "trigger_exhaustive_iters": 20,
+  "start_exhaustive_iters": 0,
+  "reimplement_failed": false,
+  "use_edits": false,
+  "problem": "Prob(trn-tutorial-nki1, 1)",
+  "plan_models": [
+    "aws-bedrock::minimax.minimax-m2.5",
+    "aws-bedrock::moonshotai.kimi-k2.5",
+    "aws-bedrock::zai.glm-5",
+    "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"
+  ],
+  "code_models": [
+    "aws-bedrock::minimax.minimax-m2.5",
+    "aws-bedrock::moonshotai.kimi-k2.5",
+    "aws-bedrock::zai.glm-5",
+    "aws::us.anthropic.claude-opus-4-5-20251101-v1:0"
+  ],
+  "metric": "latency",
+  "simulator": null,
+  "give_score_feedback": 1,
+  "give_util_feedback": 0,
+  "give_hw_feedback": 0,
+  "include_ancestors": false,
+  "plan_icl_examples": false,
+  "code_icl_examples": false,
+  "dropout_menu_options": 0.25,
+  "prevent_duplicate_level": 0,
+  "translate_iters": 0,
+  "translate_perf_threshold": 15,
+  "translate_drop_original": true,
+  "translate_score": true,
+  "early_stop_iters": 0,
+  "early_stop_threshold": 1.0
+}
