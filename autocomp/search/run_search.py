@@ -30,7 +30,7 @@ def main():
     # Target & environment
     # ------------------------------------------------------------------
     backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode", "saturn", "xnnpack"
-    agent_name = "built:trn-nki1"   # "gemmini", "trn", "cuda", "saturn", "built:<name>", or path
+    agent_name = "built:trn1-nki1"   # "gemmini", "trn", "cuda", "saturn", "built:<name>", or path
     simulator = None                # "firesim"/"spike" for gemmini, saturn, and xnnpack; "gpumode-local"/"gpumode-cli" for gpumode
     hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)

@@ -1,14 +1,151 @@
 strategies:
 - strategy: Convert high-level code to hardware-specific kernel code
 - strategy: Convert a small amount of high-level code to hardware-specific kernel code
-- strategy: Maximize vector register grouping (e.g., using `m8` LMUL types like `vfloat32m8_t`) when translating array operations
-    to increase chime length and hide pipeline latencies on Saturn's short-vector architecture.
-- strategy: Interleave independent memory intrinsics (e.g., `__riscv_vle32_v`) and arithmetic intrinsics (e.g., `__riscv_vfmacc_vv`)
-    within the loop body to exploit Saturn's decoupled in-order sequencers and maximize hardware chaining.
-- strategy: Hoist vector-to-scalar reduction intrinsics (e.g., `__riscv_vfredusum_vs`) and scalar extractions outside of performance-critical
-    inner loops to prevent severe post-commit Read-After-Write (RAW) stalls in the scalar pipeline.
-- strategy: Translate operations on interleaved data structures (like complex numbers or RGB pixels) using segmented load/store
-    intrinsics (e.g., `__riscv_vlseg3e8_v`) to leverage Saturn's hardware segment buffers and avoid slow strided or indexed
-    memory accesses.
-- strategy: Group intrinsic operations that share the same element width (SEW) and LMUL to minimize `__riscv_vsetvl` transitions
-    and avoid introducing pipeline bubbles in the host scalar core.
+- strategy: Replace fixed-width SIMD loops (128-bit, 256-bit, 512-bit) with a single `vsetvl`-based
+    stripmine loop. The final iteration naturally processes fewer elements via a smaller `vl`; no
+    separate tail or remainder loop is needed.
+- strategy: Recognize and collapse source tail-handling code — such as cascading fallback loops for
+    progressively smaller widths, bitwise-mask remainder checks, or scalar cleanup loops — into the
+    main VLA stripmine loop. These patterns are artifacts of fixed-width SIMD and are unnecessary in RVV.
+- strategy: Replace manual loop unrolling that processes multiple fixed-width registers per iteration
+    (e.g., 4×128-bit = 16 f32 elements) with a single RVV loop at higher LMUL (e.g., `m4` or `m8`).
+    The LMUL choice replaces the unroll factor. Be mindful that higher LMUL reduces the number of
+    available architectural register groups.
+- strategy: When the source uses separate 64-bit and 128-bit vector forms of the same operation
+    (e.g., NEON `vadd` vs `vaddq`, SSE `_mm_` vs AVX `_mm256_`), unify them into a single RVV
+    intrinsic — vector length comes from `vl`, SEW, and LMUL, not from the intrinsic name.
+- strategy: Map source full-width comparison masks (all-ones/all-zeros per lane) to RVV 1-bit boolean
+    masks. To materialize source-compatible full-width masks from RVV comparisons, use
+    `__riscv_vmerge_vvm(zeros, all_ones, bool_mask, vl)`.
+- strategy: Preserve widening and narrowing semantics explicitly. Use LMUL-doubling widening operations
+    (e.g., `vwadd` on `m1` produces `m2`) and narrowing shifts (`vnsrl`/`vnsra` with shift 0 for
+    truncating narrow, `vnclip`/`vnclipu` for saturating narrow). If the result must stay at the
+    original LMUL, apply `vlmul_trunc` after widening.
+- strategy: Translate source reinterpret/bitcast operations (NEON `vreinterpret`, SSE `_mm_castps_si128`)
+    to `__riscv_vreinterpret`. Both leave bits unchanged. Do not confuse reinterprets with type
+    conversions.
+- strategy: Keep the SEW/LMUL ratio constant across mixed-width operation chains so all stages see the
+    same element count (e.g., 8-bit at LMUL=1 pairs with 32-bit at LMUL=4). Use the matching
+    `__riscv_vsetvl_*` for each width stage.
+- strategy: Map source saturating arithmetic (NEON `vqadd`/`vqsub`, SSE `_mm_adds_epi16`/`_mm_subs_epu8`)
+    to RVV `vsadd`/`vsaddu`/`vssub`/`vssubu`. Signedness is explicit in the RVV intrinsic name — choose
+    the signed or unsigned variant to match the source semantics.
+- strategy: Map source halving-add operations to RVV `vaadd`/`vaaddu` with explicit `vxrm` selection —
+    `__RISCV_VXRM_RDN` for truncating behavior, `__RISCV_VXRM_RNU` for rounding behavior. Never rely
+    on ambient rounding state for any RVV operation that takes a `vxrm` parameter.
+- strategy: Translate source rounding shift-right operations to RVV `vssra` (signed) or `vssrl` (unsigned)
+    with `__RISCV_VXRM_RNU`. For rounding-shift-then-accumulate, expand as two steps — rounding shift,
+    then `vadd`. For rounding narrowing shift-right without saturation, expand as rounding shift at the
+    wide type followed by truncating narrow (`vnsrl` shift 0) — do not use `vnclip`/`vnclipu` which
+    would add unwanted saturation. For rounding narrowing with saturation, use `vnclip`/`vnclipu` with
+    `__RISCV_VXRM_RNU`.
+- strategy: Translate source widening/narrowing move operations. Widening moves (NEON `vmovl`, SSE
+    sign-extension via `_mm_cvtepi8_epi16`) map to RVV `vsext`/`vzext`. Truncating narrows (NEON
+    `vmovn`, SSE `_mm_packs_epi32` without saturation) map to `vnsrl`/`vnsra` with shift 0.
+- strategy: For signed-to-unsigned saturating narrow, first clamp to non-negative with `vmax(a, 0)`,
+    reinterpret as unsigned, then apply `vnclipu` for the saturating narrow.
+- strategy: Translate source absolute-difference operations. RVV has no single `vabd` instruction. For
+    unsigned same-width cases, use `vmax(a,b) - vmin(a,b)`. For signed cases, widen, subtract, take
+    absolute value, then narrow if needed. For floating-point, use `vfabs(vfsub(a, b))`.
+- strategy: "Preserve non-fused vs fused multiply-add semantics exactly. Source non-fused FP multiply-add
+    (NEON `vmla`/`vmls`, any `a + b*c` written as separate multiply then add) must remain two separate
+    RVV operations (`vfmul` then `vfadd`/`vfsub`) — do not replace with `vfmacc`/`vfnmsac` which are
+    fused. Source fused FMA operations (NEON `vfma`/`vfms`, SSE `_mm_fmadd_ps`) map to RVV fused FMA:
+    `vfmacc` for `a + b*c`, `vfnmsac` for `a - b*c` (note: `vfmsac` computes `b*c - a`, not `a - b*c`)."
+- strategy: Map source NaN-suppressing min/max (NEON `vmaxnm`/`vminnm`, SSE `_mm_max_ps`/`_mm_min_ps`,
+    C `fmax`/`fmin`) directly to RVV `vfmax`/`vfmin` — both suppress NaN when one operand is a number.
+    For the common clamping pattern `min(max(x, lo), hi)`, translate directly as `vfmax` then `vfmin`
+    with no NaN save/restore. Adding NaN propagation around a clamp breaks equivalence with source
+    semantics.
+- strategy: "Float-to-integer conversions require a NaN fixup. Most source ISAs return integer 0 for NaN
+    inputs, but RVV produces an implementation-defined saturated value. After every `vfcvt*` conversion,
+    detect NaN lanes with `vmfne(src, src)` and merge integer zero into those lanes. Match the source
+    rounding mode exactly: RTZ → `vfcvt_rtz_*`, RNE → `vfcvt_*_rm(..., __RISCV_FRM_RNE)`,
+    RDN → `__RISCV_FRM_RDN`, RUP → `__RISCV_FRM_RUP`, ties-away → `__RISCV_FRM_RMM`."
+- strategy: "Recognize the magic-bias float-to-int conversion pattern: adding a large constant like
+    12582912.0f (0x4B400000) followed by a bitwise reinterpret to integer is an IEEE-754-based
+    round-to-nearest trick. Translate the whole sequence as a unit, not as ordinary FP math."
+- strategy: Do not replace source FP estimate instructions (reciprocal estimate, reciprocal square root
+    estimate) with RVV `vfrec7`/`vfrsqrt7` unless the estimate algorithm is verified to produce
+    identical results. Different ISAs use different polynomial approximations.
+- strategy: "Preserve FP reduction structure, not just orderedness. If the source uses a left-to-right
+    fold, use `vfredosum`. If the source uses a pairwise tree (NEON `vpadd`/`FADDP`, or manual
+    tree reductions), keep that pairwise structure with explicit RVV adds — `vfredosum` is not
+    equivalent to a pairwise tree. Use `vfredusum` only when the source does not depend on
+    accumulation order."
+- strategy: Replace source compare-then-blend patterns (compare → full-width mask → bitwise select)
+    with RVV compare → 1-bit mask → `vmerge` or masked operation. Where the source uses bitwise
+    select with a compare-generated mask (NEON `vbsl`, SSE `_mm_blendv_ps`), use
+    `__riscv_vmerge_vvm(false_val, true_val, mask, vl)`. Note RVV operand order — first vector arg
+    is the false (mask=0) value, second is the true (mask=1) value.
+- strategy: When the source uses compare-then-blend to conditionally apply an operation while keeping
+    the original value for non-matching lanes, prefer RVV masked operations (`_mu` variants) over
+    separate compute-then-merge. For example, a conditional subtract can become a single
+    `vfsub_vf_f32m1_mu(mask, a, a, val, vl)` instead of compute + vmerge.
+- strategy: "Source bitwise-select with arbitrary (non-compare) bit masks requires ordinary bitwise logic
+    (AND/OR/XOR), not `vmerge`. Only use `vmerge` when the mask is all-ones/all-zeros per lane."
+- strategy: Map source broadcast/splat operations to RVV `vfmv_v_f` (float) or `vmv_v_x` (integer).
+    Map source broadcast-from-lane to `vrgather_vx` with the lane index.
+- strategy: "Translate source vector split/combine operations. Combine (NEON `vcombine`, manual
+    concatenation): `vslideup(low, high, half_length)`. Extract high half (NEON `vget_high`, SSE
+    `_mm256_extracti128_si256`): `vslidedown(v, half_length)`. Extract low half is typically a no-op
+    or LMUL truncation."
+- strategy: Translate source table-lookup operations (NEON `vtbl`, SSSE3 `_mm_shuffle_epi8`) with RVV
+    byte-width `vrgather_vv` at SEW=8. Source out-of-range behavior varies — NEON `vtbl` returns 0,
+    SSSE3 `pshufb` returns 0 for indices with high bit set. Handle out-of-range semantics explicitly.
+- strategy: "Translate source vector-extract/concat operations (NEON `vext`, SSE `_mm_alignr_epi8`)
+    as `vslidedown(first, offset)` then `vslideup(result, second, length - offset)`. For byte-granularity
+    offsets at non-byte SEW, translate at SEW=8."
+- strategy: Translate source interleave (zip), de-interleave (unzip), and transpose operations using
+    appropriate RVV patterns — typically widen/narrow reinterprets, `vrgather_vv` with computed indices,
+    or shift-and-OR bit tricks. These are multi-step expansions with no single RVV equivalent.
+- strategy: "Translate source pairwise operations (NEON `vpadd`/`vpmax`/`vpmin`, SSE `_mm_hadd_ps`).
+    RVV has no direct pairwise instructions. Form adjacent pairs using even/odd extraction, apply the
+    operation against a `vslidedown(..., 1)` copy, then keep only even-lane results with a mask or
+    compress step. A plain `vslidedown + add` without lane selection produces overlapping sums, not
+    pairwise sums."
+- strategy: Translate source reverse operations (NEON `vrev`, SSE byte-reverse via shuffle) using
+    `vrgather_vv` with a precomputed reversed index vector. Generate indices with `vid` and subtract
+    from the chunk boundary.
+- strategy: "Extract a single lane by `vslidedown(v, lane_idx)` then `vmv_x_s`/`vfmv_f_s`. Insert a
+    lane by sliding the scalar into position with `vslide1up` or merge with a single-element mask."
+- strategy: Map source structured/interleaved loads and stores (NEON `vld2`/`vld3`/`vld4`, or manual
+    deinterleave after contiguous load) to RVV segment memory operations `vlseg2`/`vlseg3`/`vlseg4`
+    and `vsseg2`/`vsseg3`/`vsseg4`. Access tuple fields with `__riscv_vget`/`__riscv_vset`.
+- strategy: When source code loads contiguously then rearranges with permutations (shuffle, unzip,
+    transpose), consider whether RVV strided memory ops (`vlse`/`vsse`) can access the desired elements
+    directly from memory without a separate permutation step. Particularly effective for column-wise
+    access, subsampling, or reading one channel from interleaved data.
+- strategy: "Translate source lane-load and lane-store operations (load/store a single element to/from
+    a specific vector lane) as a scalar memory operation plus lane insert/extract. Translate source
+    broadcast-load (load one element and replicate to all lanes) as scalar load plus RVV broadcast."
+- strategy: "When the source uses a scalar operand broadcast into a vector for a binary operation
+    (e.g., multiply all lanes by one scalar), use the RVV `_vx` (integer) or `_vf` (float) scalar
+    operand form directly instead of broadcasting then using a vector-vector form."
+- strategy: "When the source extracts a lane from one vector to use as a scalar operand for an operation
+    on another vector, extract the lane to a C scalar first (`vslidedown` + `vmv_x_s`/`vfmv_f_s`),
+    then use the `_vx`/`_vf` form of the target intrinsic."
+- strategy: "When the source uses a signed shift-count vector where positive values shift left and
+    negative values shift right (NEON `vshl`, some GPU ISAs), split into two paths in RVV: compare
+    the shift vector against 0, compute both `vsll` (left) and `vsra`/`vsrl` (right) results, then
+    merge based on the sign mask."
+- strategy: "Translate source shift-and-insert operations (keep some bits from destination, fill rest
+    from shifted source) as mask + shift + OR: compute a bitmask, AND each input with its portion,
+    then OR the results together."
+- strategy: "Translate source bitwise-test operations (return nonzero mask where `(a & b) != 0`) as
+    `vand` followed by `vmsgtu(..., 0)` to produce a bool mask, then materialize to full-width
+    all-ones/all-zeros with `vmerge` if the source expects that format."
+- strategy: "When source code splits a vector into halves before widening each half separately (NEON
+    `vmovl(vget_low(v))` + `vmovl(vget_high(v))`, SSE `_mm_cvtepi16_epi32` on low then high 64 bits),
+    replace with a single full-width RVV widening operation. RVV LMUL-doubling widening operates on the
+    entire input vector at once without half-splitting."
+- strategy: Use tail-agnostic and mask-agnostic policies by default (no suffix or `_m`). Only use
+    undisturbed variants (`_tu`, `_mu`, `_tum`, `_tumu`) when later code reads tail or masked-off
+    elements. Undisturbed variants require a passthrough `vd` argument as the first parameter.
+- strategy: "Replace source horizontal reduction epilogues (manual halving trees, `vaddvq`, `_mm_hadd_ps`
+    chains) with RVV `vfred*` reductions, but only when the reduction semantics match. For integer
+    and order-independent FP reductions, use the unordered `vfredusum`/`vfredmax`/`vfredmin`. For
+    FP reductions where order matters, match the source tree structure explicitly."
+- strategy: Prefer explicit (non-overloaded) RVV intrinsics in generated translations. Overloaded forms
+    are convenient, but explicit spellings (with full type and LMUL suffixes) are easier to audit and
+    available more consistently across intrinsic families.
