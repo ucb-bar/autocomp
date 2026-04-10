@@ -1,0 +1,12 @@
+agent_name: saturn-rvv
+version: '1.0'
+built_at: '2026-03-31T20:55:15+00:00'
+build:
+  main_model: gemini-3.1-pro-preview
+  light_model: gemini-3.1-flash-lite-preview
+  agent_scope: Optimizing RVV (RISC-V Vector) Intrinsics kernel code on Saturn(all code written in rvv intrinsics and not
+    in rvv asm). The agent rewrites single-kernel source code for better performance.
+  sources:
+  - type: directory
+    path: /scratch/kchern2/autocomp-demo/saturn-docs
+description: Auto-generated agent config for saturn-rvv

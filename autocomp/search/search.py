@@ -19,6 +19,7 @@ from autocomp.agents.cuda.cuda_agent import CudaLLMAgent
 from autocomp.agents.trn_nki1.trn_nki1_agent import TrnNki1LLMAgent
 from autocomp.agents.trn_nki2.trn_nki2_agent import TrnNki2LLMAgent
 from autocomp.agent_builder.built_agent import BuiltLLMAgent
+from autocomp.agents.saturn.saturn_agent import SaturnLLMAgent
 
 # ... register more LLM agents here ...
 # Register eval backends
@@ -28,7 +29,8 @@ from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
 from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.backend.jaxbench.jaxbench_eval import JaxBenchEvalBackend
-
+from autocomp.backend.saturn.saturn_eval import SaturnEvalBackend
+from autocomp.backend.xnnpack.xnnpack_eval import XnnpackEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import (
@@ -75,6 +77,10 @@ def create_backend_and_agents(
         eval_backend = TpuEvalBackend()
     elif backend_name == "jaxbench":
         eval_backend = JaxBenchEvalBackend()
+    elif backend_name == "saturn":
+        eval_backend = SaturnEvalBackend()
+    elif backend_name == "xnnpack":
+        eval_backend = XnnpackEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
 
@@ -238,6 +244,20 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
         from autocomp.backend.jaxbench.jaxbench_eval import extract_workload_code
 
         return extract_workload_code(prob)
+    elif backend_name == "saturn":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.c"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.c in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    elif backend_name == "xnnpack":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.c"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.c in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
 
@@ -356,6 +376,8 @@ class SearchStrategy:
                 [orig_code_candidate], self.metric
             )  # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
+                if orig_code_candidate.stderr:
+                    logger.error("Initial code failed with error: %s", orig_code_candidate.stderr)
                 raise ValueError("Initial code is incorrect.")
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates(
