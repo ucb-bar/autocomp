@@ -7,7 +7,7 @@ import random
 import yaml
 from pathlib import Path
 
-from autocomp.common import logger
+from autocomp.common import logger, TESTS_DIR
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
@@ -513,6 +513,19 @@ class BuiltLLMAgent(LLMAgent):
             examples_text = ""
         return isa_text, examples_text
 
+    @staticmethod
+    def _get_test_harness(prob: Prob) -> str:
+        """Load the test harness source for a problem, if available."""
+        if prob.test_file and Path(prob.test_file).exists():
+            return Path(prob.test_file).read_text()
+        # Fallback: glob for <id>_*_test.py in the tests directory
+        test_dir = TESTS_DIR / prob.prob_type
+        if test_dir.is_dir():
+            matches = list(test_dir.glob(f"{prob.prob_id}_*_test.py"))
+            if matches:
+                return matches[0].read_text()
+        return ""
+
     # ------------------------------------------------------------------
     # Required overrides
     # ------------------------------------------------------------------
@@ -561,7 +574,10 @@ class BuiltLLMAgent(LLMAgent):
         cur_cand = candidate
         while cur_cand is not None:
             if include_score_feedback and cur_cand.score is not None:
-                parents_prompt = f"The latency of this code was {cur_cand.score}.\n" + parents_prompt
+                if cur_cand.score == float("inf") and hasattr(cur_cand, "stderr") and cur_cand.stderr:
+                    parents_prompt = f"This code failed with the following error:\n{cur_cand.stderr}\n" + parents_prompt
+                else:
+                    parents_prompt = f"The latency of this code was {cur_cand.score}.\n" + parents_prompt
             if include_hw_feedback_flag and hasattr(cur_cand, "hw_feedback") and cur_cand.hw_feedback:
                 parents_prompt = "\n".join(cur_cand.hw_feedback) + "\n" + parents_prompt
             if not include_ancestors:
@@ -673,10 +689,32 @@ class BuiltLLMAgent(LLMAgent):
         if shuffle_opts:
             random.shuffle(opt_lst)
 
-        prompt_text = self._build_prompt_scaffold(
+        # Include code examples so the LLM sees the exact Instruction API
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
+
+        examples_prefix = ""
+        if examples_text:
+            examples_prefix = (
+                examples_text
+                + "Study the reference patterns above carefully — your generated code "
+                "MUST use the exact same Instruction API and argument dataclass style.\n\n"
+            )
+
+        prompt_text = examples_prefix + self._build_prompt_scaffold(
             candidate, prob, analysis,
             give_score_feedback, give_hw_feedback, include_ancestors,
         )
+
+        # Include the test harness so the LLM knows the exact substitution contract
+        harness_code = self._get_test_harness(prob)
+        if harness_code:
+            prompt_text += "\n<test_harness>\n"
+            prompt_text += "Your generated `def test()` function will be substituted into the following test harness. "
+            prompt_text += "The harness already imports Instruction, ScalarArgs, VectorArgs, MatrixArgs, DmaArgs, and Program. "
+            prompt_text += "Your code must return a List[Instruction[Any]] that, when executed by the simulator, "
+            prompt_text += "produces output at DRAM_OUTPUT_BASE matching GOLDEN_OUTPUT.\n\n"
+            prompt_text += harness_code
+            prompt_text += "\n</test_harness>\n\n"
 
         menu_text = ""
         for i, opt in enumerate(opt_lst):
@@ -694,7 +732,7 @@ class BuiltLLMAgent(LLMAgent):
 
         prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
-        prompt_text += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=True)
+        prompt_text += self._get_prompt_rules(planning=True, coding=True, prob=prob, translate=True)
 
         if prompt_end:
             prompt_text += "\n" + prompt_end
@@ -733,8 +771,33 @@ class BuiltLLMAgent(LLMAgent):
         if prob is None:
             raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
 
-        prompt_text = self._architecture + "\n"
+        # Include code examples so the LLM sees correct Instruction API usage
+        isa_text, examples_text = self._get_problem_context(prob, candidate.parent.code)
+
+        prompt_text = ""
+        if examples_text:
+            prompt_text += examples_text
+            prompt_text += (
+                "Study the reference patterns above carefully — your generated code "
+                "MUST use the exact same Instruction API and argument dataclass style "
+                "(e.g., Instruction(mnemonic, ScalarArgs(...)), not keyword args).\n\n"
+            )
+
+        prompt_text += self._architecture + "\n"
         prompt_text += self._get_isa_for_problem(prob, candidate.parent.code) + "\n"
+
+        # Include the test harness so the LLM understands the substitution contract
+        harness_code = self._get_test_harness(prob)
+        if harness_code:
+            prompt_text += "\n<test_harness>\n"
+            prompt_text += "Your generated `def test()` function will be substituted into the following test harness. "
+            prompt_text += "The harness already imports Instruction, ScalarArgs, VectorArgs, MatrixArgs, DmaArgs, and Program. "
+            prompt_text += "Do NOT add your own imports for these. "
+            prompt_text += "Your code must return a List[Instruction[Any]] that, when executed by the simulator, "
+            prompt_text += "produces output at DRAM_OUTPUT_BASE matching GOLDEN_OUTPUT.\n\n"
+            prompt_text += harness_code
+            prompt_text += "\n</test_harness>\n\n"
+
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
         prompt_text += "\nYou are an expert performance engineer generating high-performance code for this hardware target. "
