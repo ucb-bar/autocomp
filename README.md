@@ -16,7 +16,7 @@
 
 **Autocomp** is an extensible, portable framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
-It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **NVIDIA GPUs**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and the **RISC-V Vector Extension**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
+It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **[NVIDIA GPUs](https://charleshong3.github.io/blog/autocomp_update.html)**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and **[RISC-V Vector Processors](https://saturn-vectors.org/)**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
 <p align="center">
 <a href="https://arxiv.org/abs/2505.18574"><b>📚 Read the paper</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<b>✏️ Authors:</b> <a href="https://charleshong3.github.io/">Charles Hong</a>, <a href="https://x.com/sahilb17">Sahil Bhatia</a>, <a href="https://people.eecs.berkeley.edu/~akcheung/">Alvin Cheung</a>, <a href="https://people.eecs.berkeley.edu/~ysshao/">Yakun Sophia Shao</a> (UC Berkeley)
