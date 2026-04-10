@@ -211,7 +211,7 @@ The most important parameters are:
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
-  - For Saturn, `f32` or `qs8`.
+  - For Saturn, `rvv-f32` or `rvv-qs8`.
   - For XNNPACK, `xnnpack-f32`.
 - `prob_id`: The problem ID to use.
 
@@ -299,6 +299,8 @@ WANDB_MODE=disabled pytest
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
 
 ## 📝 Changelog
+
+**(4/9/2026)** Added [Saturn RVV](https://saturn-vectors.org/) as a new hardware target.
 
 **(4/6/2026)** Renamed `tests/` to `harnesses/` and solution entry point from `test()` to `solution()` for clarity. Improved agent builder logging.
 
