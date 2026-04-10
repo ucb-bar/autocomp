@@ -29,6 +29,8 @@ class AgentAssembler:
         Returns the output directory path.
         """
         out = Path(output_dir)
+        if out.exists():
+            logger.info("Output directory %s already exists -- files will be overwritten", out)
         out.mkdir(parents=True, exist_ok=True)
 
         # agent_config.yaml
@@ -54,6 +56,8 @@ class AgentAssembler:
         if components.code_examples:
             (out / "code_examples.md").write_text(components.code_examples)
             logger.info("Wrote code_examples.md (%d chars)", len(components.code_examples))
+        else:
+            logger.info("Skipping code_examples.md -- no examples were extracted")
 
         # optimization_menu.yaml
         menu_items = []
@@ -62,9 +66,18 @@ class AgentAssembler:
         self._write_yaml(out / "optimization_menu.yaml", {"optimizations": menu_items})
         logger.info("Wrote optimization_menu.yaml (%d strategies)", len(menu_items))
 
+        # translate_menu.yaml
+        if components.translate_menu:
+            translate_items = [{"strategy": s} for s in components.translate_menu]
+            self._write_yaml(out / "translate_menu.yaml", {"strategies": translate_items})
+            logger.info("Wrote translate_menu.yaml (%d strategies)", len(translate_items))
+        else:
+            logger.info("Skipping translate_menu.yaml -- no translate strategies generated")
+
         # rules.yaml
         self._write_yaml(out / "rules.yaml", components.rules)
-        logger.info("Wrote rules.yaml")
+        n_rules = sum(len(v) for v in components.rules.values() if isinstance(v, list))
+        logger.info("Wrote rules.yaml (%d rules across %d categories)", n_rules, len(components.rules))
 
         logger.info("Agent config assembled at %s", out)
         return out

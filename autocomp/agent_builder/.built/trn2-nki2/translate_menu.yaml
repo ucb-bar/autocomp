@@ -1,0 +1,14 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Convert a small amount of high-level code to hardware-specific kernel code
+- strategy: Map matrix multiplications to `nisa.nc_matmul` with explicit tiling along M/K/N dimensions (K on partition dim,
+    stationary free dim ≤128, moving free dim ≤512), blocking to maximize arithmetic intensity above 222 Flops/Byte for BF16
+- strategy: Fuse element-wise scale/bias/activation chains into single `nisa.activation` calls on Scalar Engine, leveraging
+    its pipelined multiply-add-activate to replace separate multiply, add, and nonlinear operations at no extra cost
+- strategy: Replace sequential element-wise loops over the free dimension with bulk `nisa.tensor_tensor_scan` or `nisa.tensor_scalar`
+    instructions that process entire tiles in one instruction, avoiding per-element instruction overhead
+- strategy: Restructure data layouts so contraction/reduction axes map to the partition dimension (axis 0, ≤128) and large
+    parallel axes map to the free dimension, inserting `nisa.nc_transpose` or `nisa.dma_transpose` only when the source layout
+    is incompatible
+- strategy: Tile and block outer loops using `nl.affine_range` with explicit DMA prefetch of input tiles into SBUF (`nisa.dma_copy`)
+    and prompt eviction of PSUM results via `nisa.tensor_copy`, keeping the working set under ~24 MiB to avoid spills

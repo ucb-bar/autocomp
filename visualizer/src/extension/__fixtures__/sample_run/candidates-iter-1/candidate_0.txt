@@ -1,0 +1,485 @@
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''
+
+Looking at the LayerNorm kernel code, I need to identify inefficiencies and determine which optimization strategy will provide the most significant performance improvement.
+
+## Analysis of the Current Code
+
+The original kernel has several performance bottlenecks:
+
+1. **Redundant mean computations for variance**: The code computes variance using `nl.mean(nl.square(input_sb), axis=1) - mean * mean`, which requires two separate mean operations plus additional arithmetic
+2. **Multiple separate operations for normalization**: The code performs `(input_sb - mean) * nl.rsqrt(var + epsilon)` as separate operations, creating intermediate tiles
+3. **Separate multiply and add for final output**: The code does `shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast` as two separate operations
+
+## Selected Optimization Strategy
+
+I\'ll apply **Strategy 5** (Use hardware `bn_stats`/`bn_aggr` instructions for single-pass mean and variance computation) combined with **Strategy 8** (Use `nki.isa.tensor_scalar` with chained op0/op1 to combine the final `shift_scale * gamma + beta` into one instruction).
+
+The variance calculation `mean(x²) - mean(x)²` is inefficient and can be replaced with the hardware-accelerated `bn_stats`/`bn_aggr` instructions. Additionally, the final gamma/beta scaling and offset can be fused.
+
+Let me rewrite the code:
+
+```python
+import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+  
+  # Get hidden size
+  hidden_size = input_tensor.shape[1]
+  
+  # BN stats max free dimension
+  bn_stats_fmax = nl.tile_size.bn_stats_fmax
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+  
+  # Pre-compute epsilon as a tile for addition
+  epsilon_tile = np.float32(epsilon)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+    
+    # Need to compute mean and variance using bn_stats/bn_aggr
+    # However, if hidden_size > bn_stats_fmax (512), we need to tile
+    # For now, let\'s handle the case where hidden_size <= 512 first
+    # For larger sizes, we would need to tile and aggregate stats
+    
+    if hidden_size <= bn_stats_fmax:
+      # Use bn_stats for efficient mean and variance computation
+      # bn_stats returns [count, mean, var*count, count_odd, mean_odd, var_odd] per partition
+      stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+      
+      # Aggregate to get final mean and variance
+      mean_var = nisa.bn_aggr(stats)
+      
+      # Extract mean and variance
+      mean = mean_var[:, 0:1]  # Shape: (128, 1)
+      var = mean_var[:, 1:2]   # Shape: (128, 1)
+    else:
+      # Tile the free dimension and aggregate statistics
+      num_tiles = math.ceil(hidden_size / bn_stats_fmax)
+      
+      # Initialize accumulator for mean and variance
+      # Use float32 for accumulator
+      acc_count = nl.zeros((nl.tile_size.pmax, 1), dtype=nl.float32)
+      acc_mean = nl.zeros((nl.tile_size.pmax, 1), dtype=nl.float32)
+      acc_var_count = nl.zeros((nl.tile_size.pmax, 1), dtype=nl.float32)
+      
+      for j in nl.affine_range(num_tiles):
+        f_start = j * bn_stats_fmax
+        f_end = min((j + 1) * bn_stats_fmax, hidden_size)
+        f_size = f_end - f_start
+        
+        # Generate indices for this tile
+        i_f_tile = nl.arange(f_size)[None, :]
+        
+        # Load this portion of input
+        input_tile = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, 
+                                          f_start + i_f_tile],
+                            mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+        
+        # Compute stats for this tile
+        stats_tile = nisa.bn_stats(input_tile, dtype=nl.float32)
+        
+        # Aggregate into accumulator
+        # Stats format: [count, mean, var*count, count_odd, mean_odd, var_odd]
+        count = stats_tile[:, 0:1] + stats_tile[:, 3:4]
+        mean_chunk = stats_tile[:, 1:2] + stats_tile[:, 4:5]
+        var_count_chunk = stats_tile[:, 2:3] + stats_tile[:, 5:6]
+        
+        # Accumulate using vector engine
+        acc_count = nisa.tensor_tensor(acc_count, count, op=np.add)
+        acc_mean = nisa.tensor_tensor(acc_mean, mean_chunk, op=np.add)
+        acc_var_count = nisa.tensor_tensor(acc_var_count, var_count_chunk, op=np.add)
+      
+      # Compute final mean and variance
+      mean = acc_mean  # Already the sum of means, but need weighted average
+      # Actually, need to compute weighted mean
+      # mean_final = sum(mean_i * count_i) / sum(count_i)
+      # But bn_aggr already does this aggregation when we have all chunks
+      
+      # Let me reconsider - for tiling, we need to accumulate properly
+      # The proper approach is to accumulate count, mean, and var*count, then compute
+      # For simplicity with tiling, let\'s use the standard approach
+      # This is getting complex - let\'s use the simple approach for now
+      
+      # Actually, let\'s simplify - just use the original mean/var for large hidden sizes
+      # as a fallback, and focus on optimizing the common case (hidden_size <= 512)
+      mean = nl.mean(input_sb, axis=1, keepdims=True)
+      var = nl.var(input_sb, axis=1, keepdims=True)
+
+    # Compute normalized output: (x - mean) * rsqrt(var + epsilon)
+    # Use tensor_scalar to fuse subtract and rsqrt multiply
+    # rsqrt_result = rsqrt(var + epsilon)
+    var_eps = nisa.tensor_scalar(var, np.add, epsilon_tile)
+    rsqrt_result = nisa.tensor_scalar(var_eps, np.sqrt, 1.0, reverse0=True)  # Actually need rsqrt
+    
+    # For rsqrt, let\'s use nl.rsqrt which is available
+    rsqrt_result = nl.rsqrt(var_eps)
+    
+    # Now compute (input - mean) * rsqrt
+    # Use scalar_tensor_tensor to fuse subtract-mean and multiply-rsqrt
+    mean_broadcast = mean.broadcast_to((nl.tile_size.pmax, hidden_size))
+    rsqrt_broadcast = rsqrt_result.broadcast_to((nl.tile_size.pmax, hidden_size))
+    
+    # Fused: (input - mean) * rsqrt
+    normalized = nisa.scalar_tensor_tensor(
+        data=input_sb,
+        op0=np.subtract,
+        operand0=mean_broadcast,
+        reverse0=True,  # input - mean
+        op1=np.multiply,
+        operand1=rsqrt_broadcast,
+        dtype=input_tensor.dtype,
+        mask=(i * nl.tile_size.pmax + i_p_io < num_rows)
+    )
+    
+    # Now apply gamma and beta: normalized * gamma + beta
+    # Use tensor_scalar to fuse multiply and add into one instruction
+    output_sb = nisa.tensor_scalar(
+        data=normalized,
+        op0=np.multiply,
+        operand0=gamma_sb_bcast,
+        op1=np.add,
+        operand1=beta_sb_bcast,
+        dtype=input_tensor.dtype,
+        mask=(i * nl.tile_size.pmax + i_p_io < num_rows)
+    )
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+```
+
+Wait, I realized there\'s an issue - I need to verify the exact API usage. Let me reconsider and provide a cleaner implementation that focuses on the key optimizations:
+
+```python
+import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm using optimized bn_stats/bn_aggr for mean/variance."""
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+  hidden_size = input_tensor.shape[1]
+  bn_stats_fmax = nl.tile_size.bn_stats_fmax
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+    
+    # Compute mean and variance using bn_stats/bn_aggr for hidden_size <= 512
+    # For larger hidden_size, fall back to regular mean/var
+    if hidden_size <= bn_stats_fmax:
+      # Hardware-accelerated mean and variance computation
+      stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+      mean_var = nisa.bn_aggr(stats)
+      mean = mean_var[:, 0:1]  # Shape: (128, 1)
+      var = mean_var[:, 1:2]   # Shape: (128, 1)
+    else:
+      # Fallback for large hidden size
+      mean = nl.mean(input_sb, axis=1, keepdims=True)
+      var = nl.var(input_sb, axis=1, keepdims=True)
+
+    # Compute rsqrt(var + epsilon)
+    var_eps = nl.add(var, np.float32(epsilon))
+    rsqrt_result = nl.rsqrt(var_eps)
+    
+    # Broadcast mean and rsqrt for element-wise operations
+    mean_broadcast = mean.broadcast_to((nl.tile_size.pmax, hidden_size))
+    rsqrt_broadcast = rsqrt_result.broadcast_to((nl.tile_size.pmax, hidden_size))
+    
+    # Fused operations: (input - mean) * rsqrt using scalar_tensor_tensor
+    # This fuses subtract-mean and multiply-rsqrt into one instruction
+    normalized = nisa.scalar_tensor_tensor(
+        data=input_sb,
+        op0=np.subtract,
+        operand0=mean_broadcast,
+        reverse0=True,  # input - mean
+        op1=np.multiply,
+        operand1=rsqrt_broadcast,
+        dtype=input_tensor.dtype,
+        mask=(i * nl.tile_size.pmax + i_p_io < num_rows)
+    )
+    
+    # Fused multiply and add: normalized * gamma + beta
+    # Using tensor_scalar to combine these two operations
+    output_sb = nisa.tensor_scalar(
+        data=normalized,
+        op0=np.multiply,
+        operand0=gamma_sb_bcast,
+        op1=np.add,
+        operand1=beta_sb_bcast,
+        dtype=input_tensor.dtype,
+        mask=(i * nl.tile_size.pmax + i_p_io < num_rows)
+    )
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+```
+
+## Summary of Optimizations Applied
+
+1. **Hardware bn_stats/bn_aggr** (Strategy 5): Replaced the inefficient `mean(x²) - mean(x)²` variance computation with `bn_stats` + `bn_aggr`, which computes mean and variance in a single pass using hardware acceleration. This eliminates one `nl.mean` call and the explicit squaring and subtraction.
+
+2. **Fused normalize and scale** (Strategy 7 + 8): Used `nisa.scalar_tensor_tensor` to fuse the `(input - mean) * rsqrt` operation into a single instruction instead of separate subtract and multiply operations. Then used `nisa.tensor_scalar` to fuse `normalized * gamma + beta` into one instruction instead of separate multiply and add.
+
+These changes should significantly reduce:
+- The number of Vector Engine instructions (from 4+ to 2 for the normalization path)
+- Memory traffic for intermediate tiles
+- Overall kernel latency by leveraging hardware-accelerated bn_stats and reducing instruction count''',
+code='''import math
+import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import numpy as np
+
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm using optimized bn_stats/bn_aggr for mean/variance."""
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+  hidden_size = input_tensor.shape[1]
+  bn_stats_fmax = nl.tile_size.bn_stats_fmax
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Number of tiles needed for bn_stats (max 512 elements per tile)
+  num_bn_tiles = math.ceil(hidden_size / bn_stats_fmax)
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0] / nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+    
+    # Compute mean and variance using bn_stats/bn_aggr
+    # bn_stats has a max free dimension of 512, so we need to tile if hidden_size > 512
+    
+    if hidden_size <= bn_stats_fmax:
+      # Single tile case - use bn_stats directly
+      stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+      mean_var = nisa.bn_aggr(stats)
+      
+      # Extract mean and variance - shape (pmax, 1)
+      i_p_mv = nl.arange(nl.tile_size.pmax)[:, None]
+      i_f_mean = nl.arange(1)[None, :]
+      i_f_var = nl.arange(1)[None, :] + 1
+      
+      mean = mean_var[i_p_mv, i_f_mean]
+      var = mean_var[i_p_mv, i_f_var]
+    else:
+      # Multiple tiles case - accumulate bn_stats results and then aggregate
+      # Allocate buffer to hold all bn_stats outputs: each produces 6 elements per partition
+      stats_buffer = nl.ndarray((nl.tile_size.pmax, 6 * num_bn_tiles), dtype=nl.float32, 
+                                 buffer=nl.sbuf)
+      
+      i_p_stats = nl.arange(nl.tile_size.pmax)[:, None]
+      i_f_stats = nl.arange(6)[None, :]
+      
+      for j in nl.affine_range(num_bn_tiles):
+        f_start = j * bn_stats_fmax
+        f_size = min(bn_stats_fmax, hidden_size - f_start)
+        
+        # Generate indices for this tile
+        i_f_tile = nl.arange(bn_stats_fmax)[None, :]
+        
+        # Extract the portion of input for this bn_stats tile
+        input_tile = input_sb[i_p_io, f_start + i_f_tile]
+        
+        # Compute stats for this tile with masking for partial tiles
+        stats_tile = nisa.bn_stats(input_tile, dtype=nl.float32,
+                                   mask=(i_f_tile < f_size))
+        
+        # Store into stats buffer at appropriate offset
+        stats_buffer[i_p_stats, j * 6 + i_f_stats] = stats_tile
+      
+      # Aggregate all stats
+      i_f_all_stats = nl.arange(6 * num_bn_tiles)[None, :]
+      mean_var = nisa.bn_aggr(stats_buffer[i_p_stats, i_f_all_stats])
+      
+      # Extract mean and variance
+      i_f_mean = nl.arange(1)[None, :]
+      i_f_var = nl.arange(1)[None, :] + 1
+      
+      mean = mean_var[i_p_stats, i_f_mean]
+      var = mean_var[i_p_stats, i_f_var]
+
+    # Compute rsqrt(var + epsilon) using tensor_scalar to fuse add and rsqrt
+    # First add epsilon, then compute rsqrt
+    var_eps = nisa.tensor_scalar(var, np.add, np.float32(epsilon), dtype=nl.float32)
+    rsqrt_result = nl.rsqrt(var_eps)
+    
+    # Compute (input - mean) * rsqrt using scalar_tensor_tensor
+    # This fuses the subtract and multiply into one instruction
+    # operand0 must be shape (data.shape[0], 1) - mean already has this shape
+    # operand1 must match data shape - need to broadcast rsqrt
+    rsqrt_broadcast = rsqrt_result.broadcast_to((nl.tile_size.pmax, hidden_size))
+    
+    normalized = nisa.scalar_tensor_tensor(
+        data=input_sb,
+        op0=np.subtract,
+        operand0=mean,
+        reverse0=False,  # data - operand0 = input - mean
+        op1=np.multiply,
+        operand1=rsqrt_broadcast,
+        reverse1=False,
+        dtype=input_tensor.dtype,
+        mask=(i * nl.tile_size.pmax + i_p_io < num_rows)
+    )
+    
+    # Apply gamma and beta: normalized * gamma + beta
+    # Use tensor_tensor for multiply, then tensor_tensor for add
+    # Since gamma_sb_bcast and beta_sb_bcast are full tensors, we use tensor_tensor
+    scaled = nisa.tensor_tensor(normalized, gamma_sb_bcast, op=np.multiply, 
+                                dtype=input_tensor.dtype,
+                                mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+    output_sb = nisa.tensor_tensor(scaled, beta_sb_bcast, op=np.add,
+                                   dtype=input_tensor.dtype,
+                                   mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.326,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='minimax.minimax-m2.5',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout='Latency: 2.326 ms (P99)\n',
+stderr='')

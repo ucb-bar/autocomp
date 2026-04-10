@@ -12,6 +12,7 @@ To add a new hardware target, you need to:
 4. [**Register the hardware target**](ADDING_HARDWARE_SUPPORT.md#step-4-register-the-hardware-target) - Add instantiation logic in `search.py`
 5. [**Create setup documentation**](ADDING_HARDWARE_SUPPORT.md#step-5-create-setup-documentation) - Setup instructions for users
 6. [**Update README**](ADDING_HARDWARE_SUPPORT.md#step-6-update-readme) - Add your hardware target to the README
+7. [**Add problems**](ADDING_HARDWARE_SUPPORT.md#step-7-add-problems) - Define problems to optimize (this is backend-specific)
 
 ## Step 1: Create a Hardware Config Class
 
@@ -92,6 +93,14 @@ class YourEvalBackend(EvalBackend):
 
 You can also optionally override `get_backend_specific_rules()` to return a list of backend-specific rule strings for LLM prompts, and `get_hw_feedback()` to return hardware feedback for candidates.
 
+### Evaluation Performance
+
+Code evaluation can account for a majority of search time and scales directly with candidate count. Making `evaluate_code` fast is critical. Patterns used by existing backends:
+
+- **Parallel compilation** (Trainium `trn_eval.py`): Compilation is decoupled from execution and parallelized across candidates. Only candidates that compile successfully are executed on-device.
+- **Batched simulation** (Gemmini `gemmini_eval.py`): Multiple candidates are packaged into a single FireSim run to amortize startup overhead.
+- **Early exit on failure**: Return `{"correct": False}` as soon as a failure is detected rather than running remaining steps.
+
 ### Code Cleaning
 
 Eval backends generally need to clean LLM-generated code. There is some simple extraction logic implemented at the top of `autocomp/agents/llm_agent.py`, but if this does not work for your hardware target, you can implement your own cleaning logic in the `evaluate_code` method of your eval backend class or in `llm_agent.py`. You can also prompt the LLM to generate only the code and no other text, but this may actually reduce the quality of the code generated!
@@ -105,9 +114,8 @@ Eval backends generally need to clean LLM-generated code. There is some simple e
 
 ### Other Considerations
 
-- **Test Integration**: Tests are located in `tests/{prob_type}/` and should be integrated into your evaluation
+- **Test Integration**: Some backends place initial code in `sols/{prob_type}/` and corresponding test harnesses in `harnesses/{prob_type}/`. You can consider following this pattern, or you can implement your own method for separating the code to optimize from the test harness.
 - **Error Handling**: You can consider reading in `stdout` and `stderr` from the code execution to provide feedback to the LLM, to try to fix errors automatically (like we do with Trainium), or for manual inspection later.
-- **Evaluation Time**: When the evaluation is slow, this can be a bottleneck in search. Consider parallelizing or batching evaluations if it can help reduce evaluation time.
 
 ## Step 3: Create an LLM Agent Class
 
@@ -193,7 +201,7 @@ Register your hardware target's components in the helper functions in `autocomp/
 
 ### Import Your Classes
 
-Add imports at the top of `search.py`:
+Add imports at the top of `search.py` (backend and agent registration):
 
 ```python
 from autocomp.backend.{backend_name}.{backend_name}_eval import YourEvalBackend
@@ -219,14 +227,6 @@ def create_backend_and_agents(backend_name: str, agent_name: str, hw_config, pro
     ...
 ```
 
-### Add a Hardware Config Instantiation
-
-In the `main()` function of `search.py`, add an example of instantiating your hardware config:
-
-```python
-# hw_config = YourHardwareConfig(...)
-```
-
 ### Handle Initial Code Loading
 
 Add logic to load initial code in the `load_initial_code()` function:
@@ -244,6 +244,8 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
     ...
 ```
 
+Optionally, add a commented-out example of your hardware config to `run_search.py` so users can see the syntax (e.g., `# hw_config = YourHardwareConfig(...)`).
+
 ## Step 5: Create Setup Documentation
 
 Create a setup file `autocomp/backend/{backend_name}/{backend_name}_setup.md` that explains how to set up and run the hardware target, following the pattern of existing setup files.
@@ -258,9 +260,23 @@ Add your hardware target to the README.md:
 2. **Usage section**: Document your `backend_name`, simulator options, and problem types
 3. **Repository Structure**: Document your files
 
+## Step 7: Add Problems
+
+Problems in Autocomp are defined by the backend. Each problem is identified by a `prob_type` (string) and `prob_id` (integer), and the backend decides how to load the initial code, run correctness tests, and measure performance. There is no single required layout — different backends handle problems differently.
+
+To add a new problem for your backend:
+
+1. **Provide initial (unoptimized) code.** Add loading logic in `load_initial_code()` in `search.py`. Some backends store baseline code in `sols/{prob_type}/` (e.g., Trainium, GPU MODE), while others load from external sources (e.g., KernelBench loads from its own benchmark directory).
+
+2. **Provide correctness tests and evaluation.** This is handled entirely by your `evaluate_code()` method in the eval backend. Some backends use test files in `harnesses/{prob_type}/` (e.g., Gemmini), while others bundle tests into the evaluation itself (e.g., KernelBench, Trainium).
+
+3. **Optionally provide problem context.** You can add a `context{prob_id}.md` or `context{prob_id}.txt` file in `harnesses/{prob_type}/` to give the LLM additional context about the problem. This is automatically loaded by the `Prob` class.
+
+4. **Document available problem types and IDs** in the README and your backend's setup file.
+
 ## Testing Your Hardware Target
 
-1. **Create test cases**: Add test files in `tests/{prob_type}/` matching your problem types
+1. **Create test cases**: Add test files in `harnesses/{prob_type}/` matching your problem types
 2. **Create baseline solutions**: Add baseline code in `sols/{prob_type}/`
 3. **Run a simple optimization**: Test with a small problem to verify end-to-end functionality
 4. **Check evaluation**: Verify that `evaluate_code` correctly extracts metrics and test results

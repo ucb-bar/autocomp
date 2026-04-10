@@ -1,0 +1,39 @@
+general:
+- The rewritten program should be semantically equivalent to the original program,
+  within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions
+  can be renamed or deleted).
+- nisa and nl may have similar functions (for example, nisa.nc_matmul() and nl.matmul()),
+  but they may have different arguments or functionality. Make sure to follow the
+  documentation above.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the
+  code.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- 'Tile indices must be 2D: partition dimension indices use nl.arange(N)[:, None]
+  (column vector) and free dimension indices use nl.arange(M)[None, :] (row vector).
+  1D arange is not supported as a standalone tensor index. Mixing basic (slice) and
+  advanced (arange) indexing in the same index tuple is not supported.'
+- nl.affine_range must only be used when there are no loop-carried dependencies between
+  iterations (associative reductions like matmul accumulation into PSUM are NOT loop-carried
+  dependencies). nl.sequential_range must be used when true loop-carried dependencies
+  exist. Different affine_range iterations must write to different memory locations.
+- Tensors defined inside if/else/for blocks cannot be used outside those blocks. Declare
+  tensors in the outer scope and use indexed assignment (tensor[...] = ...) inside
+  the block. Reassigning a tensor variable (data = data + x) inside a loop creates
+  a new scoped object; use data[...] = data + x for in-place update.
+- 'PSUM accumulation for tiled matmul requires exactly this pattern: (1) initialize
+  with nl.zeros(..., buffer=nl.psum), (2) loop with nl.affine_range, (3) use += with
+  nl.matmul or nisa.nc_matmul. Using psum_buf = psum_buf + nc_matmul(...) will NOT
+  trigger hardware accumulation.'
+- 'nisa.* (low-level ISA) APIs require all operands to have matching partition sizes.
+  Use tensor.broadcast_to() to explicitly broadcast on the partition dimension before
+  passing to nisa.tensor_tensor, nisa.tensor_scalar, etc. High-level nl.* APIs handle
+  broadcasting automatically.'
+- Use & to combine masks (not Python 'and'). Python logical operators (and, or, not)
+  cannot be used on NKI tensors. Mask expressions must be affine expressions of loop
+  indices (nl.arange, nl.affine_range, nl.program_id); runtime tensor values are not
+  allowed in masks. Control flow conditions (if/while) cannot depend on nl.arange or
+  runtime tensor values.

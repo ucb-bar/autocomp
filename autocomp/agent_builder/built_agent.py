@@ -8,6 +8,7 @@ import yaml
 from pathlib import Path
 
 from autocomp.common import logger, TESTS_DIR
+from autocomp.common.llm_utils import llm_phase
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.prob import Prob
 from autocomp.search.code_repo import CodeCandidate
@@ -29,7 +30,8 @@ class BuiltLLMAgent(LLMAgent):
                  hw_config: HardwareConfig, eval_backend: EvalBackend,
                  menu_strategy: str = None,
                  fine_grained_isa: bool = False,
-                 example_rate: float = 0.0):
+                 example_rate: float = 0.0,
+                 cache_dir: str | Path | None = None):
         super().__init__(model)
         self.hw_config = hw_config
         self.eval_backend = eval_backend
@@ -58,6 +60,8 @@ class BuiltLLMAgent(LLMAgent):
         self._new_menu_cache: dict[str, list[str]] = {}
         self._translate_menu_warned = False
 
+        self._cache_dir: Path | None = Path(cache_dir) if cache_dir is not None else None
+
         logger.info(
             "BuiltLLMAgent loaded from %s: %d ISA sections, %d optimizations, "
             "%d translate strategies, %d code examples, fine_grained_isa=%s, "
@@ -67,8 +71,50 @@ class BuiltLLMAgent(LLMAgent):
             self.fine_grained_isa, self.example_rate,
         )
 
+        if self._cache_dir is not None:
+            self._load_cache()
+
     def __repr__(self):
         return f"BuiltLLMAgent({self.llm_client.model}, {self.config_dir.name})"
+
+    @property
+    def cache_dir(self) -> Path | None:
+        return self._cache_dir
+
+    def _save_cache(self) -> None:
+        """Persist ISA and code example selection caches to disk."""
+        if self._cache_dir is None:
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = self._cache_dir / f"selection_cache_{self.llm_client.model}.yaml"
+        data = {
+            "isa_selection": self._isa_selection_cache,
+            "code_examples": self._code_example_cache,
+        }
+        cache_file.write_text(yaml.dump(data, default_flow_style=False))
+        logger.debug("Saved selection cache to %s", cache_file)
+
+    def _load_cache(self) -> bool:
+        """Load ISA and code example selection caches from disk. Returns True if loaded."""
+        cache_file = self._cache_dir / f"selection_cache_{self.llm_client.model}.yaml"
+        if not cache_file.exists():
+            return False
+        try:
+            data = yaml.safe_load(cache_file.read_text()) or {}
+            loaded = 0
+            for key, text in data.get("isa_selection", {}).items():
+                if key not in self._isa_selection_cache:
+                    self._isa_selection_cache[key] = text
+                    loaded += 1
+            for key, names in data.get("code_examples", {}).items():
+                if key not in self._code_example_cache:
+                    self._code_example_cache[key] = names
+                    loaded += 1
+            logger.info("Loaded selection cache from %s (%d entries)", cache_file, loaded)
+            return loaded > 0
+        except (yaml.YAMLError, KeyError) as e:
+            logger.warning("Failed to load selection cache from %s: %s", cache_file, e)
+            return False
 
     def _load_text(self, filename: str) -> str:
         path = self.config_dir / filename
@@ -247,6 +293,7 @@ class BuiltLLMAgent(LLMAgent):
 
         if len(self._isa_docs_raw) < 30_000:
             self._isa_selection_cache[cache_key] = self._isa_docs_raw
+            self._save_cache()
             return self._isa_docs_raw
 
         # L1: per-section yes/no
@@ -264,6 +311,7 @@ class BuiltLLMAgent(LLMAgent):
         if not self.fine_grained_isa:
             text = self._assemble_isa_sections(selected_sections)
             self._isa_selection_cache[cache_key] = text
+            self._save_cache()
             return text
 
         # Fine-grained: for sections that passed L1, include small sections
@@ -293,6 +341,7 @@ class BuiltLLMAgent(LLMAgent):
 
         text = "\n\n".join(parts)
         self._isa_selection_cache[cache_key] = text
+        self._save_cache()
         logger.info(
             "%s BuiltLLMAgent: Fine-grained ISA for %s: %d chars "
             "(%d small sections included, %d sections filtered at L2)",
@@ -334,13 +383,13 @@ class BuiltLLMAgent(LLMAgent):
                 f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
                 f"{code_block}\n\n"
                 f"ISA documentation section:\n{preview}\n\n"
-                "Could this documentation section be relevant for understanding, "
-                "implementing, or optimizing this code? Answer Yes or No."
+                "Could this documentation section be relevant for understanding, rewriting, or "
+                "optimizing this code for the target hardware? Answer Yes or No."
             )
             prompts.append(prompt)
 
         all_responses = self.llm_client.chat_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         selected: list[str] = []
@@ -393,7 +442,7 @@ class BuiltLLMAgent(LLMAgent):
             return {name: [] for name in section_names}
 
         all_responses = self.llm_client.chat_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         result: dict[str, list[str]] = {name: [] for name in section_names}
@@ -452,13 +501,13 @@ class BuiltLLMAgent(LLMAgent):
                 f"{f'Problem context: {prob_context}' if prob_context else ''}\n\n"
                 f"{code_block}\n\n"
                 f"Code example: {name}\nSummary: {summary}\n\n"
-                "Is this code example relevant for learning optimization patterns "
-                "applicable to the code above? Answer Yes or No."
+                "Is this code example relevant for understanding or rewriting "
+                "the code above? Answer Yes or No."
             )
             prompts.append(prompt)
 
         all_responses = self.llm_client.chat_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         selected: list[str] = []
@@ -469,6 +518,7 @@ class BuiltLLMAgent(LLMAgent):
                 selected.append(name)
 
         self._code_example_cache[cache_key] = selected
+        self._save_cache()
         logger.info(
             "%s BuiltLLMAgent: code example selection for %s: %d/%d examples",
             self.llm_client.model, cache_key, len(selected), len(names),
@@ -504,8 +554,11 @@ class BuiltLLMAgent(LLMAgent):
 
     def _get_problem_context(self, prob: Prob, code: str) -> tuple[str, str]:
         """Return (isa_text, formatted_examples_text) for this problem."""
+        prev_phase = llm_phase.get("unknown")
+        llm_phase.set("context_selection")
         isa_text = self._get_isa_for_problem(prob, code)
         bodies = self._get_relevant_code_examples(prob, code)
+        llm_phase.set(prev_phase)
         if bodies:
             parts = [f"### {name}\n{body}" for name, body in bodies.items()]
             examples_text = "Reference patterns:\n\n" + "\n\n".join(parts) + "\n\n"
@@ -581,7 +634,7 @@ class BuiltLLMAgent(LLMAgent):
             if include_hw_feedback_flag and hasattr(cur_cand, "hw_feedback") and cur_cand.hw_feedback:
                 parents_prompt = "\n".join(cur_cand.hw_feedback) + "\n" + parents_prompt
             if not include_ancestors:
-                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+                parents_prompt = "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
                 break
             elif cur_cand.plan is not None:
                 parents_prompt = (
@@ -589,7 +642,7 @@ class BuiltLLMAgent(LLMAgent):
                     + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
                 )
             else:
-                parents_prompt = "\nThe original unoptimized code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+                parents_prompt = "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
             cur_cand = cur_cand.parent
 
         if analysis:
@@ -641,12 +694,12 @@ class BuiltLLMAgent(LLMAgent):
             menu_text += f"{i + 1}. {opt}\n"
 
         prompt_text += "Please carefully review the code to identify any inefficiencies. "
-        prompt_text += "Performance can be improved by using the following optimizations:\n"
-        prompt_text += "<optimizations>:\n" + menu_text + "\n"
+        prompt_text += "Performance can be improved by using the following strategies:\n"
+        prompt_text += "<strategies>:\n" + menu_text + "\n"
 
         if force_opt_menu:
             prompt_text += (
-                f"Explain how to apply <optimization> {force_opt_menu}: "
+                f"Explain how to apply <strategy> {force_opt_menu}: "
                 f"'{opt_lst[force_opt_menu - 1]}' to the above code to reduce "
                 "execution time, and explain how it will improve performance."
             )
@@ -654,11 +707,11 @@ class BuiltLLMAgent(LLMAgent):
             prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
             choose_or_invent = random.random()
             if choose_or_invent < 0.1:
-                prompt_text += "Invent a new optimization inspired by the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+                prompt_text += "Invent a new strategy inspired by the <strategies> to apply to the above code to reduce execution time, and explain how it will improve performance."
             elif choose_or_invent < 0.2:
-                prompt_text += "Think of a new optimization different from the <optimizations> to apply to the above code to reduce execution time, and explain how it will improve performance."
+                prompt_text += "Think of a new strategy different from the <strategies> to apply to the above code to reduce execution time, and explain how it will improve performance."
             else:
-                prompt_text += "Come up with a plan to apply exactly one of the <optimizations> to address the inefficiencies of the above code and reduce its execution time."
+                prompt_text += "Come up with a plan to apply exactly one of the <strategies> to address the inefficiencies of the above code and reduce its execution time."
 
         prompt_text += " The plan should be specific to this code and explain how to change it."
         prompt_text += "\nMake sure to follow these rules:\n"
@@ -801,7 +854,7 @@ class BuiltLLMAgent(LLMAgent):
         prompt_text += "The original code is as follows:\n"
         prompt_text += candidate.parent.code
         prompt_text += "\nYou are an expert performance engineer generating high-performance code for this hardware target. "
-        prompt_text += "Let's optimize the original code based on the following plan:\n"
+        prompt_text += "Let's rewrite the original code based on the following plan:\n"
         prompt_text += candidate.plan
         prompt_text += "\nMake sure to follow these rules:\n"
         prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
@@ -809,11 +862,186 @@ class BuiltLLMAgent(LLMAgent):
 
         return prompt_text
 
+    def _get_direct_implement_prompt(self, candidate: CodeCandidate, prob: Prob,
+                                     give_score_feedback: float = 1.0,
+                                     give_hw_feedback: float = 1.0,
+                                     include_ancestors: bool = False,
+                                     dropout_menu_options: float = 1.0,
+                                     cur_iter: int = None,
+                                     num_iters: int = None,
+                                     translate: bool = False) -> str:
+        if translate:
+            if self._translate_menu:
+                opt_lst = list(self._translate_menu)
+            else:
+                if not self._translate_menu_warned:
+                    logger.warning(
+                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                        "Using generic default. Create a translate_menu.yaml with "
+                        "target-specific strategies for better results.",
+                        self.config_dir,
+                    )
+                    self._translate_menu_warned = True
+                opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
+        else:
+            opt_lst = self.get_opt_menu_options(prob, candidate)
+            if dropout_menu_options < 1:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
+
+        examples_prefix = ""
+        if examples_text:
+            examples_prefix = examples_text + "Use these reference patterns to inform your optimization.\n\n"
+
+        prompt_text = examples_prefix + self._build_prompt_scaffold(
+            candidate, prob, "",
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
+        menu_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_text += f"{i + 1}. {opt}\n"
+
+        if translate:
+            prompt_text += "Please review the code and identify parts that should be converted to the target hardware representation.\n"
+            prompt_text += "The following conversion strategies are available:\n"
+            prompt_text += "<strategies>:\n" + menu_text + "\n"
+            prompt_text += "You are an expert at translating code to this hardware target. "
+            prompt_text += "Apply one of the <strategies> to convert the above code. "
+            prompt_text += "First, plan your approach, then output the complete code.\n"
+        else:
+            prompt_text += "Please carefully review the code to identify any inefficiencies. "
+            prompt_text += "Performance can be improved by using the following strategies:\n"
+            prompt_text += "<strategies>:\n" + menu_text + "\n"
+            prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
+            prompt_text += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
+            prompt_text += "First, plan your approach, then output the complete optimized code.\n"
+
+        prompt_text += "\nMake sure to follow these rules:\n"
+        prompt_text += self._get_prompt_rules(planning=True, coding=True, prob=prob, translate=translate)
+
+        if cur_iter is not None and num_iters is not None:
+            prompt_text += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
+
+        prompt_text += "\nOptimized code:"
+        return prompt_text
+
+    def _get_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
+        if prob is None:
+            raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
+
+        system = (
+            "You are an expert performance engineer. "
+            "You modify high-performance code by outputting precise code edits.\n\n"
+            "You MUST respond with ONLY a JSON object in this exact format:\n"
+            '{"plan": "<brief reasoning about which optimization to apply and why>", '
+            '"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            "Rules for edits:\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
+            "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
+            "- Do NOT output anything outside the JSON object.\n"
+        )
+
+        user = self._architecture + "\n"
+        user += self._get_isa_for_problem(prob, candidate.parent.code) + "\n"
+        user += "\nThe current code is:\n```\n"
+        user += candidate.parent.code
+        user += "\n```\n"
+        user += "\nApply the following optimization plan by outputting JSON edits:\n"
+        user += candidate.plan
+        user += "\n\nRules:\n"
+        user += self._get_prompt_rules(planning=False, coding=False, prob=prob)
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def _get_direct_implement_edits_messages(self, candidate: CodeCandidate, prob: Prob,
+                                             give_score_feedback: float = 1.0,
+                                             give_hw_feedback: float = 1.0,
+                                             include_ancestors: bool = False,
+                                             dropout_menu_options: float = 1.0,
+                                             cur_iter: int = None,
+                                             num_iters: int = None,
+                                             translate: bool = False) -> list[dict]:
+        if prob is None:
+            raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
+
+        system = (
+            "You are an expert performance engineer. "
+            "You modify high-performance code by outputting precise code edits.\n\n"
+            "You MUST respond with ONLY a JSON object in this exact format:\n"
+            '{"plan": "<brief reasoning about which optimization to apply and why>", '
+            '"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            "Rules for edits:\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
+            "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
+            "- Do NOT output anything outside the JSON object.\n"
+        )
+
+        if translate:
+            if self._translate_menu:
+                opt_lst = list(self._translate_menu)
+            else:
+                if not self._translate_menu_warned:
+                    logger.warning(
+                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                        "Using generic default.",
+                        self.config_dir,
+                    )
+                    self._translate_menu_warned = True
+                opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
+        else:
+            opt_lst = self.get_opt_menu_options(prob, candidate)
+            if dropout_menu_options < 1:
+                opt_lst = [opt for opt in opt_lst if random.random() < dropout_menu_options]
+
+        isa_text, examples_text = self._get_problem_context(prob, candidate.code)
+
+        user = ""
+        if examples_text:
+            user += examples_text + "Use these reference patterns to inform your optimization.\n\n"
+        user += self._build_prompt_scaffold(
+            candidate, prob, "",
+            give_score_feedback, give_hw_feedback, include_ancestors,
+        )
+
+        menu_text = ""
+        for i, opt in enumerate(opt_lst):
+            menu_text += f"{i + 1}. {opt}\n"
+
+        if translate:
+            user += "Please review the code and identify parts that should be converted to the target hardware representation.\n"
+            user += "The following conversion strategies are available:\n"
+            user += "<strategies>:\n" + menu_text + "\n"
+            user += "Apply one of the <strategies> to convert the above code. Output ONLY JSON edits.\n"
+        else:
+            user += "Please carefully review the code to identify any inefficiencies. "
+            user += "Performance can be improved by using the following strategies:\n"
+            user += "<strategies>:\n" + menu_text + "\n"
+            user += "Apply one of the <strategies> to address the inefficiencies of the above code and reduce its execution time. "
+            user += "Output ONLY JSON edits.\n"
+
+        user += "\nRules:\n"
+        user += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=translate)
+
+        if cur_iter is not None and num_iters is not None:
+            user += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
     def _get_combine_candidates_prompt(self, candidates: list[CodeCandidate],
                                         prob: Prob = None) -> str:
         prompt_text = self._architecture + "\n"
         prompt_text += "You are an expert performance engineer generating high-performance code for this hardware target. "
-        prompt_text += "Let's combine the following optimized code samples to extract the high-performance characteristics of each:\n"
+        prompt_text += "Let's combine the following code samples to extract the high-performance characteristics of each:\n"
         for i, c in enumerate(candidates):
             prompt_text += f"Sample {i + 1}:\n{c.code}\n"
 
@@ -845,9 +1073,68 @@ class BuiltLLMAgent(LLMAgent):
             stdout_lines = [line[:400] for line in stdout_lines]
             prompt_text += "\n".join(stdout_lines) + "\n"
 
-        prompt_text += "\nPlease fix the code to address the errors while still applying the optimization plan. "
+        prompt_text += "\nPlease fix the code to address the errors while still applying the plan. "
         prompt_text += "Make sure to follow these rules:\n"
         prompt_text += self._get_prompt_rules(planning=False, coding=True, prob=prob)
-        prompt_text += "\nFixed and optimized code:"
+        prompt_text += "\nFixed code:"
 
         return prompt_text
+
+    def score_translation_completeness(
+        self, original_code: str, candidates: list[CodeCandidate],
+        prob: Prob,
+    ) -> list[float]:
+        """Score how completely each candidate has been translated to hardware kernel APIs.
+
+        Uses a single batched LLM call to rate each candidate 0-10.
+        Reuses the existing prompt scaffolding (architecture + ISA docs) so
+        the LLM has full hardware context for any built agent target.
+        """
+        if not candidates:
+            return []
+
+        isa_text, examples_text = self._get_problem_context(prob, original_code)
+        hw_context = self._architecture + "\n" + isa_text + "\n"
+        if examples_text:
+            hw_context += examples_text
+
+        prompts: list[str] = []
+        for cand in candidates:
+            prompt = (
+                hw_context
+                + "You are evaluating how completely a code candidate has been translated "
+                "from high-level framework code to low-level hardware-specific kernel code "
+                "for the target hardware described above.\n\n"
+                f"=== ORIGINAL CODE ===\n```\n{original_code}\n```\n\n"
+                f"=== CANDIDATE CODE ===\n```\n{cand.code}\n```\n\n"
+                "Rate the translation completeness from 0 to 10:\n"
+                "- 0 = all compute is still in high-level framework ops (e.g. jnp.einsum, torch.matmul, etc.)\n"
+                "- 5 = some compute-heavy ops have been converted to hardware kernel APIs, but significant ones remain\n"
+                "- 10 = all compute-heavy ops (matmuls, reductions, elementwise on large tensors) "
+                "have been converted to hardware-specific kernel APIs\n\n"
+                "Focus on compute-heavy operations. Ignore minor ops like shape/dtype utilities.\n"
+                "Output ONLY a single number between 0 and 10."
+            )
+            prompts.append(prompt)
+
+        all_responses = self.llm_client.chat_async(
+            prompts, num_samples=1, temperature=0,
+        )
+
+        scores: list[float] = []
+        for i, (cand, responses) in enumerate(zip(candidates, all_responses)):
+            raw = responses[0].strip() if responses and responses[0] else ""
+            try:
+                score = float(raw.split()[0])
+                score = max(0.0, min(10.0, score))
+            except (ValueError, IndexError):
+                logger.warning(
+                    "Could not parse translation score from '%s', defaulting to 0", raw[:80],
+                )
+                score = 0.0
+            logger.info(
+                "Translation completeness score: %.1f for implementation %d",
+                score, i,
+            )
+            scores.append(score)
+        return scores

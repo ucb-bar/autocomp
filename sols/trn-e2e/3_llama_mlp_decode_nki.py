@@ -1,5 +1,5 @@
 @nki.jit
-def test(lhs, up_w, gate_w, down_w):
+def solution(lhs, up_w, gate_w, down_w):
     """
     Fused NKI kernel for MLP layer:
     1. up = lhs @ up_w

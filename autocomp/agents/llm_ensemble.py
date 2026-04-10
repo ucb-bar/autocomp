@@ -12,6 +12,26 @@ class LLMEnsemble:
 
     def __repr__(self):
         return f"LLMEnsemble({self.llms})"
+
+    @property
+    def _usage_accumulator(self) -> list[dict]:
+        """Non-destructive read of usage records across all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client._usage_accumulator)
+        return records
+
+    def reset_usage(self):
+        """Clear usage accumulators on all agents' LLM clients."""
+        for llm in self.llms:
+            llm.llm_client.reset_usage()
+
+    def collect_usage(self) -> list[dict]:
+        """Collect and clear usage records from all agents' LLM clients."""
+        records = []
+        for llm in self.llms:
+            records.extend(llm.llm_client.collect_usage())
+        return records
     
     def divide_work(self, num_to_gen: int):
         num_agents = len(self.llms)
@@ -106,7 +126,15 @@ class LLMEnsemble:
         # Distribute work across models, similarly to how we divide plans, making a total of BEAM_SIZE calls.
         # In each iteration, each candidate is processed by one LLMAgent in the ensemble.
         # Then, the proposed menu options for that candidate are shared with the other LLMAgents in the ensemble.
-        if self.llms[0].menu_strategy is not None:
+        # Skip if all plans are already cached (every agent would just load from disk).
+        all_cached = all(
+            llm.plans_cached(candidate_lst, num_to_gen_per_agent[i], save_dir,
+                             [s + "_" + llm.llm_client.model for s in save_strs],
+                             force_opt_menu_lst)
+            for i, llm in enumerate(self.llms)
+            if num_to_gen_per_agent[i] > 0
+        )
+        if self.llms[0].menu_strategy is not None and not translate and not all_cached:
             num_to_handle_per_agent = self.divide_work(len(candidate_lst))
             tasks_new_menus = []
             curr_candidate_idx = 0
@@ -123,6 +151,8 @@ class LLMEnsemble:
 
             for llm in self.llms:
                 llm.update_new_menu_cache(new_menu)
+            total_new = sum(len(v) for v in new_menu.values())
+            logger.info("Dynamically generated %d new menu options across %d candidates.", total_new, len(new_menu))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -136,6 +166,44 @@ class LLMEnsemble:
             if num_to_gen_per_agent[i] > 0:
                 this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
                 tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
+        return cands
+
+    def direct_implement_code_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str], prob: Prob,
+        give_score_feedback: float = 1.0, give_hw_feedback: float = 1.0,
+        include_ancestors: bool = False, dropout_menu_options: float = 1.0,
+        cur_iter: int = None, num_iters: int = None,
+        translate: bool = False,
+    ) -> list[CodeCandidate]:
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        tasks = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str + "_" + self.llms[i].llm_client.model for save_str in save_strs]
+                tasks.append((
+                    llm.direct_implement_code_parallel,
+                    candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob,
+                    give_score_feedback, give_hw_feedback, include_ancestors,
+                    dropout_menu_options, cur_iter, num_iters, translate,
+                ))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
+        return cands
+
+    def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        tasks = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                tasks.append((llm.implement_code_edits_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -156,8 +224,7 @@ class LLMEnsemble:
 
     def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
         """
-        Reimplement failed code candidates using stdout/stderr from the last attempt.
-        This method is parallelized across multiple LLM agents.
+        Reimplement failed implementations using stdout/stderr from the last attempt.
         """
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -170,3 +237,7 @@ class LLMEnsemble:
         for result in self._run_parallel(tasks):
             cands.extend(result)
         return cands
+
+    def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
+        """Score translation completeness using the first agent in the ensemble."""
+        return self.llms[0].score_translation_completeness(original_code, candidates, prob=prob)

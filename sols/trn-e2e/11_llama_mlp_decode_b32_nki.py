@@ -1,5 +1,5 @@
 @nki.jit
-def test(
+def solution(
     x_dev: nt.tensor,          # [B, 1, K_IN]  (no external transpose)
     up_w: nt.tensor,           # [K_IN, K_INTER]
     gate_w: nt.tensor,         # [K_IN, K_INTER]

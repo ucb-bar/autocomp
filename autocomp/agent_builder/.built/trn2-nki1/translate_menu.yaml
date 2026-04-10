@@ -1,0 +1,18 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Convert a small amount of high-level code to hardware-specific kernel code
+- strategy: Map matrix multiplication operations to `nisa.nc_matmul` with pre-transposed LHS (contraction axis on partition
+    dimension), tiled accumulation into `nl.psum` via `nl.affine_range` loops, and blocking of free/contraction dimensions
+    to achieve arithmetic intensity above the 222 Flops/Byte saturation threshold.
+- strategy: Replace element-wise activation chains (e.g., `x * sigmoid(x)` for SiLU, or softmax sub-expressions) with fused
+    `nisa.activation` calls using pipelined `scale`/`bias` and `reduce_op`/`reduce_res` parameters to combine multiply-add-activate-reduce
+    into single Scalar Engine instructions.
+- strategy: Decompose reduction-heavy operations (mean, variance, layer normalization) into `nisa.bn_stats` + `nisa.bn_aggr`
+    for efficient single-pass mean/variance computation, and use `nisa.tensor_scalar` with dual operators (`op0`/`op1`) to
+    fuse shift-and-scale into one Vector Engine instruction.
+- strategy: Tile large tensors by loading 128-partition × large-free-dimension blocks into SBUF with `nl.load`, reusing loaded
+    tiles across multiple compute iterations (hoisting loads out of inner loops), and declaring SBUF buffers inside `nl.affine_range`
+    loop bodies to enable compiler multi-buffering and overlap of DMA with compute.
+- strategy: Convert softmax or attention-score masking patterns into `nisa.affine_select` for causal masks or `nisa.range_select`
+    for dynamic sequence-length bounds, fusing the mask application with a max-reduction to avoid separate mask-generation
+    and element-wise multiply instructions.

@@ -25,6 +25,7 @@ class SynthesizedComponents:
     architecture_summary: str
     isa_docs: str
     optimization_menu: list[str]
+    translate_menu: list[str]
     rules: dict[str, list[str]]  # keys: "general", "planning", "coding"
     code_examples: str = ""
 
@@ -88,9 +89,15 @@ class ComponentSynthesizer:
         return results[0] if results else []
 
     def _chat_light_async(self, prompts: list[str], **kwargs) -> list[list[str]]:
-        return self.light_llm.chat_async(
+        if len(prompts) > 5:
+            logger.info("  Sending %d parallel LLM calls (light model)...", len(prompts))
+        t0 = time.time()
+        results = self.light_llm.chat_async(
             prompts, **kwargs,
         )
+        if len(prompts) > 5:
+            logger.info("  %d calls completed in %.1fs", len(prompts), time.time() - t0)
+        return results
 
     # ------------------------------------------------------------------
     # LLM-based content routing (replaces heuristic routing + filter)
@@ -120,20 +127,23 @@ class ComponentSynthesizer:
 
         logger.info("Pre-filter: checking relevance of %d items", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         filtered: list[tuple[str, str]] = []
-        removed = 0
+        removed_keys: list[str] = []
         for (key, text), responses in zip(items, all_responses):
             raw = (responses[0].strip() if responses else "").lower()
             if "no" in raw and "yes" not in raw:
-                removed += 1
+                removed_keys.append(key)
             else:
                 filtered.append((key, text))
 
         logger.info("Pre-filter: %d -> %d items (%d removed)",
-                     len(items), len(filtered), removed)
+                     len(items), len(filtered), len(removed_keys))
+        if removed_keys:
+            for key in removed_keys:
+                logger.info("  Pre-filter removed: %s", key)
         return filtered
 
     def _llm_route_content(
@@ -206,10 +216,11 @@ class ComponentSynthesizer:
 
         logger.info("LLM routing: classifying %d items", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         skipped = 0
+        skipped_keys: list[str] = []
         for (key, text), responses in zip(all_items, all_responses):
             raw = (responses[0].strip() if responses else "").lower()
             assigned = False
@@ -219,12 +230,15 @@ class ComponentSynthesizer:
                     assigned = True
             if not assigned:
                 skipped += 1
+                skipped_keys.append(key)
 
         for bname, items in buckets.items():
             total_chars = sum(len(t) for _, t in items)
             logger.info("  %s: %d files, %d chars", bname, len(items), total_chars)
         if skipped:
             logger.info("  skipped: %d files", skipped)
+            for key in skipped_keys:
+                logger.info("    %s", key)
 
         return buckets
 
@@ -254,6 +268,13 @@ class ComponentSynthesizer:
         logger.info("  Optimization menu: %d strategies (%.1fs)", len(opt_menu), time.time() - t_start)
 
         t_start = time.time()
+        translate_menu = self._synthesize_translate_menu(
+            buckets["optimization"], architecture=architecture, isa_docs=isa_docs,
+            code_examples_raw=buckets["examples"],
+        )
+        logger.info("  Translate menu: %d strategies (%.1fs)", len(translate_menu), time.time() - t_start)
+
+        t_start = time.time()
         rules = self._synthesize_rules(buckets["rules"], architecture=architecture, isa_docs=isa_docs)
         n_rules = sum(len(v) for v in rules.values())
         logger.info("  Rules: %d rules across %d categories (%.1fs)", n_rules, len(rules), time.time() - t_start)
@@ -268,6 +289,7 @@ class ComponentSynthesizer:
             architecture_summary=architecture,
             isa_docs=isa_docs,
             optimization_menu=opt_menu,
+            translate_menu=translate_menu,
             rules=rules,
             code_examples=code_examples,
         )
@@ -284,6 +306,7 @@ class ComponentSynthesizer:
         then merges the summaries.
         """
         if not items:
+            logger.warning("Architecture: no items routed to this bucket -- returning placeholder")
             return "No architecture documentation found. Please add manually."
 
         items = _chunk_items(items, self.context_budget)
@@ -312,12 +335,14 @@ class ComponentSynthesizer:
             f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        if not responses or not responses[0].strip():
+            logger.warning("Architecture single-pass: LLM returned empty response")
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
     def _arch_map_reduce(self, items: list[tuple[str, str]]) -> str:
         # Map: summarize each document individually in parallel
-        logger.info("Architecture: map - summarize each document individually in parallel")
+        logger.info("Architecture: map - summarize %d documents individually in parallel", len(items))
         prompts: list[str] = []
         for key, text in items:
             truncated = _truncate(text, max_chars=self.context_budget)
@@ -332,12 +357,16 @@ class ComponentSynthesizer:
                 f"Architecture-relevant notes:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
+        empty_count = sum(1 for r in all_responses if not r)
+        logger.info("Architecture: map complete in %.1fs (%d/%d documents returned content)",
+                     time.time() - t0, len(all_responses) - empty_count, len(all_responses))
 
         logger.info("Architecture: reduce - merge summaries into final architecture summary")
         summaries = "\n\n".join(
@@ -355,7 +384,7 @@ class ComponentSynthesizer:
             f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
     # ------------------------------------------------------------------
@@ -371,6 +400,9 @@ class ComponentSynthesizer:
             (key, text) for key, text in items
             if len(text.strip()) >= 50 and len(text) >= 200
         ]
+        dropped = len(items) - len(candidates)
+        if dropped:
+            logger.info("ISA docs: filtered %d/%d items below minimum size threshold", dropped, len(items))
         candidates.sort(key=lambda x: len(x[1]), reverse=True)
 
         if not candidates:
@@ -386,7 +418,7 @@ class ComponentSynthesizer:
 
         logger.info("  ISA boundary detection: sending %d files to LLM in parallel", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         all_entries: list[ISAEntry] = []
@@ -508,7 +540,7 @@ Return ONLY a JSON array of entry names to keep.
 
 JSON array:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         raw = responses[0].strip() if responses else "[]"
 
         try:
@@ -519,10 +551,10 @@ JSON array:"""
                 logger.info("  ISA filtering: %d -> %d entries (%d removed)",
                             len(entries), len(filtered), len(entries) - len(filtered))
                 return filtered
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-
-        logger.warning("  ISA filtering: failed to parse LLM response, keeping all entries")
+            else:
+                logger.warning("ISA filtering: no JSON array in LLM response, keeping all %d entries", len(entries))
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.warning("ISA filtering parse error: %s. Keeping all %d entries", e, len(entries))
         return entries
 
     def _categorize_isa_entries(
@@ -550,7 +582,7 @@ Return a JSON object mapping category names to lists of entry names. Order categ
 
 Return ONLY a JSON object:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         raw = responses[0].strip() if responses else "{}"
 
         try:
@@ -561,10 +593,11 @@ Return ONLY a JSON object:"""
                     isinstance(v, list) for v in result.values()
                 ):
                     return result
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        logger.warning("Failed to parse categorization JSON, using single category")
+                logger.warning("ISA categorization: unexpected JSON structure, using single category")
+            else:
+                logger.warning("ISA categorization: no JSON object in LLM response, using single category")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("ISA categorization parse error: %s. Using single category", e)
         return {"API Reference": list(seen.keys())}
 
     def _build_isa_boundary_prompt(self, key: str, text: str) -> str:
@@ -609,6 +642,7 @@ JSON array:"""
         try:
             arr_match = re.search(r"\[[\s\S]*\]", raw)
             if not arr_match:
+                logger.info("ISA boundary parse: no JSON array for %s, trying markdown fallback", source_key)
                 return _parse_markdown_entries(raw, source_key)
             items = json.loads(arr_match.group())
             entries: list[ISAEntry] = []
@@ -633,8 +667,9 @@ JSON array:"""
                 ))
             if entries:
                 return entries
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.info("ISA boundary parse: JSON parse failed for %s (%s), trying markdown fallback",
+                        source_key, e)
 
         return _parse_markdown_entries(raw, source_key)
 
@@ -677,7 +712,7 @@ JSON array:"""
             )
 
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         parts: list[str] = []
@@ -712,9 +747,12 @@ JSON array:"""
             "hoist redundant operations out of loops",
             "eliminate redundant computation",
             "simplify or remove unnecessary code",
+            "try new parameter values",
+            "rewrite the algorithm to reduce total work",
         ]
 
         if not items:
+            logger.warning("Optimization menu: no items routed -- using %d default strategies only", len(defaults))
             return defaults
 
         items = _chunk_items(items, self.context_budget)
@@ -755,12 +793,14 @@ JSON array:"""
                 f"Optimization strategies:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
+        logger.info("Optimization menu: map complete in %.1fs", time.time() - t0)
 
         # Collect all candidate strategies from map step
         candidates: list[str] = []
@@ -838,8 +878,11 @@ Return each strategy on its own line, prefixed with "- ".
 
 Performance optimization strategies:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
-        return responses[0].strip() if responses else ""
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        raw = responses[0].strip() if responses else ""
+        if not raw:
+            logger.warning("Optimization reduce: LLM returned empty response")
+        return raw
 
     @staticmethod
     def _parse_bullet_lines(raw: str) -> list[str]:
@@ -860,6 +903,76 @@ Performance optimization strategies:"""
         return results
 
     # ------------------------------------------------------------------
+    # Translate menu
+    # ------------------------------------------------------------------
+
+    _DEFAULT_TRANSLATE_MENU = [
+        "Convert high-level code to hardware-specific kernel code",
+        "Convert a small amount of high-level code to hardware-specific kernel code",
+    ]
+
+    def _synthesize_translate_menu(
+        self,
+        items: list[tuple[str, str]],
+        architecture: str = "",
+        isa_docs: str = "",
+        code_examples_raw: list[tuple[str, str]] | None = None,
+    ) -> list[str]:
+        """Synthesize code translation strategies from architecture, ISA, and examples.
+
+        Translation strategies guide the LLM in converting standard-library code
+        (e.g. NumPy, PyTorch, vanilla JAX) into hardware-specific kernel code
+        (e.g. CUDA kernels, NKI kernels, Pallas kernels).  They are generic across
+        hardware targets -- the prompt infers the right patterns from the docs.
+        """
+        defaults = list[str](self._DEFAULT_TRANSLATE_MENU)
+        context_parts: list[str] = []
+
+        if architecture:
+            context_parts.append(f"=== ARCHITECTURE ===\n{architecture}\n")
+        if isa_docs:
+            context_parts.append(f"=== ISA / API REFERENCE ===\n{isa_docs}\n")
+        if code_examples_raw:
+            context_parts.append(
+                f"=== CODE EXAMPLES ===\n{_items_to_text(code_examples_raw, max_chars=self.context_budget)}\n"
+            )
+
+        if not context_parts:
+            return defaults
+
+        context = "\n".join(context_parts)
+        defaults_text = chr(10).join("- " + d for d in defaults)
+
+        prompt = f"""{context}
+
+{self._context_prefix}The agent translates standard-library code (e.g. NumPy, PyTorch, JAX, \
+or other high-level frameworks) into optimized hardware-specific kernel code for the target \
+described above.
+
+These generic strategies are already included:
+{defaults_text}
+
+Generate 3-5 ADDITIONAL translation strategies. Each strategy should describe a pattern for converting \
+high-level code into the target hardware's kernel API, referencing approaches specific to the target hardware.
+
+RULES:
+- Each strategy should be a concise action phrase (1 sentence)
+- Focus on HOW to map the computation to the hardware primitives shown in the docs
+- Reference specific API calls, memory spaces, or tiling constructs when they are central
+- Generic strategies are allowed if they add value beyond the generic strategies already included
+
+Return each strategy on its own line, prefixed with "- ".
+
+Translation strategies:"""
+
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        raw = responses[0].strip() if responses else ""
+        strategies = self._parse_bullet_lines(raw)
+        if not strategies:
+            logger.warning("Translate menu: LLM returned no strategies")
+        return defaults + strategies
+
+    # ------------------------------------------------------------------
     # Rules
     # ------------------------------------------------------------------
 
@@ -872,15 +985,17 @@ Performance optimization strategies:"""
                 "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
             ],
             "planning": [
-                "Limit the scope of the plan to the selected optimization.",
-                "Do not count out any of the optimizations unless they are clearly irrelevant to the code.",
+                "Limit the scope of the plan to the selected strategy.",
+                "Do not count out any of the strategies unless they are clearly irrelevant to the code.",
             ],
             "coding": [
-                "Wrap the generated code with ```python at the beginning and ``` at the end.",
+                "Wrap the generated code with ``` at the beginning and ``` at the end.",
             ],
         }
 
         if not items:
+            logger.warning("Rules: no items routed -- using %d base rules only",
+                           sum(len(v) for v in base_rules.values()))
             return base_rules
 
         extra_context = self._rules_extra_context(architecture, isa_docs)
@@ -941,12 +1056,14 @@ Performance optimization strategies:"""
                 f"Rules:"
             )
 
+        t0 = time.time()
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
+        logger.info("Rules: map complete in %.1fs", time.time() - t0)
 
         candidates: list[str] = []
         for i, resp in enumerate(all_responses):
@@ -992,15 +1109,18 @@ Performance optimization strategies:"""
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases
-- "planning" -- applies only when generating optimization plans
+- "planning" -- applies only when generating plans
 - "coding" -- applies only when generating code
 
 Return as a JSON object with keys "general", "planning", "coding", each mapping to a list of rule strings.
 
 Return ONLY a JSON object:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
-        return responses[0].strip() if responses else "{}"
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        raw = responses[0].strip() if responses else "{}"
+        if raw == "{}":
+            logger.warning("Rules reduce: LLM returned empty response")
+        return raw
 
     @staticmethod
     def _merge_rules(base_rules: dict[str, list[str]], raw: str) -> dict[str, list[str]]:
@@ -1013,8 +1133,8 @@ Return ONLY a JSON object:"""
                     if key in extracted and isinstance(extracted[key], list):
                         merged[key].extend(extracted[key])
                         logger.info("  Rules extracted (%s): %d new rules", key, len(extracted[key]))
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse rules JSON, using defaults only")
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse rules JSON: %s. Raw response: %.300s", e, raw)
         return merged
 
 
@@ -1050,15 +1170,21 @@ def _items_to_text(items: list[tuple[str, str]], max_chars: int) -> str:
     """Concatenate (key, text) pairs into a single string, respecting a size budget."""
     parts: list[str] = []
     total = 0
+    included = 0
     for key, text in items:
         chunk = f"--- {key} ---\n{text}\n"
         if total + len(chunk) > max_chars:
             remaining = max_chars - total
             if remaining > 500:
                 parts.append(chunk[:remaining] + "\n[... truncated ...]")
+                included += 1
+            if included < len(items):
+                logger.info("Content truncated: included %d/%d items to fit %d char budget",
+                            included, len(items), max_chars)
             break
         parts.append(chunk)
         total += len(chunk)
+        included += 1
     return "\n".join(parts)
 
 

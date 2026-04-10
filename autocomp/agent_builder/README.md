@@ -14,7 +14,7 @@ python -m autocomp.agent_builder.run_agent_builder \
     --source-dir path/to/docs \
     --agent-scope "Optimizing kernels for MyAccelerator using the XYZ programming interface."
 
-# Use the built agent in search.py:
+# Use the built agent in run_search.py:
 #   agent_name = "built:my_accelerator"
 ```
 
@@ -40,6 +40,8 @@ python -m autocomp.agent_builder.run_agent_builder \
 | `--source-url` | URL to crawl. Only links under the same path prefix are followed (see tip below). Can be repeated. |
 | `--max-depth` | Max link-following depth for `--source-url` (default: 2) |
 | `--max-pages` | Max pages to fetch per `--source-url` (default: 250) |
+
+> **Tip — File size limit:** Individual text files larger than 512 KB are skipped during `--source-dir` ingestion (a warning is logged). If you have a large reference file, either split it into smaller pieces or provide it directly via `--source-file` (which has no size limit, though very large files will be chunked by the synthesizer's context budget).
 
 > **Tip — URL scoping:** The crawler only follows links whose path starts with the parent directory of the URL you provide. For example, `--source-url https://docs.example.com/en/v2.0/api/index.html` crawls pages under `/en/v2.0/api/` and won't follow links to `/en/latest/` or `/en/v3.0/`. If you need content from multiple subtrees, provide a separate `--source-url` for each:
 >
@@ -88,16 +90,23 @@ python -m autocomp.agent_builder.run_agent_builder \
     --agent-name my_accelerator --inspect autocomp/agent_builder/.built/my_accelerator
 ```
 
-**Re-run a single component** -- re-synthesize one component without rebuilding everything:
+**Re-run components** -- re-synthesize one or more components without rebuilding everything:
 
 ```bash
+# Re-run a single component
 python -m autocomp.agent_builder.run_agent_builder \
     --agent-name my_accelerator \
     --inspect autocomp/agent_builder/.built/my_accelerator \
     --rerun rules --source-dir path/to/docs
+
+# Re-run multiple components (ingests sources once, synthesizes each in sequence)
+python -m autocomp.agent_builder.run_agent_builder \
+    --agent-name my_accelerator \
+    --inspect autocomp/agent_builder/.built/my_accelerator \
+    --rerun rules optimization_menu --source-dir path/to/docs
 ```
 
-Valid components: `rules`, `optimization_menu`, `isa`, `architecture`, `examples`.
+Valid components: `rules`, `optimization_menu`, `translate_menu`, `isa`, `architecture`, `examples`.
 
 ## Output
 
@@ -115,7 +124,11 @@ A built agent produces the following files in `.built/<agent_name>/`:
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
-A reference example is available at `.built/trn-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html)).
+A reference example is available at `.built/trn1-nki1/` (auto-generated with Agent Builder from the AWS Trainium NKI [documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/index.html)). Additional pre-built agents:
+
+- `.built/trn2-nki1/` — Trainium 2 with NKI v1 APIs (from [v2.26.1 docs](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.1/general/nki/index.html))
+- `.built/trn2-nki2/` — Trainium 2 with NKI v2 APIs (from [latest docs](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/index.html))
+- `.built/tpu-v6e/` — Google TPU v6e with JAX Pallas (from [JAX Pallas docs](https://docs.jax.dev/en/latest/pallas/index.html) and [Cloud TPU docs](https://docs.cloud.google.com/tpu/docs/))
 
 ## How It Works
 
@@ -160,11 +173,11 @@ For deeper changes to agent behavior (e.g., prompt structure, ISA selection logi
 
 ### Translation support
 
-Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics). When `translate_iters > 0` in `search.py`, the first `translate_iters` iterations use a translation menu instead of the optimization menu, with a relaxed performance threshold (`translate_perf_threshold`, default 1.2×) for keeping candidates.
+Translation lets the agent convert code from one representation to another (e.g., PyTorch → target intrinsics). When `translate_iters > 0` in `run_search.py`, the first `translate_iters` iterations use a translation menu instead of the optimization menu, with a relaxed performance threshold (`translate_perf_threshold`, default 1.2×) for keeping candidates.
 
 To configure:
 
-1. Set `translate_iters` to a positive value in `search.py` (e.g., `translate_iters = 2`).
+1. Set `translate_iters` to a positive value in `run_search.py` (e.g., `translate_iters = 2`).
 2. Optionally create `translate_menu.yaml` in the agent's config directory:
 
 ```yaml

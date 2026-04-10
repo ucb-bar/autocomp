@@ -1,4 +1,4 @@
-void test(int8_t A[12544][256], int8_t B[256][64], int8_t C[12544][64]) {
+void solution(int8_t A[12544][256], int8_t B[256][64], int8_t C[12544][64]) {
   config_st((64));
   config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
   config_ld((64), 1.0f, 16, 2);

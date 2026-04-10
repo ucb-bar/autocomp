@@ -1,4 +1,4 @@
-void test(float Bdyn[12][4], float Quu_inv[4][4], float Kinf[4][12], float AmBKt[12][12], float p[NHORIZON + 1][12][1], float d[NHORIZON + 1][4][1], float r[NHORIZON][4][1], float q[NHORIZON][12][1]) {
+void solution(float Bdyn[12][4], float Quu_inv[4][4], float Kinf[4][12], float AmBKt[12][12], float p[NHORIZON + 1][12][1], float d[NHORIZON + 1][4][1], float r[NHORIZON][4][1], float q[NHORIZON][12][1]) {
     static elem_t B_p[4][1];
     static elem_t B_p_r[4][1];
     static elem_t K_r[12][1];

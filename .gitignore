@@ -21,6 +21,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!visualizer/src/webview/lib/
 parts/
 sdist/
 var/
@@ -55,6 +56,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+*.npy
 
 # Translations
 *.mo
@@ -165,3 +167,14 @@ cython_debug/
 #.idea/
 
 .sources/
+
+# Neuron compiler artifacts
+PostSPMDPassesExecutionDuration.txt
+log-neuron-cc.txt
+
+# Runtime artifacts
+output/
+wandb/
+config/
+tmp*/
+temp*/

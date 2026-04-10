@@ -17,11 +17,11 @@ INT8_32PE_CHIPYARD_PATH = None
 
 def clean_code(code_str: str) -> str:
     """
-    Takes LLM-generated code, removes the "test" wrapper function, and cleans up anything that is not runnable C code
+    Takes LLM-generated code, removes the "solution" wrapper function, and cleans up anything that is not runnable C code
 
     for example:
     '''
-    void test(Kinf, r, K_r) {
+    void solution(Kinf, r, K_r) {
         config_ex(WEIGHT_STATIONARY,  NO_ACTIVATION, true, false);
         config_st(1 * sizeof(float)); // output K_r has 1 column in DRAM
         ...
@@ -43,10 +43,10 @@ def clean_code(code_str: str) -> str:
     # Remove the function wrapper and return only the body of the function
     if not code_str:
         return ""
-    after_void_test_str = code_str[code_str.find("void test("):]
-    start = after_void_test_str.find('{') + 1
-    end = after_void_test_str.rfind('}')
-    body = after_void_test_str[start:end]
+    after_void_solution_str = code_str[code_str.find("void solution("):]
+    start = after_void_solution_str.find('{') + 1
+    end = after_void_solution_str.rfind('}')
+    body = after_void_solution_str[start:end]
     return body
     # body = code_str[start:end].split("\n")
     # new_body = []
@@ -344,9 +344,9 @@ class GemminiEvalBackend(EvalBackend):
         return f"GemminiEvalBackend({self.pe_dim})"
 
     def get_hw_feedback(self, prob: Prob, code_strs: list[str]) -> list[list[str]]:
-        """Return per-candidate spad/acc utilization feedback strings."""
+        """Return per-implementation spad/acc utilization feedback strings."""
         stats_list = self.get_spad_acc_utilization(prob, code_strs)
-        feedback_per_candidate = []
+        feedback_per_impl = []
         for stats in stats_list:
             spad_cap_used = round(stats['spad_util'] * self.spad_size_kb)
             acc_cap_used = round(stats['acc_util'] * self.acc_size_kb)
@@ -358,8 +358,8 @@ class GemminiEvalBackend(EvalBackend):
                 feedback[0] += " Consider increasing scratchpad utilization to improve performance."
             if stats['acc_util'] < 1:
                 feedback[1] += " Consider increasing accumulator utilization to improve performance."
-            feedback_per_candidate.append(feedback)
-        return feedback_per_candidate
+            feedback_per_impl.append(feedback)
+        return feedback_per_impl
 
     def evaluate_code_parallel_spike(self, prob: Prob, code_strs: list[str]) -> float:
         return self.evaluate_code(prob, code_strs, "spike")
@@ -400,21 +400,38 @@ class GemminiEvalBackend(EvalBackend):
         } for _ in code_strs]
         clean_code_strs = [clean_code(code_str) for code_str in code_strs]
         for test_i, test in enumerate(prob.tests):
-            logger.info("Running spike on %d code candidates", len(code_strs))
+            logger.info("Running spike on %d implementations", len(code_strs))
             test_output_per_code_str = run_spike_mp([test.get_test_code([code_str]) for code_str in clean_code_strs], self.gemmini_path, timeout=3000)
+            num_compile_errors = 0
+            num_correct = 0
+            num_incorrect = 0
             for code_i, test_output in enumerate(test_output_per_code_str):
                 # logger.debug(test_output)
-                if "Correct" in test_output:
+                if test_output == "Compile error" or test_output == "Timeout":
+                    logger.debug("Test %d %s for code %d", test_i, test_output, code_i)
+                    stats[code_i]["test_results"][test_i] = False
+                    stats[code_i]["correct"] = False
+                    stats[code_i]["compiled"] = False
+                    num_compile_errors += 1
+                elif "Correct" in test_output:
                     logger.debug("Test %d Correct result", test_i)
                     stats[code_i]["test_results"][test_i] = True
+                    if "compiled" not in stats[code_i]:
+                        stats[code_i]["compiled"] = True
                     if simulator == "spike": # Get instruction count from spike
                         if "Generated implementation latency" in test_output:
                             sol_latency = int(test_output.split("Generated implementation latency: ")[-1].split(" cycles")[0])
                             stats[code_i]["latency"] = sol_latency
+                    num_correct += 1
                 else:
                     logger.debug("Test %d Incorrect result", test_i)
                     stats[code_i]["test_results"][test_i] = False
                     stats[code_i]["correct"] = False
+                    if "compiled" not in stats[code_i]:
+                        stats[code_i]["compiled"] = True
+                    num_incorrect += 1
+            logger.info("Test %d: %d compiled (%d correct, %d incorrect), %d compile errors",
+                        test_i, num_correct + num_incorrect, num_correct, num_incorrect, num_compile_errors)
 
         if simulator == "firesim":
             # test = prob.tests[0]
@@ -427,18 +444,20 @@ class GemminiEvalBackend(EvalBackend):
             #         stats[code_i]["correct"] = False
             # Use batched run to speed up evaluation
             working_code_idxs = []
+            num_compiled = sum(1 for s in stats if s.get("compiled", True))
             for code_i in range(len(code_strs)):
                 if stats[code_i]["correct"]: # Get correctness from spike
                     working_code_idxs.append(code_i)
-            logger.info("%d of %d candidates passed spike", len(working_code_idxs), len(code_strs))
+            logger.info("%d of %d implementations passed spike (%d compiled, %d compile errors)",
+                        len(working_code_idxs), len(code_strs), num_compiled, len(code_strs) - num_compiled)
             logger.debug("Working code indices: %s", str(working_code_idxs))
-            # logger.info("%d of %d candidates compiled successfully", len(working_code_idxs), len(code_strs))
+            # logger.info("%d of %d implementations compiled successfully", len(working_code_idxs), len(code_strs))
             if len(working_code_idxs) == 0:
                 return stats
             working_code_strs = [clean_code_strs[i] for i in working_code_idxs]
             first_test = prob.tests[0]
             # Batch N at a time
-            batch_size = 100
+            batch_size = 20
             batch_start_idx = 0
             while batch_start_idx < len(working_code_strs):
                 batch_end_idx = min(batch_start_idx + batch_size, len(working_code_strs))

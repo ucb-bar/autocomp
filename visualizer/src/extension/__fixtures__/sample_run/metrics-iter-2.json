@@ -1,0 +1,10 @@
+{
+  "plan_duration_s": 175.44,
+  "code_duration_s": 58.953,
+  "evaluation": {
+    "duration_s": 68.593,
+    "num_candidates": 16
+  },
+  "iteration": 2,
+  "iteration_total_s": 302.99
+}

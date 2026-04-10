@@ -1,0 +1,311 @@
+{'correct': True, 'latency': 2.774, 'stdout': 'Latency: 2.774 ms (P99)
+', 'stderr': ''}
+Prev latency: 2.461
+New latency: 2.774
+Plan: ## Analysis of the Code
+
+Looking at the original LayerNorm kernel, I can identify several inefficiencies:
+
+1. **Mean and variance computation**: The code computes mean and variance using separate operations (`nl.mean`, `nl.square`, another `nl.mean`), which requires multiple passes over the data.
+
+2. **The current approach**:
+   - `mean = nl.mean(input_sb, axis=1)` - one pass
+   - `nl.square(input_sb)` - element-wise operation
+   - `nl.mean(nl.square(input_sb), axis=1)` - another pass
+   - Then computes `var = mean(x^2) - mean(x)^2`
+
+3. **Hardware has dedicated instructions**: NKI provides `nki.isa.bn_stats` and `nki.isa.bn_aggr` instructions that compute mean and variance statistics in a single pass using optimized hardware paths on the Vector Engine.
+
+## Selected Strategy: Strategy 8 - Use hardware `bn_stats`/`bn_aggr` instructions for single-pass mean and variance computation
+
+## Plan
+
+### Why this optimization is appropriate:
+The current code computes mean and variance using multiple separate operations. The hardware provides specialized `bn_stats` and `bn_aggr` instructions that can compute both statistics in a single pass, which is more efficient than the current multi-pass approach using general-purpose operations.
+
+### Changes to make:
+
+1. **Replace the mean/variance computation block**:
+   - Currently: `mean = nl.mean(input_sb, axis=1)` followed by `var = nl.mean(nl.square(input_sb), axis=1) - mean * mean`
+   - Replace with: `stats = nisa.bn_stats(input_sb)` followed by `mean_var = nisa.bn_aggr(stats)`
+
+2. **Handle the free dimension constraint**:
+   - `bn_stats` has a maximum free dimension of 512 (`nl.tile_size.bn_stats_fmax`)
+   - If `input_tensor.shape[1] > 512`, we need to tile the free dimension and aggregate multiple `bn_stats` outputs with a single `bn_aggr` call
+   - For each tile of up to 512 elements in the free dimension, call `bn_stats` and store the 6-element output
+   - Then call `bn_aggr` on the concatenated statistics to get final mean and variance
+
+3. **Extract mean and variance from `bn_aggr` output**:
+   - `bn_aggr` returns a tile with 2 elements per partition: `[mean, variance]`
+   - Extract `mean = mean_var[:, 0:1]` and `var = mean_var[:, 1:2]`
+
+4. **Keep the rest of the normalization logic the same**:
+   - The normalization formula `(input_sb - mean) * nl.rsqrt(var + epsilon)` remains unchanged
+   - The gamma/beta application remains unchanged
+
+### Implementation details:
+```python
+# Instead of:
+# mean = nl.mean(input_sb, axis=1)
+# var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Use bn_stats/bn_aggr:
+import neuronxcc.nki.isa as nisa
+
+# If free_dim <= 512:
+stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+mean_var = nisa.bn_aggr(stats, dtype=nl.float32)
+mean = mean_var[:, 0:1]  # shape (128, 1)
+var = mean_var[:, 1:2]   # shape (128, 1)
+
+# If free_dim > 512, tile and aggregate:
+bn_tile = nl.tile_size.bn_stats_fmax  # 512
+n_bn_tiles = math.ceil(free_dim / bn_tile)
+stats_combined = nl.ndarray((pmax, 6 * n_bn_tiles), dtype=nl.float32)
+for j in range(n_bn_tiles):
+    # Load or slice the appropriate portion and compute bn_stats
+    stats_combined[:, j*6:(j+1)*6] = nisa.bn_stats(input_slice, dtype=nl.float32)
+mean_var = nisa.bn_aggr(stats_combined, dtype=nl.float32)
+```
+
+This optimization reduces the number of passes over the data and leverages hardware-accelerated statistics computation, which should improve performance.
+
+CodeCandidate(parent=CodeCandidate(parent=None,
+plan=None,
+code='''@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(nl.tile_size.pmax)[:, None]
+  i_f_io = nl.arange(input_tensor.shape[1])[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Number of rows in the input tensor
+  num_rows = input_tensor.shape[0]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((nl.tile_size.pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((nl.tile_size.pmax, beta_vector.shape[0]))
+
+  # Tile partition dimension of the input tensor by nl.tile_size.pmax
+  for i in nl.affine_range(math.ceil(input_tensor.shape[0]/nl.tile_size.pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
+                       mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast
+
+    nl.store(output_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=2.461,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='None',
+code_gen_model='None',
+stdout='Latency: 2.461 ms (P99)\n',
+stderr=''),
+plan='''## Analysis of the Code
+
+Looking at the original LayerNorm kernel, I can identify several inefficiencies:
+
+1. **Mean and variance computation**: The code computes mean and variance using separate operations (`nl.mean`, `nl.square`, another `nl.mean`), which requires multiple passes over the data.
+
+2. **The current approach**:
+   - `mean = nl.mean(input_sb, axis=1)` - one pass
+   - `nl.square(input_sb)` - element-wise operation
+   - `nl.mean(nl.square(input_sb), axis=1)` - another pass
+   - Then computes `var = mean(x^2) - mean(x)^2`
+
+3. **Hardware has dedicated instructions**: NKI provides `nki.isa.bn_stats` and `nki.isa.bn_aggr` instructions that compute mean and variance statistics in a single pass using optimized hardware paths on the Vector Engine.
+
+## Selected Strategy: Strategy 8 - Use hardware `bn_stats`/`bn_aggr` instructions for single-pass mean and variance computation
+
+## Plan
+
+### Why this optimization is appropriate:
+The current code computes mean and variance using multiple separate operations. The hardware provides specialized `bn_stats` and `bn_aggr` instructions that can compute both statistics in a single pass, which is more efficient than the current multi-pass approach using general-purpose operations.
+
+### Changes to make:
+
+1. **Replace the mean/variance computation block**:
+   - Currently: `mean = nl.mean(input_sb, axis=1)` followed by `var = nl.mean(nl.square(input_sb), axis=1) - mean * mean`
+   - Replace with: `stats = nisa.bn_stats(input_sb)` followed by `mean_var = nisa.bn_aggr(stats)`
+
+2. **Handle the free dimension constraint**:
+   - `bn_stats` has a maximum free dimension of 512 (`nl.tile_size.bn_stats_fmax`)
+   - If `input_tensor.shape[1] > 512`, we need to tile the free dimension and aggregate multiple `bn_stats` outputs with a single `bn_aggr` call
+   - For each tile of up to 512 elements in the free dimension, call `bn_stats` and store the 6-element output
+   - Then call `bn_aggr` on the concatenated statistics to get final mean and variance
+
+3. **Extract mean and variance from `bn_aggr` output**:
+   - `bn_aggr` returns a tile with 2 elements per partition: `[mean, variance]`
+   - Extract `mean = mean_var[:, 0:1]` and `var = mean_var[:, 1:2]`
+
+4. **Keep the rest of the normalization logic the same**:
+   - The normalization formula `(input_sb - mean) * nl.rsqrt(var + epsilon)` remains unchanged
+   - The gamma/beta application remains unchanged
+
+### Implementation details:
+```python
+# Instead of:
+# mean = nl.mean(input_sb, axis=1)
+# var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
+
+# Use bn_stats/bn_aggr:
+import neuronxcc.nki.isa as nisa
+
+# If free_dim <= 512:
+stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+mean_var = nisa.bn_aggr(stats, dtype=nl.float32)
+mean = mean_var[:, 0:1]  # shape (128, 1)
+var = mean_var[:, 1:2]   # shape (128, 1)
+
+# If free_dim > 512, tile and aggregate:
+bn_tile = nl.tile_size.bn_stats_fmax  # 512
+n_bn_tiles = math.ceil(free_dim / bn_tile)
+stats_combined = nl.ndarray((pmax, 6 * n_bn_tiles), dtype=nl.float32)
+for j in range(n_bn_tiles):
+    # Load or slice the appropriate portion and compute bn_stats
+    stats_combined[:, j*6:(j+1)*6] = nisa.bn_stats(input_slice, dtype=nl.float32)
+mean_var = nisa.bn_aggr(stats_combined, dtype=nl.float32)
+```
+
+This optimization reduces the number of passes over the data and leverages hardware-accelerated statistics computation, which should improve performance.''',
+code='''import neuronxcc.nki as nki
+import neuronxcc.nki.language as nl
+import neuronxcc.nki.isa as nisa
+import math
+
+
+@nki.jit
+def test(input_tensor, epsilon, gamma_vector, beta_vector):
+  """Computes LayerNorm using hardware bn_stats/bn_aggr for efficient mean/variance computation.
+  """
+  output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
+                             buffer=nl.shared_hbm)
+
+  # Ensure that the shapes of tensors match
+  assert input_tensor.shape[1] == gamma_vector.shape[0] == beta_vector.shape[0]
+
+  # Get dimensions
+  num_rows = input_tensor.shape[0]
+  free_dim = input_tensor.shape[1]
+  pmax = nl.tile_size.pmax  # 128
+  bn_stats_fmax = nl.tile_size.bn_stats_fmax  # 512
+
+  # Generate tile indices for loading/storing data
+  i_p_io = nl.arange(pmax)[:, None]
+  i_f_io = nl.arange(free_dim)[None, :]
+  i_p_param = nl.arange(1)[:, None]
+
+  # Load gamma and beta, which will be reused across rows/tiles of input_tensor
+  gamma_sb = nl.load(gamma_vector.reshape((1, gamma_vector.shape[0]))[i_p_param, i_f_io])
+  beta_sb = nl.load(beta_vector.reshape((1, beta_vector.shape[0]))[i_p_param, i_f_io])
+
+  # Broadcast the gamma and beta to match the dimensions of the tiles
+  gamma_sb_bcast = gamma_sb.broadcast_to((pmax, gamma_vector.shape[0]))
+  beta_sb_bcast = beta_sb.broadcast_to((pmax, beta_vector.shape[0]))
+
+  # Calculate number of bn_stats tiles needed for free dimension
+  n_bn_tiles = math.ceil(free_dim / bn_stats_fmax)
+
+  # Tile partition dimension of the input tensor by pmax
+  for i in nl.affine_range(math.ceil(num_rows / pmax)):
+    # Load input tile
+    input_sb = nl.load(input_tensor[i * pmax + i_p_io, i_f_io],
+                       mask=(i * pmax + i_p_io < num_rows))
+
+    # Compute mean and variance using bn_stats/bn_aggr
+    if n_bn_tiles == 1:
+      # Free dimension fits within bn_stats limit
+      stats = nisa.bn_stats(input_sb, dtype=nl.float32)
+      mean_var = nisa.bn_aggr(stats, dtype=nl.float32)
+    else:
+      # Need to tile the free dimension for bn_stats
+      # Allocate buffer for aggregated statistics (6 values per bn_stats call)
+      stats_combined = nl.ndarray((pmax, 6 * n_bn_tiles), dtype=nl.float32, buffer=nl.sbuf)
+      
+      i_p_stats = nl.arange(pmax)[:, None]
+      
+      for j in nl.affine_range(n_bn_tiles):
+        # Calculate the slice bounds for this bn_stats tile
+        f_start = j * bn_stats_fmax
+        # Determine actual size for this tile (may be smaller for last tile)
+        f_size = bn_stats_fmax
+        
+        # Create indices for this free dimension slice
+        i_f_bn = nl.arange(bn_stats_fmax)[None, :]
+        
+        # Slice the input for this bn_stats computation
+        # Use mask for the last tile if free_dim is not multiple of bn_stats_fmax
+        input_slice = nl.ndarray((pmax, bn_stats_fmax), dtype=input_sb.dtype, buffer=nl.sbuf)
+        input_slice[i_p_stats, i_f_bn] = nl.load(
+          input_tensor[i * pmax + i_p_stats, f_start + i_f_bn],
+          mask=((i * pmax + i_p_stats < num_rows) & (f_start + i_f_bn < free_dim))
+        )
+        
+        # Compute bn_stats for this slice
+        stats_tile = nisa.bn_stats(input_slice, dtype=nl.float32,
+                                   mask=(f_start + i_f_bn < free_dim))
+        
+        # Store into combined stats buffer
+        i_f_stats_out = nl.arange(6)[None, :]
+        stats_combined[i_p_stats, j * 6 + i_f_stats_out] = stats_tile
+      
+      # Aggregate all statistics
+      mean_var = nisa.bn_aggr(stats_combined, dtype=nl.float32)
+
+    # Extract mean and variance (shape: (pmax, 2) -> need (pmax, 1) for each)
+    i_p_mv = nl.arange(pmax)[:, None]
+    i_f_mean = nl.arange(1)[None, :]
+    i_f_var = nl.arange(1)[None, :] + 1
+    
+    mean = mean_var[i_p_mv, i_f_mean]  # shape (pmax, 1)
+    var = mean_var[i_p_mv, i_f_var]    # shape (pmax, 1)
+
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    # Use nl.subtract and nl.multiply for partition dimension broadcasting
+    centered = nl.subtract(input_sb, mean)  # broadcasts mean across free dim
+    inv_std = nl.rsqrt(nl.add(var, epsilon))  # (pmax, 1)
+    shift_scale_tensor = nl.multiply(centered, inv_std)  # broadcasts inv_std
+    
+    # Scale the normalized tile using gamma and add beta
+    output_sb = nl.add(nl.multiply(shift_scale_tensor, gamma_sb_bcast), beta_sb_bcast)
+
+    nl.store(output_tensor[i * pmax + i_p_io, i_f_io], value=output_sb,
+             mask=(i * pmax + i_p_io < num_rows))
+
+  return output_tensor
+''',
+score=None,
+translation_score=None,
+hw_feedback=[],
+plan_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+code_gen_model='us.anthropic.claude-opus-4-5-20251101-v1:0',
+stdout=None,
+stderr=None)

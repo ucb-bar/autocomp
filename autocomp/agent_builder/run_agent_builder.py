@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import re
+import time
 import yaml
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def build_agent(agent_name: str, output_dir: str,
                 context_budget: int = 150_000) -> Path:
     """Run the AgentBuilder pipeline on directory, file, and/or URL sources."""
     from autocomp.agent_builder import AgentBuilder
+    t0 = time.time()
     builder = AgentBuilder(llm_model=llm_model, light_llm_model=light_llm_model,
                            agent_scope=agent_scope, context_budget=context_budget)
     if source_dir:
@@ -56,30 +58,55 @@ def build_agent(agent_name: str, output_dir: str,
     for url in (source_urls or []):
         builder.add_source("webpage", url=url, max_depth=max_depth, max_pages=max_pages)
     config_dir = builder.build(agent_name=agent_name, output_dir=output_dir)
+    elapsed = time.time() - t0
+    usage_records = builder._llm_client.collect_usage()
+    if builder._light_llm_client:
+        usage_records.extend(builder._light_llm_client.collect_usage())
+    _print_build_summary(elapsed, usage_records)
     return config_dir
+
+
+def _print_build_summary(elapsed: float, usage_records: list[dict]):
+    """Print wall-clock time and LLM token usage after a build."""
+    from autocomp.common.llm_utils import aggregate_usage
+    usage = aggregate_usage(usage_records)
+
+    mins, secs = divmod(int(elapsed), 60)
+    print(f"\nBuild completed in {mins}m {secs}s")
+
+    if not usage:
+        return
+    total_in = 0
+    total_out = 0
+    for phase_data in usage.values():
+        for model_data in phase_data.values():
+            total_in += model_data.get("input_tokens", 0)
+            total_out += model_data.get("output_tokens", 0)
+    if total_in or total_out:
+        print(f"  LLM tokens: {total_in:,} in / {total_out:,} out ({total_in + total_out:,} total)")
 
 
 # ------------------------------------------------------------------
 # Rerun a single component
 # ------------------------------------------------------------------
 
-def rerun_component(component: str, config_dir: Path,
-                    model: str, light_model: str | None = None,
-                    agent_scope: str = "",
-                    source_dir: str | None = None,
-                    source_files: list[str] | None = None,
-                    source_urls: list[str] | None = None,
-                    max_depth: int = 2, max_pages: int = 50,
-                    context_budget: int = 150_000):
+def rerun_components(components: list[str], config_dir: Path,
+                     model: str, light_model: str | None = None,
+                     agent_scope: str = "",
+                     source_dir: str | None = None,
+                     source_files: list[str] | None = None,
+                     source_urls: list[str] | None = None,
+                     max_depth: int = 2, max_pages: int = 50,
+                     context_budget: int = 150_000):
     """
-    Re-ingest the source, re-route, and re-synthesize a single component,
-    then overwrite just that file in the existing config dir.
+    Re-ingest sources once, route once, then re-synthesize each requested
+    component and overwrite its file in the existing config dir.
     """
     from autocomp.agent_builder.ingestor import KnowledgeIngestor
     from autocomp.agent_builder.synthesizer import ComponentSynthesizer
     from autocomp.common import LLMClient
 
-    print(f"Re-running '{component}' synthesis")
+    print(f"Re-running synthesis for: {', '.join(components)}")
     print(f"  Config dir: {config_dir}")
     if source_dir:
         print(f"  Source dir: {source_dir}")
@@ -106,7 +133,6 @@ def rerun_component(component: str, config_dir: Path,
     synth = ComponentSynthesizer(llm, light_llm, agent_scope=agent_scope,
                                  context_budget=context_budget)
 
-    # If no agent_scope was provided, try to load from existing agent_config.yaml
     if not agent_scope:
         cfg_path = config_dir / "agent_config.yaml"
         if cfg_path.exists():
@@ -119,7 +145,7 @@ def rerun_component(component: str, config_dir: Path,
                 print(f"  Agent scope (from agent_config.yaml): {saved_scope[:120]}..."
                       if len(saved_scope) > 120 else f"  Agent scope (from agent_config.yaml): {saved_scope}")
 
-    # Re-ingest and route
+    # Ingest and route ONCE for all components
     ingestor = KnowledgeIngestor()
     if source_dir:
         ingestor.add_source("directory", path=source_dir)
@@ -130,53 +156,65 @@ def rerun_component(component: str, config_dir: Path,
     indices = ingestor.ingest()
     buckets = synth._llm_route_content(indices)
 
-    bucket_name = {
-        "rules": "rules",
-        "optimization_menu": "optimization",
-        "isa": "isa",
-        "architecture": "architecture",
-        "examples": "examples",
-    }[component]
-
-    # Routing already filters via LLM, just grab the relevant bucket
-    items = buckets[bucket_name]
-    print(f"  Routed {bucket_name}: {len(items)} files")
-
-    # Read existing built files for context (rules needs architecture + ISA)
     architecture = (config_dir / "architecture.md").read_text() if (config_dir / "architecture.md").exists() else ""
     isa_docs = (config_dir / "isa_docs.md").read_text() if (config_dir / "isa_docs.md").exists() else ""
 
-    # Synthesize the single component
-    if component == "rules":
-        result = synth._synthesize_rules(items, architecture=architecture, isa_docs=isa_docs)
-        with open(config_dir / "rules.yaml", "w") as f:
-            yaml.dump(result, f, default_flow_style=False)
-        n = sum(len(v) for v in result.values())
-        print(f"  Wrote rules.yaml: {n} rules across {len(result)} categories")
+    for component in components:
+        print(f"\n--- Synthesizing: {component} ---")
+        bucket_name = {
+            "rules": "rules",
+            "optimization_menu": "optimization",
+            "translate_menu": "optimization",
+            "isa": "isa",
+            "architecture": "architecture",
+            "examples": "examples",
+        }[component]
 
-    elif component == "optimization_menu":
-        result = synth._synthesize_optimization_menu(items)
-        menu_data = {"optimizations": [{"strategy": s} for s in result]}
-        with open(config_dir / "optimization_menu.yaml", "w") as f:
-            yaml.dump(menu_data, f, default_flow_style=False, width=120)
-        print(f"  Wrote optimization_menu.yaml: {len(result)} strategies")
+        items = buckets[bucket_name]
+        print(f"  Routed {bucket_name}: {len(items)} files")
 
-    elif component == "isa":
-        result = synth._extract_isa_docs(items)
-        (config_dir / "isa_docs.md").write_text(result)
-        print(f"  Wrote isa_docs.md: {len(result):,} chars")
+        if component == "rules":
+            result = synth._synthesize_rules(items, architecture=architecture, isa_docs=isa_docs)
+            with open(config_dir / "rules.yaml", "w") as f:
+                yaml.dump(result, f, default_flow_style=False)
+            n = sum(len(v) for v in result.values())
+            print(f"  Wrote rules.yaml: {n} rules across {len(result)} categories")
 
-    elif component == "architecture":
-        result = synth._synthesize_architecture(items)
-        (config_dir / "architecture.md").write_text(result)
-        print(f"  Wrote architecture.md: {len(result):,} chars")
+        elif component == "optimization_menu":
+            result = synth._synthesize_optimization_menu(items)
+            menu_data = {"optimizations": [{"strategy": s} for s in result]}
+            with open(config_dir / "optimization_menu.yaml", "w") as f:
+                yaml.dump(menu_data, f, default_flow_style=False, width=120)
+            print(f"  Wrote optimization_menu.yaml: {len(result)} strategies")
 
-    elif component == "examples":
-        result = synth._extract_code_examples(items)
-        (config_dir / "code_examples.md").write_text(result)
-        print(f"  Wrote code_examples.md: {len(result):,} chars")
+        elif component == "translate_menu":
+            result = synth._synthesize_translate_menu(
+                items, architecture=architecture, isa_docs=isa_docs,
+                code_examples_raw=buckets.get("examples", []),
+            )
+            menu_data = {"strategies": [{"strategy": s} for s in result]}
+            with open(config_dir / "translate_menu.yaml", "w") as f:
+                yaml.dump(menu_data, f, default_flow_style=False, width=120)
+            print(f"  Wrote translate_menu.yaml: {len(result)} strategies")
 
-    print("Done.")
+        elif component == "isa":
+            result = synth._extract_isa_docs(items)
+            (config_dir / "isa_docs.md").write_text(result)
+            print(f"  Wrote isa_docs.md: {len(result):,} chars")
+
+        elif component == "architecture":
+            result = synth._synthesize_architecture(items)
+            (config_dir / "architecture.md").write_text(result)
+            print(f"  Wrote architecture.md: {len(result):,} chars")
+
+        elif component == "examples":
+            result = synth._extract_code_examples(items)
+            (config_dir / "code_examples.md").write_text(result)
+            print(f"  Wrote code_examples.md: {len(result):,} chars")
+
+        print(f"  Done: {component}")
+
+    print(f"\nAll {len(components)} components re-synthesized.")
 
 
 # ------------------------------------------------------------------
@@ -414,9 +452,9 @@ def main():
                              "(default: 150000; ~37-50K tokens depending on content)")
     parser.add_argument("--inspect", metavar="CONFIG_DIR",
                         help="Skip build, just inspect an existing config directory")
-    parser.add_argument("--rerun", metavar="COMPONENT",
-                        choices=["rules", "optimization_menu", "isa", "architecture", "examples"],
-                        help="Re-run synthesis for a single component using an existing "
+    parser.add_argument("--rerun", metavar="COMPONENT", nargs="+",
+                        choices=["rules", "optimization_menu", "translate_menu", "isa", "architecture", "examples"],
+                        help="Re-run synthesis for one or more components using an existing "
                              "built config dir (requires --inspect and --source-dir)")
     args = parser.parse_args()
 
@@ -434,8 +472,8 @@ def main():
         config_dir = Path(args.inspect)
         if not config_dir.is_absolute():
             config_dir = REPO_ROOT / config_dir
-        rerun_component(
-            component=args.rerun,
+        rerun_components(
+            components=args.rerun,
             config_dir=config_dir,
             model=args.model,
             light_model=args.light_model,
@@ -460,6 +498,9 @@ def main():
         parser.error("At least one of --source-dir, --source-file, or --source-url is required for building")
 
     output_dir = str(Path(args.output_dir) / args.agent_name)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    import autocomp.common.my_logging
+    autocomp.common.my_logging.move_log(Path(output_dir), tag="agent-builder")
     print(f"Building {args.agent_name} agent...")
     if args.source_dir:
         print(f"  Source dir: {args.source_dir}")

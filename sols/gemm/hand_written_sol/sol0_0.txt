@@ -1,4 +1,4 @@
-void test(float A[512][512], float B[512][512], float C[512][512]) {
+void solution(float A[512][512], float B[512][512], float C[512][512]) {
     // Configuration for the systolic array operations
     config_ex(WEIGHT_STATIONARY, NO_ACTIVATION, 1, false, false);
     config_st(512 * sizeof(float)); // C has 512 columns in DRAM
