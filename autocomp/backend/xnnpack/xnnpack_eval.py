@@ -665,8 +665,8 @@ class XnnpackEvalBackend(EvalBackend):
 
 
 if __name__ == "__main__":
-    prob = Prob("qs8", 0)
-    files = [SOLS_DIR / "qs8" / "qs8-vaddc.c"]
+    prob = Prob("rvv-qs8", 0)
+    files = [SOLS_DIR / "rvv-qs8" / "qs8-vaddc.c"]
     if files[0].exists():
         code_str = files[0].read_text()
         code_strs = [code_str, code_str, code_str]
@@ -675,4 +675,4 @@ if __name__ == "__main__":
         for i, stat in enumerate(stats):
             print(f"  Candidate {i}: {stat}")
     else:
-        print("No test files found. Create tests in tests/qs8/ and sols in sols/qs8/")
+        print("No test files found. Create tests in harnesses/rvv-qs8/ and sols in sols/rvv-qs8/")

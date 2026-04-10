@@ -1,3 +1,5 @@
+# Translation strategies for converting fixed-width SIMD code (NEON, SSE/AVX) to RVV.
+# These are NOT for scalar-to-vector translation.
 strategies:
 - strategy: Convert high-level code to hardware-specific kernel code
 - strategy: Convert a small amount of high-level code to hardware-specific kernel code

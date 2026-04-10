@@ -43,7 +43,7 @@ Saturn test harnesses use `// SUBSTITUTE HERE` / `// SUBSTITUTE END` markers for
 2. `SaturnTest.get_test_code()` wraps the cleaned body with timing (`read_cycles()`/`fence()`) and correctness checking (`full_is_equal(OUTPUT_MATRIX_NAME, gold)`)
 3. The wrapped code is injected between the markers in the test harness
 
-See `tests/f32/test0.c` and `test1.c` for working examples.
+See `harnesses/rvv-f32/test0.c` and `test1.c` for working examples.
 
 **Test harness requirements:**
 
@@ -71,7 +71,7 @@ The evaluation pipeline:
 2. The function signature is parsed from the solution file in `sols/`
 3. `XnnpackTest.inject_candidates()` wraps each candidate body in a `__attribute__((noinline))` function and injects it between `// SUBSTITUTE CANDIDATES` markers
 
-See `tests/xnnpack-f32/test0.c` through `test3.c` for working examples.
+See `harnesses/xnnpack-f32/test0.c` through `test3.c` for working examples.
 
 **Test harness requirements:**
 
