@@ -57,6 +57,9 @@ git clone git@github.com:ucb-ee194-tapeout/npu_model.git third_party/npu_model
 # Make sure npu_model is in place
 ls third_party/npu_model
 
+# Install tapeout-specific dependencies
+uv pip install -e ".[tapeout]"
+
 # Run the search
 uv run python autocomp/search/run_search.py
 ```

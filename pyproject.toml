@@ -26,6 +26,13 @@ agent-builder = [
     "beautifulsoup4",
     "html2text",
 ]
+tapeout = [
+    "torch>=2.10.0",
+    "matplotlib>=3.8.0",
+    "tabulate>=0.9.0",
+    "iree-base-compiler",
+    "iree-base-runtime",
+]
 dev = [
     "pytest",
 ]
