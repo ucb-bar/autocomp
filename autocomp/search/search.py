@@ -1306,57 +1306,90 @@ class BeamSearchStrategy(SearchStrategy):
                     evaluated_code_candidates.extend(reimplemented_evaluated)
 
             # Step 3.75: Score translation completeness during translate iters
-            if translate:
-                correct_candidates = [c for c in evaluated_code_candidates if c.score != float("inf")]
+            if translate and self.translate_score:
+                correct_candidates = [
+                    c for c in evaluated_code_candidates if c.score != float("inf")
+                ]
                 if correct_candidates:
-                    # Success — stop the search
-                    logger.info("Translation succeeded at iteration %d. Stopping search.", i)
+                    original_code = self.repository.get_candidates(0)[0].code
+                    scores = self.agent.score_translation_completeness(
+                        original_code, correct_candidates, prob=self.prob
+                    )
+                    for cand, ts in zip(correct_candidates, scores):
+                        cand.translation_score = ts
+                    logger.info(
+                        "Translation scores: %s",
+                        [
+                            (f"{c.translation_score:.1f}", f"{c.score:.4f}")
+                            for c in correct_candidates
+                        ],
+                    )
+
+            # Translation mode: early exit on success, carry failed forward
+            if translate:
+                correct_candidates = [
+                    c for c in evaluated_code_candidates if c.score != float("inf")
+                ]
+                if correct_candidates:
+                    logger.info(
+                        "Translation succeeded at iteration %d. Stopping search.", i
+                    )
                     self.repository.add_candidates(correct_candidates, "improving")
                     self.repository.add_candidates(correct_candidates, i)
                     save_dir = self.output_dir / f"candidates-iter-{i}"
                     save_dir.mkdir(parents=True, exist_ok=True)
                     self.repository.save_candidates(i, save_dir)
+                    self._save_best_candidate()
                     break
 
-                # All failed — keep failed candidates with error feedback as
-                # parents for the next iteration so the model can iterate on
-                # its previous attempt instead of starting from scratch.
-                failed_with_errors = [c for c in evaluated_code_candidates if c.stderr]
+                # All failed — carry failed candidates with error feedback
+                failed_with_errors = [
+                    c for c in evaluated_code_candidates if c.stderr
+                ]
                 if failed_with_errors:
-                    # Pick the best failed candidates (those that got furthest)
-                    # and carry them forward as parents for next iteration
                     failed_with_errors.sort(key=lambda c: len(c.stderr or ""))
-                    candidates_for_next_iter = failed_with_errors[:self.beam_size]
-                    logger.info("Translation iteration %d: all %d candidates failed. "
-                                "Carrying %d failed candidates forward with error feedback.",
-                                i, len(evaluated_code_candidates), len(candidates_for_next_iter))
+                    candidates_for_next_iter = failed_with_errors[: self.beam_size]
+                    logger.info(
+                        "Translation iteration %d: all %d candidates failed. "
+                        "Carrying %d failed candidates forward with error feedback.",
+                        i,
+                        len(evaluated_code_candidates),
+                        len(candidates_for_next_iter),
+                    )
                 else:
-                    # No error info at all — keep the original seed
                     candidates_for_next_iter = current_candidates
-                    logger.info("Translation iteration %d: all candidates failed with no error output. "
-                                "Retrying with original seed.", i)
+                    logger.info(
+                        "Translation iteration %d: all candidates failed with no error output. "
+                        "Retrying with original seed.",
+                        i,
+                    )
+            else:
+                # Step 4: Filter and rank the implementations
+                improving_candidates = self.filter_code_candidates(
+                    evaluated_code_candidates, cur_iter=i, num_iters=iterations
+                )
+                cands_to_filter = improving_candidates + current_candidates
+                if self.translate_drop_original and i == self.translate_iters:
+                    cands_to_filter = [
+                        c for c in cands_to_filter if c.parent is not None
+                    ]
+                candidates_for_next_iter = self.filter_code_candidates(
+                    cands_to_filter,
+                    num_to_keep=self.beam_size,
+                    cur_iter=i,
+                    num_iters=iterations,
+                )
+                candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
-            # Step 4: Filter and rank the implementations
-            improving_candidates = self.filter_code_candidates(
-                evaluated_code_candidates, cur_iter=i, num_iters=iterations
-            )
-            cands_to_filter = improving_candidates + current_candidates
-            if self.translate_drop_original and i == self.translate_iters:
-                cands_to_filter = [c for c in cands_to_filter if c.parent is not None]
-            candidates_for_next_iter = self.filter_code_candidates(
-                cands_to_filter,
-                num_to_keep=self.beam_size,
-                cur_iter=i,
-                num_iters=iterations,
-            )
-            candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
+                # Step 5: Save improving candidates
+                self.repository.add_candidates(improving_candidates, "improving")
+                logger.info(
+                    f"Saved {len(improving_candidates)} improving code candidates to repository."
+                )
 
             self.repository.add_candidates(candidates_for_next_iter, i)
             logger.info(
                 f"Filtered down to {len(candidates_for_next_iter)} code candidates."
-            )
-            logger.info(
-                f"Saved {len(improving_candidates)} improving code candidates to repository."
             )
 
             # Step 6: Save the latest candidates to disk

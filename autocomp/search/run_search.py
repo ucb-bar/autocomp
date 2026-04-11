@@ -48,7 +48,7 @@ def main():
     models = [
         "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
         "aws::zai.glm-5",
-        "aws::minimax.minimax-m2.5",
+        "aws::deepseek.v3.2",
         "aws::moonshotai.kimi-k2.5",
     ]
     code_models = None  # None = same as planning models
@@ -58,7 +58,7 @@ def main():
     # ------------------------------------------------------------------
     search_strategy = "beam"
     metric = "latency"
-    iterations = 8
+    iterations = 4
     num_plan_candidates = 4
     num_code_candidates = 2
     beam_size = 4
@@ -77,7 +77,7 @@ def main():
     # ------------------------------------------------------------------
     # Translation
     # ------------------------------------------------------------------
-    translate_iters = 0
+    translate_iters = 4
     translate_perf_threshold = 15
     translate_drop_original = True
     translate_score = True

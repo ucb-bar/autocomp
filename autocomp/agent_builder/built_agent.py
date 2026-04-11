@@ -7,7 +7,7 @@ import random
 import yaml
 from pathlib import Path
 
-from autocomp.common import logger, TESTS_DIR
+from autocomp.common import logger, HARNESSES_DIR
 from autocomp.common.llm_utils import llm_phase
 from autocomp.agents.llm_agent import LLMAgent
 from autocomp.search.prob import Prob
@@ -572,7 +572,7 @@ class BuiltLLMAgent(LLMAgent):
         if prob.test_file and Path(prob.test_file).exists():
             return Path(prob.test_file).read_text()
         # Fallback: glob for <id>_*_test.py in the tests directory
-        test_dir = TESTS_DIR / prob.prob_type
+        test_dir = HARNESSES_DIR / prob.prob_type
         if test_dir.is_dir():
             matches = list(test_dir.glob(f"{prob.prob_id}_*_test.py"))
             if matches:
