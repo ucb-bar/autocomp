@@ -1,0 +1,2 @@
+strategies:
+  - "convert high-level framework calls into NPUISA instructions."

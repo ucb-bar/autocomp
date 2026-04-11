@@ -1,0 +1,33 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: use multi-channel DMA to load independent data tiles in parallel across channels
+- strategy: overlap DMA loads with MXU weight pushing via instruction interleaving
+- strategy: pipeline matmul weight push (vmatpush.weight) with prior matmul execution on MXU
+- strategy: use dual MXU slots (mxu0/mxu1) to run independent matmuls concurrently
+- strategy: minimize delay instructions by interleaving independent vector/scalar work during MXU latency
+- strategy: use LUI+ADDI pairs to construct large VMEM addresses without extra memory loads
+- strategy: preload next matmul weights into MXU weight buffer while current matmul is in flight
+- strategy: replace vrecip+vmul with fused division approximation when precision allows
+- strategy: pack fp8 weights to maximize MRF utilization and reduce DMA transfer count
+- strategy: use vli.all for broadcast constants instead of loading from DRAM
+- strategy: schedule vmatpop immediately after matmul completion to free accumulator for next operation
+- strategy: coalesce consecutive vstore operations to adjacent VMEM addresses for single DMA store
+- strategy: overlap DMA store-back with next kernel's DMA loads using separate channels
+- strategy: reuse activation data in MRF across gate and up projections without reloading
+- strategy: exploit fp8 (float8_e4m3fn) for weights to halve DMA bandwidth vs bf16
+- strategy: batch multiple DMA waits at synchronization boundaries instead of waiting per transfer
+- strategy: use scalar register precomputation to avoid recalculating addresses inside kernel body
+- strategy: chain vmatmul with different weight buffer slots to avoid weight reload between projections
+- strategy: minimize VMEM scratchpad fragmentation by reusing freed regions for output tiles

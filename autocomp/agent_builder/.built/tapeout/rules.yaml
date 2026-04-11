@@ -1,0 +1,70 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- x0 is hardwired to zero and must never be used as a destination register for any instruction that expects a meaningful result.
+- A full 32×32 BF16 tile occupies two consecutive tensor registers (e.g., m0/m1). All instructions that operate on BF16 tiles
+  (vmatpush.acc.bf16.*, vmatpop.bf16.acc.*, vunpack.fp8.bf16, vpack.bf16.fp8) implicitly use the register pair m[vd] and m[vd+1],
+  so the base register must be even-aligned in practice and the adjacent register must not be independently clobbered.
+- All on-chip blocking transfers (vload, vstore, vmatpush.*, vmatpop.*, scalar loads/stores) fully complete before the next
+  instruction issues. No explicit delay is needed after them, but they consume pipeline cycles (e.g., vload=16 cycles, vmatpush.acc.bf16=32
+  cycles, vmatpop.bf16.acc=32 cycles).
+- Branches and jumps have exactly 2 mandatory delay slots. The two instructions immediately following a branch/jump always
+  execute regardless of the branch outcome. A branch or jump instruction must never appear in a delay-slot position — this
+  is illegal and halts execution.
+- MXU weight slots and accumulation buffers are NOT directly addressable as m registers. Data must be explicitly moved via
+  vmatpush.weight.* (tensor reg → weight slot), vmatpush.acc.* (tensor reg → accum buffer), and vmatpop.*.acc.* (accum buffer
+  → tensor reg). There is no implicit data path.
+planning:
+- Limit the scope of the plan to the selected optimization.
+- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
+- Assume a perfect memory layout — all tensors are stored contiguously in row-major order with no padding, no stride
+  mismatches, and no alignment gaps between elements. DMA transfers copy data exactly as laid out in DRAM into VMEM
+  and vice versa, so there is no need for scatter/gather, stride conversion, or reshape operations during data movement.
+  When tiling larger operations, each tile is simply a contiguous slice at the appropriate DRAM/VMEM offset.
+- VMEM is only 1 MiB total. All tensor data staged for computation (activations, weights, intermediates, outputs) must fit
+  simultaneously in VMEM, or the kernel must explicitly orchestrate DMA transfers to swap data in and out of VMEM during execution.
+- DRAM is accessible only via DMA (8 channels). Each channel supports at most one outstanding transfer; issuing a DMA command
+  to a busy channel is illegal and halts execution. Plans must track channel occupancy and insert dma.wait.chN before reusing
+  a channel.
+- VPU operates on 32×16 BF16 half-tiles (one m register = 16 BF16 lanes × 32 rows). To process a full 32×32 BF16 matmul result,
+  two separate VPU instructions are needed — one for each half-tile register in the pair.
+coding:
+- Wrap the generated code with ```python at the beginning and ``` at the end.
+- 'The test() function must return a flat List[Instruction[Any]]. Each Instruction is constructed as
+  Instruction(mnemonic, ArgsDataclass) where ArgsDataclass is one of ScalarArgs, VectorArgs, MatrixArgs, or DmaArgs.
+  Do NOT pass keyword arguments directly to Instruction (e.g., Instruction("addi", rd=1, imm=5) is WRONG).
+  Do NOT pass extra positional arguments like comment strings. All register fields (rd, rs1, rs2, vd, vs1, vs2) are
+  integers, not strings. Correct examples: Instruction("addi", ScalarArgs(rd=1, rs1=0, imm=5)),
+  Instruction("vload", VectorArgs(vd=0, rs1=1, imm12=0)),
+  Instruction("dma.load.ch<N>", DmaArgs(rd=1, rs1=4, rs2=6, channel=0)).
+  Do NOT add imports — the test harness already imports Instruction, ScalarArgs, VectorArgs, MatrixArgs, DmaArgs.'
+- 'DMA channel mnemonics use the template "dma.<op>.ch<N>" with the channel number specified in DmaArgs(channel=N).
+  Do NOT hardcode the channel into the mnemonic (e.g., "dma.load.ch0" is WRONG, use "dma.load.ch<N>" with DmaArgs(channel=0)).
+  Similarly use "dma.config.ch<N>", "dma.wait.ch<N>", "dma.store.ch<N>".'
+- 'dma.config.ch<N> only needs to be called ONCE at the start of the program, on any single channel (typically channel 0),
+  with rs1=0 (the hardwired zero register) to set the DMA base to 0. Do NOT call dma.config on every channel —
+  one call is sufficient for all channels.'
+- 'Every DMA operation (including dma.config, dma.load, dma.store) on a given channel MUST be followed by the corresponding
+  dma.wait.ch<N> for that same channel before the channel can be reused or its data can be consumed. Multiple channels
+  can have outstanding operations simultaneously, but each must be individually waited on.'
+- 'Only the actual matrix multiply instructions use MatrixArgs: vmatmul.mxu0, vmatmul.mxu1, vmatmul_acc.mxu0, vmatmul_acc.mxu1.
+  All other MXU-related instructions — vmatpush.weight.*, vmatpush.acc.*, vmatpop.*.acc.* — use VectorArgs,
+  because they move data between tensor registers and MXU internal buffers, not perform computation.'
+- 'You may use Python loops, list comprehensions, or helper variables to build the instruction list programmatically.
+  The test() function just needs to return the final flat list of Instruction objects. This avoids manually unrolling
+  repetitive sequences for tiled or looped operations.'
+- 'Non-blocking long-latency instructions (vmatmul.mxu0/mxu1: 32 cycles, VPU simple: 2 cycles, VPU non-pipelineable: 8 cycles,
+  XLU: 4 cycles) require the programmer to insert sufficient delay cycles or independent instructions before consuming their
+  results. There is no hardware hazard detection — reading results too early produces undefined/wrong data.'
+- DMA addresses (both VMEM and DRAM sides) must be 32-byte aligned and transfer sizes must be multiples of 32 bytes. vload/vstore
+  VMEM addresses must also be 32-byte aligned. Violating alignment is illegal and halts execution.
+- 'Reserved-zero field constraints must be obeyed exactly: unary VPU ops require vs2=0; XLU ops require vs2=0; vmatpush.weight.*
+  requires vs2=0 and vd[5:1]=0; vmatpush.acc.* requires vs2=0 and vd[5:1]=0; vmatpop.* requires vs1=0 and vs2[5:1]=0; vmatmul.*
+  requires vd[5:1]=0 and vs2[5:1]=0; dma.config/dma.wait require rd=x0; dma.wait also requires rs1=x0. Violating these produces
+  an illegal instruction halt.'
+- The vload address is computed as x[rs1] + (imm12 << 5), giving 32-byte granularity offsets. The imm12 is a 12-bit signed
+  value, so the offset range is -2048*32 to +2047*32 bytes relative to the base register. For addresses outside this range,
+  the base register must be updated with scalar arithmetic.
+- dma.wait.chN and delay N are frontend fences that stall decode. While stalled, no younger instructions can issue. delay
+  N stalls for exactly N additional cycles after its decode cycle. These must be accounted for in cycle-accurate scheduling
+  — they are not free NOPs.

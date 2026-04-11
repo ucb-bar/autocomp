@@ -1,0 +1,14 @@
+agent_name: tapeout
+version: '1.0'
+built_at: '2026-04-10T01:27:14+00:00'
+build:
+  main_model: us.anthropic.claude-opus-4-6-v1
+  light_model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  agent_scope: 'Translate PyTorch operator-level workloads into statically-scheduled NPU kernel programs. Target: custom NPU
+    with dual MXUs (systolic + inner-product), VPU, SALU, and multi-channel DMA. Input: torch operations (matmul, RMS norm,
+    attention, MLP, SiLU, etc.). Output: Python Program class with Instruction lists. Out of scope: host-side orchestration,
+    training.'
+  sources:
+  - type: directory
+    path: /scratch/huijaean/autocomp/third_party/npu_model/hub
+description: Auto-generated agent config for tapeout
