@@ -14,7 +14,7 @@
 | <a href="https://arxiv.org/abs/2505.18574"><b>Paper</b></a> | <a href="https://charleshong3.github.io/blog/autocomp.html"><b>Blog</b></a> | <a href="https://marketplace.visualstudio.com/items?itemName=charleshong3.autocomp-visualizer"><b>VS Code Extension</b></a> |
 </p>
 
-**Autocomp** is an extensible, portable framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
+**Autocomp** is a portable, extensible framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
 It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **[NVIDIA GPUs](https://charleshong3.github.io/blog/autocomp_update.html)**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and **[RISC-V Vector Processors](https://saturn-vectors.org/)**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
@@ -218,7 +218,7 @@ The most important parameters are:
 - `agent_name`: The optimization agent to use. See the [table above](#hardware-targets) for the right agent for each target.
 
 **Models**
-- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.2"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
+- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.4"` or `"gcp::gemini-3.1-pro"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
 - `code_models`: The list of models to use for the implementation phase, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 
 **Search**
@@ -227,7 +227,7 @@ The most important parameters are:
 - `num_plan_candidates`: Number of plans (strategies) generated per parent candidate per iteration. Default `4`.
 - `num_code_candidates`: Number of code implementations generated per plan. Default `2`.
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
-- `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
+- `dropout_menu_options`: Probability of keeping each strategy menu option in the prompt (lower = more dropout). Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
 - `skip_planning`: If `True`, skip the separate planning phase and generate optimized code in a single LLM call. The model is still prompted to reason about its approach before outputting code. Defaults to `False`.
 - `continue_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
@@ -238,7 +238,7 @@ The most important parameters are:
 
 **Translation**
 - `translate_iters`: Number of initial iterations that use translation strategies (converting code to the target representation) instead of optimization strategies. Defaults to `0` (no translation). Only works on supported agents. Built agents load strategies from `translate_menu.yaml`; see [Agent Builder docs](autocomp/agent_builder/README.md#translation-support).
-- `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of the best score (e.g., `1.2` means up to 20% worse).
+- `translate_perf_threshold`: During translation iterations, candidates are kept if their score is within this factor of their parent's score (e.g., `15` means up to 15x worse than the parent). Defaults to `15` to allow initially-slower translations that are structurally correct.
 - `translate_score`: If `True`, score translation candidates by code similarity to the original (how complete the translation is), not just latency. Defaults to `True`.
 - `translate_drop_original`: If `True`, drop the original (untranslated) candidate from the beam after the last translation iteration. Defaults to `True`.
 
@@ -246,6 +246,10 @@ The most important parameters are:
 - `menu_strategy`: Set to `"one-shot"` to dynamically generate new strategies per candidate via an LLM call, or `None` for static menu only.
 - `fine_grained_isa`: Enables two-level ISA filtering (section then subsection) to include only relevant ISA documentation in the prompt.
 - `example_rate`: Per-example probability of including an LLM-selected code example in the planning prompt.
+
+### Parameter Selection Guide
+
+See the [Parameter Selection Guide](PARAMETER_GUIDE.md) for practical guidance on choosing values for search parameters, model selection, and troubleshooting.
 
 ## 🔍 Trace Visualizer (VS Code Extension)
 
