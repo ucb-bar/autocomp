@@ -56,11 +56,13 @@ def _ensure_platform_override():
 
 
 # Template for the __main__ block injected into NKI v2 test scripts.
+# Phase A: correctness only. Finds the NEFF path and prints it.
+# Phase B (neuron-profile) runs in _evaluate_single after this process exits.
 # Placeholder __REF_FUNC__ is replaced at runtime.
 _NKI_V2_MAIN_TEMPLATE = '''
 if __name__ == "__main__":
     import os
-    import time
+    import glob as _glob
     import hashlib
     import torch
     import torch_xla
@@ -120,6 +122,11 @@ if __name__ == "__main__":
 
     TraceKernel.specialize_and_call = _patched_specialize
 
+    import re as _re
+    _cache_root = "/var/tmp/neuron-compile-cache"
+    _all_neffs = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
+    _pre_mtimes = {n: os.path.getmtime(n) for n in _all_neffs}
+
     test_result = test_nki(__REF_FUNC__, solution)
     if not test_result:
         print("Test failed")
@@ -127,64 +134,18 @@ if __name__ == "__main__":
     else:
         print("Test passed")
 
-    class _LatencyResult:
-        def __init__(self, times_us):
-            self._times = sorted(times_us)
-        def get_latency_percentile(self, pct):
-            idx = int(len(self._times) * pct / 100.0)
-            idx = min(idx, len(self._times) - 1)
-            return self._times[idx]
+    # Find ALL NEFFs with changed mtime (new file or recompiled).
+    # A single candidate can produce multiple NEFFs (e.g. mark_step splits).
+    # Report all so the evaluator can profile each and pick the slowest.
+    _all_neffs_post = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
+    _changed = []
+    for n in _all_neffs_post:
+        mt = os.path.getmtime(n)
+        if n not in _pre_mtimes or mt != _pre_mtimes[n]:
+            _changed.append(n)
 
-    class _BenchmarkResult:
-        def __init__(self, times_us):
-            self.nc_latency = _LatencyResult(times_us)
-
-    class _BenchmarkWrapper:
-        def __init__(self, func, warmup, iters):
-            self._func = func
-            self._warmup = warmup
-            self._iters = iters
-            self.benchmark_result = None
-
-        def __call__(self, *args, **kwargs):
-            device = torch_xla.device()
-            for _w in range(max(self._warmup, 4)):
-                _out = self._func(*args, **kwargs)
-                xm.mark_step()
-            xm.wait_device_ops()
-
-            _num_iters = max(self._iters, 10)
-            times_us = []
-            for _i in range(_num_iters):
-                xm.wait_device_ops()
-                _t0 = time.perf_counter()
-                _out = self._func(*args, **kwargs)
-                xm.mark_step()
-                xm.wait_device_ops()
-                _t1 = time.perf_counter()
-                times_us.append((_t1 - _t0) * 1e6)
-
-            self.benchmark_result = _BenchmarkResult(times_us)
-            median_us = sorted(times_us)[len(times_us)//2]
-            p99_us = sorted(times_us)[int(len(times_us)*0.99)]
-            print(f"Latency: {median_us/1000.0:.3f} ms (median)")
-            print(f"Latency: {p99_us/1000.0:.3f} ms (P99)")
-
-    def _mock_benchmark(warmup=2, iters=10):
-        def _decorator(func):
-            return _BenchmarkWrapper(func, warmup, iters)
-        return _decorator
-
-    nki.benchmark = _mock_benchmark
-
-    try:
-        benchmark_nki(solution)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print("Test failed")
-        print(f"Benchmark error: {e}", flush=True)
-        exit(1)
+    for _np in _changed:
+        print(f"NEFF_PATH={_np}")
 '''
 
 
@@ -222,6 +183,83 @@ class TrnEvalBackend(EvalBackend):
                     return round(float(parts), 3)
                 except ValueError:
                     continue
+        return None
+
+    def _benchmark_via_neuron_profile(
+        self, neff_path: str, temp_dir: pathlib.Path, idx,
+        num_exec: int = 20, profile_nth: int = 10, core_id: int = None,
+    ) -> float | None:
+        """Benchmark a NEFF using neuron-profile capture + view.
+
+        Runs the NEFF on-device num_exec times, profiles every profile_nth
+        execution, and returns the steady-state total_time in milliseconds.
+        """
+        ntff_path = str(temp_dir / f"profile_{idx}.ntff")
+        capture_cmd = [
+            "neuron-profile", "capture",
+            "-n", neff_path,
+            "-s", ntff_path,
+            "--num-exec", str(num_exec),
+            "--profile-nth-exec", str(profile_nth),
+        ]
+        env = None
+        if core_id is not None:
+            env = {**os.environ, "NEURON_RT_VISIBLE_CORES": str(core_id)}
+        try:
+            p_cap = subprocess.run(
+                capture_cmd, capture_output=True, text=True,
+                timeout=120, env=env,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(f"neuron-profile capture timed out for code {idx}")
+            return None
+        if p_cap.returncode != 0:
+            logger.error(
+                f"neuron-profile capture failed for code {idx}: "
+                f"{p_cap.stderr[:300]}"
+            )
+            return None
+
+        # neuron-profile writes <base>_exec_N.ntff (where base = session minus .ntff ext)
+        ntff_base = ntff_path.rsplit(".ntff", 1)[0]
+        steady_ntff = f"{ntff_base}_exec_{num_exec}.ntff"
+        if not os.path.exists(steady_ntff):
+            steady_ntff = f"{ntff_base}_exec_{profile_nth}.ntff"
+        if not os.path.exists(steady_ntff):
+            logger.error(f"No NTFF file found after profiling code {idx}")
+            return None
+
+        view_cmd = [
+            "neuron-profile", "view",
+            "-n", neff_path,
+            "-s", steady_ntff,
+            "--output-format=summary-json",
+        ]
+        try:
+            p_view = subprocess.run(
+                view_cmd, capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(f"neuron-profile view timed out for code {idx}")
+            return None
+
+        for line in p_view.stdout.split("\n"):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    data = json.loads(line)
+                    key = list(data.keys())[0]
+                    total_time_sec = data[key].get("total_time", 0)
+                    total_time_ms = total_time_sec * 1000.0
+                    logger.info(
+                        f"Code {idx} neuron-profile total_time: "
+                        f"{total_time_ms:.3f} ms"
+                    )
+                    return round(total_time_ms, 3)
+                except (json.JSONDecodeError, IndexError, KeyError) as e:
+                    logger.error(f"Failed to parse profile JSON: {e}")
+                    return None
+        logger.error(f"No JSON summary found in neuron-profile view output")
         return None
 
     def _extract_ref_func_name(self, test_code: str) -> str:
@@ -592,23 +630,53 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
     #  Fallback: single-implementation evaluation                         #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _strip_v1_imports(code_str: str) -> str:
+        """Remove neuronxcc.nki imports that would shadow NKI v2.
+
+        Also strips duplicate nki/nl/nisa imports since the harness
+        already provides them.
+        """
+        _DUP_IMPORT_PREFIXES = (
+            "import neuronxcc.nki",
+            "from neuronxcc.nki",
+            "import neuronxcc",
+            "import nki.language as",
+            "import nki.isa as",
+            "from nki.language import",
+            "from nki.isa import",
+            "from nki import",
+        )
+        lines = code_str.split("\n")
+        cleaned = []
+        for line in lines:
+            stripped = line.strip()
+            if any(stripped.startswith(p) for p in _DUP_IMPORT_PREFIXES):
+                continue
+            if stripped == "import nki":
+                continue
+            cleaned.append(line)
+        return "\n".join(cleaned)
+
     def _evaluate_single(
         self, test_code: str, code_str: str, temp_dir: pathlib.Path, idx: int,
         core_id: int = None,
     ) -> dict:
-        """Evaluate a single implementation in its own subprocess (fallback).
+        """Evaluate a single implementation in its own subprocess.
 
-        For NKI v2 tests, patches the __main__ block to use torch-based
-        timing instead of nki.benchmark. For NKI v1 tests, runs as-is.
+        For NKI v2 tests, runs correctness in a subprocess then uses
+        neuron-profile to benchmark the compiled NEFF separately.
+        For NKI v1 tests, runs as-is.
         """
+        is_v1 = _test_is_nki_v1(test_code)
+        if not is_v1:
+            code_str = self._strip_v1_imports(code_str)
         test_code_i = test_code.replace("# SUBSTITUTE HERE", code_str)
         ref_func_name = self._extract_ref_func_name(test_code)
 
-        # NKI v1 tests work out of the box — their __main__ uses
-        # nki.benchmark from neuronxcc.nki which is functional.
         is_v1 = _test_is_nki_v1(test_code)
 
-        # Only patch __main__ for NKI v2 tests that need torch-based timing.
+        # Only patch __main__ for NKI v2 tests.
         if not is_v1 and "if __name__" in test_code_i:
             main_idx = test_code_i.index("if __name__")
             _MAIN_TEMPLATE = _NKI_V2_MAIN_TEMPLATE.replace(
@@ -636,12 +704,6 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                 "stderr": "Timed out after 600 seconds",
             }
 
-        with open(temp_dir / f"code_{idx}_output.txt", "w") as f:
-            f.write("=== STDOUT ===\n")
-            f.write(p.stdout)
-            f.write("\n=== STDERR ===\n")
-            f.write(p.stderr)
-
         result_dict = {
             "correct": False,
             "latency": None,
@@ -650,16 +712,98 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         }
 
         if p.returncode != 0:
+            with open(temp_dir / f"code_{idx}_output.txt", "w") as f:
+                f.write("=== STDOUT ===\n" + p.stdout + "\n=== STDERR ===\n" + p.stderr)
             logger.error(f"Code {idx} failed to run")
             return result_dict
 
-        latency = self._extract_latency(p.stdout)
+        if "Test passed" not in p.stdout:
+            with open(temp_dir / f"code_{idx}_output.txt", "w") as f:
+                f.write("=== STDOUT ===\n" + p.stdout + "\n=== STDERR ===\n" + p.stderr)
+            logger.error(f"Code {idx} correctness test failed")
+            return result_dict
+
+        # For NKI v2: benchmark via neuron-profile now that the subprocess
+        # has exited and NeuronCores are free.
+        if not is_v1:
+            # Discover NEFFs for this candidate.
+            # Parse Neuron runtime log (per-process, immune to cross-core
+            # cache pollution from the shared compile cache).
+            combined_output = p.stdout + "\n" + p.stderr
+            neff_paths = []
+
+            cached = re.findall(
+                r'Using a cached neff at\s+(\S+model\.neff)', combined_output
+            )
+            compiled_mods = re.findall(
+                r'Compilation Successfully Completed for model\.(MODULE_\d+\+\w+)\.',
+                combined_output,
+            )
+            # Resolve compiled MODULE hashes to NEFF file paths
+            compiled_paths = []
+            for mod in dict.fromkeys(compiled_mods):
+                import glob as _g
+                cands = _g.glob(os.path.join(
+                    "/var/tmp/neuron-compile-cache", "**",
+                    mod, "model.neff",
+                ), recursive=True)
+                if cands:
+                    compiled_paths.append(cands[0])
+
+            # Merge both sources, deduplicate, prefer cache-hit paths
+            for p_ in cached + compiled_paths:
+                if p_ not in neff_paths:
+                    neff_paths.append(p_)
+
+            # Last-resort fallback: mtime-based NEFF_PATH from template
+            # (can pick up NEFFs from other cores, so only use if runtime
+            # log parsing found nothing).
+            if not neff_paths:
+                for line in p.stdout.split("\n"):
+                    if line.startswith("NEFF_PATH="):
+                        path = line.split("=", 1)[1].strip()
+                        if path and path not in neff_paths:
+                            neff_paths.append(path)
+
+            # Profile all discovered NEFFs and sum their total_times.
+            # A single candidate can produce multiple NEFFs (graph splits via
+            # mark_step, etc.) that run sequentially — the total on-device
+            # cost is the sum.
+            neff_paths = [p_ for p_ in neff_paths if os.path.exists(p_)]
+            if neff_paths:
+                total_latency = 0.0
+                all_profiled = True
+                for ni, neff_p in enumerate(neff_paths):
+                    lat = self._benchmark_via_neuron_profile(
+                        neff_p, temp_dir, f"{idx}_neff{ni}", core_id=core_id
+                    )
+                    if lat is not None:
+                        total_latency += lat
+                    else:
+                        all_profiled = False
+                if all_profiled and total_latency > 0:
+                    total_latency = round(total_latency, 3)
+                    p_stdout_with_latency = p.stdout + f"\nLatency: {total_latency:.3f} ms\n"
+                    result_dict["stdout"] = p_stdout_with_latency
+                if len(neff_paths) > 1:
+                    logger.warning(
+                        f"Code {idx}: candidate produced {len(neff_paths)} NEFFs "
+                        f"(graph split). Summed latency={total_latency}ms. "
+                        f"Single-NEFF candidates are preferred."
+                    )
+            else:
+                logger.warning(f"Code {idx}: could not find NEFF for profiling")
+
+        with open(temp_dir / f"code_{idx}_output.txt", "w") as f:
+            f.write("=== STDOUT ===\n" + result_dict["stdout"] + "\n=== STDERR ===\n" + p.stderr)
+
+        result_dict["correct"] = True
+        latency = self._extract_latency(result_dict["stdout"])
         if latency is None:
             logger.error(f"Code {idx} did not produce latency output")
             return result_dict
 
         logger.info(f"Code {idx} latency: {latency}")
-        result_dict["correct"] = True
         result_dict["latency"] = latency
         return result_dict
 
@@ -745,14 +889,12 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
     def evaluate_code(
         self, prob: Prob, code_strs: list[str], simulator: str
     ) -> List[dict]:
-        """Evaluate implementations using parallel NEFF compilation + libnrt.
+        """Evaluate implementations, parallelizing across NeuronCores.
 
-        Phase 1 compiles all implementations in parallel (CPU-bound), saving
-        NEFFs to disk.  Phase 2 loads each NEFF via libnrt (no
-        recompilation) for correctness and latency benchmarking.
-
-        Falls back to individual subprocess evaluation on infrastructure
-        errors.
+        Each candidate runs correctness + neuron-profile profiling on a
+        dedicated NeuronCore.  Candidates assigned to the same core run
+        sequentially (profiling needs exclusive core access), but
+        different cores operate in parallel.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_dir = pathlib.Path(__file__).parent / "tmp_files" / "trn_eval" / timestamp
@@ -780,29 +922,37 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         if results is not None:
             return results
 
-        # NKI v2 (or v1 fallback): run _evaluate_single per implementation,
-        # parallelized across NeuronCores.
-        num_cores = self._detect_num_cores() if not is_v1 else 1
-        max_parallel = min(num_cores, len(code_strs)) if num_cores > 0 else 1
+        # NKI v2: parallelize across NeuronCores.
+        num_cores = self._detect_num_cores()
+        logger.info(
+            f"Evaluating {len(code_strs)} candidates across {num_cores} NeuronCore(s)"
+        )
 
-        if max_parallel > 1:
-            logger.info(f"Evaluating {len(code_strs)} implementations in parallel "
-                        f"({max_parallel} cores)")
-            results = [None] * len(code_strs)
-            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
-                futures = {}
-                for i, code_str in enumerate(code_strs):
-                    core_id = i % num_cores
-                    futures[executor.submit(
-                        self._evaluate_single, test_code, code_str,
-                        temp_dir, i, core_id
-                    )] = i
-                for future in as_completed(futures):
-                    idx = futures[future]
-                    results[idx] = future.result()
-            return results
+        results = [None] * len(code_strs)
 
-        results = []
-        for i, code_str in enumerate(code_strs):
-            results.append(self._evaluate_single(test_code, code_str, temp_dir, i))
+        # Partition candidates into per-core queues (round-robin)
+        core_queues: list[list[int]] = [[] for _ in range(num_cores)]
+        for i in range(len(code_strs)):
+            core_queues[i % num_cores].append(i)
+
+        def _run_core_queue(core_id: int, indices: list[int]):
+            """Run all candidates assigned to this core sequentially."""
+            for idx in indices:
+                results[idx] = self._evaluate_single(
+                    test_code, code_strs[idx], temp_dir, idx, core_id=core_id
+                )
+
+        if num_cores <= 1 or len(code_strs) <= 1:
+            _run_core_queue(0, list(range(len(code_strs))))
+        else:
+            with ThreadPoolExecutor(max_workers=num_cores) as executor:
+                futures = []
+                for core_id, indices in enumerate(core_queues):
+                    if indices:
+                        futures.append(
+                            executor.submit(_run_core_queue, core_id, indices)
+                        )
+                for f in futures:
+                    f.result()
+
         return results
