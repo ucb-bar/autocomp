@@ -33,8 +33,8 @@ NUM_TRIALS = int(os.getenv("AUTOCOMP_TPU_NUM_TRIALS", "10"))
 # ---------------------------------------------------------------------------
 
 def _create_inputs():
-    x = jax.random.normal(jax.random.PRNGKey(0), (M, K), dtype=DTYPE)
-    y = jax.random.normal(jax.random.PRNGKey(1), (K, N), dtype=DTYPE)
+    x = jax.random.normal(jax.random.key(0), (M, K), dtype=DTYPE)
+    y = jax.random.normal(jax.random.key(1), (K, N), dtype=DTYPE)
     return (x, y)
 
 

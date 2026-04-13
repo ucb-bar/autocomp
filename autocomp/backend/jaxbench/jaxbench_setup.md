@@ -2,9 +2,7 @@
 
 ## JAXBench
 
-[JAXBench](https://github.com/aryatschand/JAXBench) is a benchmark suite for JAX and TPU kernel optimization. It contains operator-level workloads from LLM architectures.
-
-Clone the repo:
+[JAXBench](https://github.com/aryatschand/JAXBench) is a benchmark suite for JAX and TPU kernel optimization. It contains 50 operator-level workloads from LLM architectures, with both JAX baseline and Pallas-optimized variants.
 
 ```sh
 git clone https://github.com/aryatschand/JAXBench
@@ -12,81 +10,74 @@ git clone https://github.com/aryatschand/JAXBench
 
 ## Autocomp
 
-Clone Autocomp and install:
-
 ```sh
 git clone https://github.com/ucb-bar/autocomp
 cd autocomp
 pip install -e .
 ```
 
-By default, the backend looks for `JAXBench/` as a sibling directory to the Autocomp repo root. To override, set the `JAXBENCH_DIR` environment variable:
+By default, the backend looks for `JAXBench/` as a sibling directory to the Autocomp repo root. To override:
 
 ```sh
 export JAXBENCH_DIR=/path/to/JAXBench
 ```
 
-## Available Problem Types
+## Workload Structure
 
-| `prob_type` | Workloads | Description |
+All workloads live under `JAXBench/benchmark/`, each in a numbered directory:
+
+```
+benchmark/
+  1p_Flash_Attention/
+    baseline.py      # vanilla JAX implementation
+    optimized.py     # Pallas TPU kernel (where available)
+  18k_Conv2D_ReLU_BiasAdd/
+    baseline.py      # KernelBench fused ops (baseline only)
+```
+
+Each workload file defines `CONFIG`, `create_inputs()`, `workload()`, and `benchmark()`.
+
+## Problem Types
+
+| `prob_type` | Variant used | Description |
 |---|---|---|
-| `jaxbench-pallas` | 6 | Upstream Pallas TPU kernels from JAX 0.6.2 (flash attention, matmul, etc.) |
-| `jaxbench-real` | 36 | Hand-written ops from 7 LLM families + attention variants (from [MaxText](https://github.com/AI-Hypercomputer/maxtext)) |
-| `jaxbench-priority` | 10 | Priority kernels selected for optimization |
-| `jaxbench-tokamax` | 12 | TPU kernel benchmarks from [openxla/tokamax](https://github.com/openxla/tokamax) |
-| `jaxkernelbench` | 200 | LLM-translated PyTorch→JAX operators (from [KernelBench](https://github.com/ScalingIntelligence/KernelBench)) |
+| `jaxbench-pallas` | `optimized.py` | Pallas-optimized kernel as starting point |
+| `jaxbench-baseline` | `baseline.py` | Vanilla JAX baseline as starting point |
+| `jaxbench` | `baseline.py` | Alias for `jaxbench-baseline` |
 
-`prob_id` is the workload filename without `.py` (e.g., `llama3_8b_gqa`, `mixtral_8x7b_moe`).
+`prob_id` is the workload directory name (e.g., `7p_Ragged_Paged_Attention`, `18k_Conv2D_ReLU_BiasAdd`).
 
 ## Running
 
-Set the following in `run_search.py`:
+Set the following in `run_pallas.py` or `run_search.py`:
 
 ```python
 backend_name = "jaxbench"
 agent_name = "built:tpu-v6e"
 hw_config = TpuHardwareConfig("v6e-1")
-prob_type = "jaxbench-pallas"  # or jaxbench-pallas, jaxbench-priority, jaxbench-tokamax, jaxkernelbench
-prob_id = "flash_attention"
+prob_type = "jaxbench-pallas"
+prob_id = "7p_Ragged_Paged_Attention"
 ```
 
-The backend reuses the TPU eval transport layer (gcloud or direct SSH). See [tpu_setup.md](../tpu/tpu_setup.md) for TPU VM configuration.
+The backend reuses the TPU eval transport layer (gcloud or direct SSH) and automatically installs JAX 0.9.2 on the TPU VM if needed. See [tpu_setup.md](../tpu/tpu_setup.md) for TPU VM creation and configuration.
 
 ## How It Works
 
-Each JAXBench workload file defines `create_inputs()` and `workload()`. The backend:
+The backend extracts `create_inputs()` and `workload()` from the workload file, gives the code to the LLM, and uploads generated implementations to the TPU VM via `jaxbench_runner.py` for correctness checking (`jnp.allclose`) and benchmarking.
 
-1. Extracts the workload code and gives it to the LLM as the starting point.
-2. The LLM generates optimized implementations that redefine `workload()`.
-3. Implementations are uploaded to the TPU VM alongside `jaxbench_runner.py`, which handles correctness checking (`jnp.allclose`) and benchmarking.
+## Pallas Block Size Autotuning
 
-Correctness is checked using `jnp.allclose(ref_out, impl_out, atol=atol, rtol=rtol)`.
-Tolerances default to `atol=3.125e-2` and `rtol=1e-2` (overridable via `AUTOCOMP_JAXBENCH_ATOL`
-and `AUTOCOMP_JAXBENCH_RTOL` environment variables). The `pallas_kernels` workloads specify
-tighter per-kernel tolerances in their `CONFIG` dicts, matching the upstream JAX tests.
-
-## Recommended Workflow
-
-### Pallas kernel block size autotuning
-
-For `jaxbench-pallas` workloads, each kernel file includes a `TUNED_PARAMS` dict that controls
-block sizes. The checked-in values are tuned for TPU v6e-1. **If you are using a different TPU
-type, you must re-run the autotuner first** — optimal block sizes vary significantly across TPU
-generations, and starting from the wrong sizes can leave 5-70x performance on the table.
+For `jaxbench-pallas` workloads, each `optimized.py` includes a `TUNED_PARAMS` dict that controls
+Checked-in `TUNED_PARAMS` are for TPU v6e-1 / JAX 0.9.2. **Re-run the autotuner for different TPU types** — wrong block sizes can cost 5-70x performance.
 
 ```sh
-# Upload kernel files + autotuner to TPU VM, then:
-cd /tmp
-python3 autotune_block_sizes.py --apply    # tunes all 6 kernels, writes results back to files
+# On the TPU VM:
+python3.11 benchmark/tune_pallas.py
 ```
 
-See the [pallas_kernels README](https://github.com/aryatschand/JAXBench/blob/main/pallas_kernels/README.md) for details.
+## Translation Workflow
 
-### Translation before optimization
+For vanilla JAX workloads:
 
-For workloads that are vanilla JAX code, if you would like to translate them to Pallas kernels, we recommend a two-phase approach:
-
-1. **Translation**: Run with `translate_iters > 0` to first convert the JAX workload into a Pallas kernel. Inspect the outputs to verify the translation is complete.
-2. **Optimization**: Use `continue_from` to load the translated candidates and optimize from there.
-
-This avoids wasting optimization iterations on code that hasn't been fully translated to Pallas yet.
+1. **Translation**: Run with `translate_iters > 0` to convert to Pallas.
+2. **Optimization**: Use `continue_from` to optimize from the translated code.

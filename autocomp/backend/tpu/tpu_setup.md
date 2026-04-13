@@ -14,9 +14,7 @@ gcloud alpha compute tpus tpu-vm create <tpu_name> \
     --project=<project>
 ```
 
-When using **gcloud** transport (the default), the backend will auto-create the VM if it doesn't exist, using `AUTOCOMP_TPU_PROJECT`, `AUTOCOMP_TPU_ACCELERATOR_TYPE`, and `AUTOCOMP_TPU_RUNTIME_VERSION`.
-
-For **direct SSH** (e.g. a pre-provisioned or tunneled VM):
+With **gcloud** transport (default), the backend auto-creates the VM using `AUTOCOMP_TPU_PROJECT`, `AUTOCOMP_TPU_ACCELERATOR_TYPE`, and `AUTOCOMP_TPU_RUNTIME_VERSION`. For **direct SSH**:
 
 ```sh
 export AUTOCOMP_TPU_TRANSPORT=ssh
@@ -24,7 +22,7 @@ export AUTOCOMP_TPU_SSH_HOST=10.0.0.42
 export AUTOCOMP_TPU_SSH_USER=myuser
 ```
 
-When `AUTOCOMP_TPU_TRANSPORT=auto` (the default), the backend picks `ssh` if `AUTOCOMP_TPU_SSH_HOST` is set, otherwise `gcloud`.
+The backend uses Python 3.11 (override with `AUTOCOMP_TPU_PYTHON`) and automatically installs `jax[tpu]==0.9.2` on the first run if the correct version is not present. Force reinstall with `AUTOCOMP_TPU_FORCE_PIP=1`.
 
 ## How Evaluation Works
 

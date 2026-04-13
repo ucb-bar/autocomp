@@ -26,13 +26,13 @@ RUNNER_SCRIPT = _THIS_DIR / "jaxbench_runner.py"
 
 _jaxbench_env = os.getenv("JAXBENCH_DIR", "")
 JAXBENCH_DIR = pathlib.Path(_jaxbench_env) if _jaxbench_env else _THIS_DIR.parent.parent.parent.parent / "JAXBench"
+BENCHMARK_DIR = JAXBENCH_DIR / "benchmark"
 
-_SUITE_DIRS = {
-    "jaxbench-real": JAXBENCH_DIR / "real_workloads",
-    "jaxbench-priority": JAXBENCH_DIR / "priority_kernels",
-    "jaxbench-pallas": JAXBENCH_DIR / "pallas_kernels",
-    "jaxbench-tokamax": JAXBENCH_DIR / "tokamax",
-    "jaxkernelbench": JAXBENCH_DIR / "jaxkernelbench",
+# Maps prob_type to which file to use as the workload (baseline or optimized)
+_VARIANT_FOR_PROB_TYPE = {
+    "jaxbench-pallas": "optimized",
+    "jaxbench-baseline": "baseline",
+    "jaxbench": "baseline",
 }
 
 DELIM_START = "===JAXBENCH_IMPL_START==="
@@ -40,27 +40,36 @@ DELIM_END = "===JAXBENCH_IMPL_END==="
 
 
 def _find_workload_file(prob: Prob) -> pathlib.Path:
-    """Locate the JAXBench workload .py file for a Prob."""
-    suite_dir = _SUITE_DIRS.get(prob.prob_type)
-    if suite_dir is None:
-        raise ValueError(
-            f"Unknown JAXBench prob_type '{prob.prob_type}'. "
-            f"Valid: {list(_SUITE_DIRS)}"
-        )
-    matches = list(suite_dir.rglob(f"{prob.prob_id}.py"))
-    if not matches:
+    """Locate the JAXBench workload .py file for a Prob.
+
+    prob_id should be the workload directory name (e.g., "7p_Ragged_Paged_Attention").
+    prob_type selects the variant: "jaxbench-pallas" -> optimized.py, others -> baseline.py.
+    """
+    variant = _VARIANT_FOR_PROB_TYPE.get(prob.prob_type, "baseline")
+    workload_dir = BENCHMARK_DIR / str(prob.prob_id)
+    if not workload_dir.is_dir():
+        # Try fuzzy match: prob_id might be a suffix like "ragged_paged_attention"
+        for d in BENCHMARK_DIR.iterdir():
+            if d.is_dir() and str(prob.prob_id).lower().replace("_", "") in d.name.lower().replace("_", ""):
+                workload_dir = d
+                break
+    target = workload_dir / f"{variant}.py"
+    if not target.exists():
+        target = workload_dir / "baseline.py"
+    if not target.exists():
         raise FileNotFoundError(
-            f"No workload file '{prob.prob_id}.py' found under {suite_dir}"
+            f"No workload file found for {prob.prob_type}/{prob.prob_id} "
+            f"(tried {workload_dir / f'{variant}.py'} and {workload_dir / 'baseline.py'})"
         )
-    return matches[0]
+    return target
 
 
 def extract_workload_code(prob: Prob) -> str:
     """Return a minimal workload snippet for the LLM (no harness boilerplate).
 
-    For Model-style files (jaxkernelbench): extracts the forward body into a
+    For Model-style files: extracts the forward body into a
     standalone ``workload()`` function with input shapes as comments.
-    For workload-style files (real_workloads/tokamax): returns imports, CONFIG,
+    For workload-style files: returns imports, CONFIG,
     create_inputs, and the workload function only.
     """
     import textwrap
@@ -276,7 +285,7 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
         # 4. Build remote command
         impl_args = " ".join(impl_remote_paths)
         setup_cmd = self._jax_setup_command() if not self._jax_setup_done else ""
-        run_python = f"python3 jaxbench_runner.py {remote_workload} {impl_args}"
+        run_python = f"{self._python_bin} jaxbench_runner.py {remote_workload} {impl_args}"
 
         stdout_f = f"{remote_dir}/stdout.txt"
         stderr_f = f"{remote_dir}/stderr.txt"
@@ -348,10 +357,9 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
 
     # ── SSH/SCP helpers (thin wrappers around TpuHardwareBackend) ─────────
 
-    @staticmethod
-    def _jax_setup_command() -> str:
-        check = "python3 -c 'import jax; import jaxlib' >/dev/null 2>&1"
-        install = "pip install -U 'jax[tpu]' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
+    def _jax_setup_command(self) -> str:
+        check = f"{self._python_bin} -c 'import jax; assert jax.__version__==\"0.9.2\", jax.__version__' >/dev/null 2>&1"
+        install = f"{self._python_bin} -m pip install -U 'jax[tpu]==0.9.2' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
         return f"({check}) || ({install}) 2>&1; "
 
     def _scp(self, local_path: pathlib.Path, remote_path: str) -> int:
