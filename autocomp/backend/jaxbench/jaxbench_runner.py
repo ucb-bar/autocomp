@@ -5,19 +5,23 @@ Usage:
     python jaxbench_runner.py <workload.py> <impl_0.py> [impl_1.py ...]
 
 For each implementation file, imports its `workload()` function, checks correctness
-against the reference workload from the workload file, benchmarks, and prints
-delimited JSON results to stdout.
+against the reference workload from the workload file, benchmarks using device-side
+profiling (Perfetto traces), and prints delimited JSON results to stdout.
 """
+import glob
+import gzip
 import importlib.util
 import json
 import multiprocessing
 import os
+import shutil
 import sys
 import time
 import traceback
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.experimental import pallas as pl  # noqa: F401 — available for implementations
 from jax.experimental.pallas import tpu as pltpu  # noqa: F401
 
@@ -37,6 +41,27 @@ def _load_module(path: str, name: str):
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+def _extract_device_times(trace_dir):
+    """Extract device-side kernel times (microseconds) from a Perfetto trace."""
+    perfetto_files = glob.glob(f"{trace_dir}/**/perfetto_trace.json.gz", recursive=True)
+    if not perfetto_files:
+        return None
+    try:
+        with gzip.open(perfetto_files[0], 'rt') as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    events = data.get('traceEvents', data) if isinstance(data, dict) else data
+    kernel_times = []
+    for e in events:
+        if not isinstance(e, dict) or e.get('dur', 0) <= 0:
+            continue
+        name = e.get('name', '')
+        if name.startswith('jit_') and '(' in name:
+            kernel_times.append(e['dur'])
+    return kernel_times if kernel_times else None
 
 
 def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
@@ -69,17 +94,41 @@ def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
         denom = jnp.maximum(jnp.max(jnp.abs(ref_out)), 1e-6)
         max_rel_diff = float(jnp.max(jnp.abs(ref_out - impl_out) / denom))
 
-        times_ms = []
-        for _ in range(NUM_TRIALS):
-            t0 = time.perf_counter()
-            with jax.named_scope('bench_kernel'):
-                out = impl_fn(*inputs)
-            jax.block_until_ready(out)
-            times_ms.append((time.perf_counter() - t0) * 1000.0)
+        # Device-side profiling via Perfetto traces
+        trace_dir = f"/tmp/jaxbench_runner_trace_{os.getpid()}"
+        if os.path.exists(trace_dir):
+            shutil.rmtree(trace_dir)
+        os.makedirs(trace_dir, exist_ok=True)
 
-        times_ms.sort()
+        with jax.profiler.trace(trace_dir, create_perfetto_link=False, create_perfetto_trace=True):
+            for _ in range(NUM_TRIALS):
+                with jax.named_scope('bench_kernel'):
+                    out = impl_fn(*inputs)
+                jax.block_until_ready(out)
+
+        kernel_times_us = _extract_device_times(trace_dir)
+        shutil.rmtree(trace_dir, ignore_errors=True)
+
+        if kernel_times_us and len(kernel_times_us) >= NUM_TRIALS:
+            times_ms = [t / 1000.0 for t in kernel_times_us[:NUM_TRIALS]]
+            timing_method = "device_profiler"
+        else:
+            # Fallback to host-side timing
+            times_ms = []
+            for _ in range(NUM_TRIALS):
+                t0 = time.perf_counter()
+                with jax.named_scope('bench_kernel'):
+                    out = impl_fn(*inputs)
+                jax.block_until_ready(out)
+                times_ms.append((time.perf_counter() - t0) * 1000.0)
+            timing_method = "wall_clock_fallback"
+
+        times_arr = np.array(times_ms)
+        median_ms = float(np.median(times_arr))
+
         result["correct"] = True
-        result["latency"] = round(times_ms[len(times_ms) // 2], 3)
+        result["latency"] = round(median_ms, 3)
+        result["timing_method"] = timing_method
         result["all_times_ms"] = [round(t, 3) for t in times_ms]
         result["max_diff"] = round(max_diff, 6)
         result["max_rel_diff"] = round(max_rel_diff, 6)

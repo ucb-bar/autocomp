@@ -285,7 +285,11 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
         # 4. Build remote command
         impl_args = " ".join(impl_remote_paths)
         setup_cmd = self._jax_setup_command() if not self._jax_setup_done else ""
-        run_python = f"{self._python_bin} jaxbench_runner.py {remote_workload} {impl_args}"
+        run_python = (
+            f"AUTOCOMP_TPU_NUM_WARMUP={os.getenv('AUTOCOMP_TPU_NUM_WARMUP', '5')} "
+            f"AUTOCOMP_TPU_NUM_TRIALS={os.getenv('AUTOCOMP_TPU_NUM_TRIALS', '100')} "
+            f"{self._python_bin} jaxbench_runner.py {remote_workload} {impl_args}"
+        )
 
         stdout_f = f"{remote_dir}/stdout.txt"
         stderr_f = f"{remote_dir}/stderr.txt"
