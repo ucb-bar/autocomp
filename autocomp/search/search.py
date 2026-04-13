@@ -1313,6 +1313,13 @@ class BeamSearchStrategy(SearchStrategy):
                             for c in correct_candidates
                         ],
                     )
+                    best_ts = max(c.translation_score for c in correct_candidates)
+                    if best_ts >= 10.0 and i < self.translate_iters:
+                        logger.info(
+                            "Translation score %.1f reached 10.0 — ending translation early (iter %d of %d).",
+                            best_ts, i, self.translate_iters,
+                        )
+                        self.translate_iters = i
 
             # Step 4: Filter and rank the implementations
             improving_candidates = self.filter_code_candidates(

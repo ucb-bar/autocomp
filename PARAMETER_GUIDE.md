@@ -6,6 +6,8 @@ Practical guidance for choosing Autocomp search parameters. See the [main README
 
 `iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies (converting code to the target representation, e.g., PyTorch → NKI); the remaining `iterations - translate_iters` iterations use optimization strategies. For simple kernels (single matmul, elementwise ops), use `translate_iters=2` with `iterations=6` (2 translation + 4 optimization). For complex kernels (fused multi-op pipelines), use `translate_iters=3` with `iterations=7` or `8`. Without translation, set `translate_iters=0` and `iterations=4`–`6`.
 
+When `translate_score=True`, translation ends early if any candidate reaches a perfect translation score (10.0). The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` (e.g., 4) is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
+
 ## `translate_perf_threshold`
 
 This controls how much slower a translated candidate can be versus its parent and still survive. Use `15` (the default) for translation iterations where the initial translation is expected to be much slower than the source (e.g., an unoptimized NKI kernel vs. PyTorch). Do not set this too low — early translations are often significantly slower than compiler-generated code and would be incorrectly pruned. For non-translation runs this parameter has no effect.
