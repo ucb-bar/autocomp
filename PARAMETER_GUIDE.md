@@ -22,16 +22,15 @@ Use 3–4 diverse models for best results. Model diversity matters more than cou
 |----------|-------------|-------|
 | OpenAI | `"openai::gpt-5.4"` | Flagship model, strong at complex reasoning and coding. 1M context. |
 | OpenAI | `"openai::gpt-5.4-mini"` | Strongest mini model for coding and high-volume workloads. 400k context. |
-| Anthropic (direct) | `"anthropic::claude-sonnet-4-6"` | Good balance of speed and intelligence. 1M context. |
 | Anthropic (direct) | `"anthropic::claude-opus-4-6"` | Strongest Anthropic model (4.5 is similar). 1M context. |
+| Anthropic (direct) | `"anthropic::claude-sonnet-4-6"` | Good balance of speed and intelligence. 1M context. |
 | AWS Bedrock (Claude) | `"aws::us.anthropic.claude-opus-4-6-v1"` | Opus 4.6 on Bedrock; uses Anthropic SDK adapter. |
-| AWS Bedrock (Claude) | `"aws::us.anthropic.claude-sonnet-4-6"` | Sonnet 4.6 on Bedrock. |
 | AWS Bedrock (Claude) | `"aws::us.anthropic.claude-opus-4-5-20251101-v1:0"` | Opus 4.5 on Bedrock (still available, similar to 4.6). |
 | AWS Bedrock (open) | `"aws::zai.glm-5"` | GLM-5; strong at code, available via Converse API. |
-| AWS Bedrock (open) | `"aws::moonshotai.kimi-k2.5"` | Kimi K2.5; good diversity pick. |
-| AWS Bedrock (open) | `"aws::minimax.minimax-m2.5"` | MiniMax M2.5; adds model diversity. |
-| Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. Still in preview. |
-| Google | `"gcp::gemini-3.1-flash-lite-preview"` | Fast and cheap, good for high-volume generation. Still in preview. |
+| AWS Bedrock (open) | `"aws::moonshotai.kimi-k2.5"` | Kimi K2.5; adds diversity. |
+| AWS Bedrock (open) | `"aws::minimax.minimax-m2.5"` | MiniMax M2.5; adds diversity. |
+| Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. |
+| Google | `"gcp::gemini-3.1-flash-lite-preview"` | Fast and cheap, adds diversity. |
 
 An example 4-model mix: `"openai::gpt-5.4"`, `"aws::us.anthropic.claude-opus-4-6-v1"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
 
