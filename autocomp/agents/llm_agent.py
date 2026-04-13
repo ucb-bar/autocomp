@@ -634,16 +634,23 @@ class LLMAgent:
         return self._run_edits_pipeline(
             messages_lst, candidate_lst, num_samples, save_dir, save_strs,
             file_prefix="direct_edit", plan_label="direct implementation (no plan)",
+            base_code_lst=[c.code for c in candidate_lst],
         )
 
     def _run_edits_pipeline(
         self, messages_lst: list[list[dict]], candidate_lst: list[CodeCandidate],
         num_samples: int, save_dir: pathlib.Path, save_strs: list[str],
         file_prefix: str, plan_label: str,
+        base_code_lst: list[str] = None,
     ) -> list[CodeCandidate]:
         """Shared pipeline: call LLM with structured JSON edits, parse, and apply.
 
         Returns one CodeCandidate per (candidate, sample) pair.
+
+        If *base_code_lst* is provided, edits are applied against that code
+        (one entry per candidate).  Otherwise falls back to
+        ``candidate.parent.code`` (plan-then-edit path) or
+        ``candidate.code`` (direct-edit path).
         """
         # Check for cached results
         loaded_code = []
@@ -667,9 +674,11 @@ class LLMAgent:
             for c_i in range(len(candidate_lst)):
                 cand = candidate_lst[c_i]
                 for s_i in range(num_samples):
-                    new_cand = copy_candidate(cand)
-                    new_cand.code = loaded_code[c_i][s_i]
-                    new_cand.code_gen_model = self.llm_client.model
+                    new_cand = CodeCandidate(
+                        cand, plan_label, loaded_code[c_i][s_i],
+                        plan_gen_model=self.llm_client.model,
+                        code_gen_model=self.llm_client.model,
+                    )
                     loaded_candidates.append(new_cand)
             logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), file_prefix)
             return loaded_candidates
@@ -692,7 +701,12 @@ class LLMAgent:
 
         candidates: list[CodeCandidate] = []
         for c_i in range(len(candidate_lst)):
-            parent_code = candidate_lst[c_i].parent.code if candidate_lst[c_i].parent else candidate_lst[c_i].code
+            if base_code_lst is not None:
+                base_code = base_code_lst[c_i]
+            elif candidate_lst[c_i].parent:
+                base_code = candidate_lst[c_i].parent.code
+            else:
+                base_code = candidate_lst[c_i].code
             for s_i in range(num_samples):
                 response = grouped_results[c_i][s_i]
                 response_text = response.get("content", "") or ""
@@ -708,7 +722,7 @@ class LLMAgent:
                 edited_code = None
                 if edits is not None:
                     try:
-                        edited_code = apply_edits(parent_code, edits)
+                        edited_code = apply_edits(base_code, edits)
                     except ValueError as e:
                         logger.warning("%s: Edit application failed for %s %d implementation %d: %s",
                                        self.llm_client.model, file_prefix, c_i, s_i, e)
@@ -721,16 +735,17 @@ class LLMAgent:
                     else:
                         logger.warning("%s: Failed to get edits or code for %s %d implementation %d",
                                        self.llm_client.model, file_prefix, c_i, s_i)
-                        edited_code = parent_code
+                        edited_code = base_code
 
                 path = save_dir / f"{file_prefix}{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
                 with open(path, "w") as f:
                     f.write(edited_code)
 
-                new_cand = copy_candidate(candidate_lst[c_i])
-                new_cand.plan = new_cand.plan or plan_label
-                new_cand.code = edited_code
-                new_cand.code_gen_model = self.llm_client.model
+                new_cand = CodeCandidate(
+                    candidate_lst[c_i], plan_label, edited_code,
+                    plan_gen_model=self.llm_client.model,
+                    code_gen_model=self.llm_client.model,
+                )
                 candidates.append(new_cand)
         return candidates
 
