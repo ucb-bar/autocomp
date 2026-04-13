@@ -218,7 +218,7 @@ The most important parameters are:
 - `agent_name`: The optimization agent to use. See the [table above](#hardware-targets) for the right agent for each target.
 
 **Models**
-- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.2"` or `"gcp::gemini-3-pro-preview"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
+- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.4"` or `"gcp::gemini-3.1-pro"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
 - `code_models`: The list of models to use for the implementation phase, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 
 **Search**
@@ -227,7 +227,7 @@ The most important parameters are:
 - `num_plan_candidates`: Number of plans (strategies) generated per parent candidate per iteration. Default `4`.
 - `num_code_candidates`: Number of code implementations generated per plan. Default `2`.
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
-- `dropout_menu_options`: Probability of dropping each strategy menu option from the prompt, encouraging diversity. Default `0.25`.
+- `dropout_menu_options`: Probability of keeping each strategy menu option in the prompt (lower = more dropout). Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).
 - `skip_planning`: If `True`, skip the separate planning phase and generate optimized code in a single LLM call. The model is still prompted to reason about its approach before outputting code. Defaults to `False`.
 - `continue_from`: Path to a previous run's output directory. Loads the final candidates from that run as the starting beam (e.g., to optimize after a translation-only run).
@@ -246,6 +246,10 @@ The most important parameters are:
 - `menu_strategy`: Set to `"one-shot"` to dynamically generate new strategies per candidate via an LLM call, or `None` for static menu only.
 - `fine_grained_isa`: Enables two-level ISA filtering (section then subsection) to include only relevant ISA documentation in the prompt.
 - `example_rate`: Per-example probability of including an LLM-selected code example in the planning prompt.
+
+### Parameter Selection Guide
+
+See the [Parameter Selection Guide](PARAMETER_GUIDE.md) for practical guidance on choosing values for search parameters, model selection, and troubleshooting.
 
 ## 🔍 Trace Visualizer (VS Code Extension)
 
