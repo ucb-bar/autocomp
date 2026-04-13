@@ -31,7 +31,7 @@ Use 3–4 diverse models for best results. Model diversity matters more than cou
 | AWS Bedrock (open) | `"aws::deepseek.v3.2"` | DeepSeek V3.2; adds diversity. |
 | AWS Bedrock (open) | `"aws::minimax.minimax-m2.5"` | MiniMax M2.5; adds diversity. |
 | Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. |
-| Google | `"gcp::gemini-3.1-flash-lite-preview"` | Fast and cheap, adds diversity. |
+| Google | `"gcp::gemini-3-flash-preview"` | Cheaper model adds diversity. 1M context. |
 
 An example 4-model mix: `"openai::gpt-5.4"`, `"aws::us.anthropic.claude-opus-4-6-v1"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
 
