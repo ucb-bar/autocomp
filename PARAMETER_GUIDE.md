@@ -28,6 +28,7 @@ Use 3–4 diverse models for best results. Model diversity matters more than cou
 | AWS Bedrock (Claude) | `"aws::us.anthropic.claude-opus-4-5-20251101-v1:0"` | Opus 4.5 on Bedrock (still available, similar to 4.6). |
 | AWS Bedrock (open) | `"aws::zai.glm-5"` | GLM-5; strong at code, available via Converse API. |
 | AWS Bedrock (open) | `"aws::moonshotai.kimi-k2.5"` | Kimi K2.5; adds diversity. |
+| AWS Bedrock (open) | `"aws::deepseek.v3.2"` | DeepSeek V3.2; adds diversity. |
 | AWS Bedrock (open) | `"aws::minimax.minimax-m2.5"` | MiniMax M2.5; adds diversity. |
 | Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. |
 | Google | `"gcp::gemini-3.1-flash-lite-preview"` | Fast and cheap, adds diversity. |
