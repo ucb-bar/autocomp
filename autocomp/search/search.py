@@ -1099,7 +1099,7 @@ class BeamSearchStrategy(SearchStrategy):
             losses.append(best_loss)
 
             if self.should_early_stop(losses, i):
-                break  # post-loop wandb log skipped; this iter's best was already logged above
+                break
 
             # If candidates already exist for this iteration, load them and skip all other steps
             save_dir = self.output_dir / f"candidates-iter-{i}"
@@ -1353,17 +1353,6 @@ class BeamSearchStrategy(SearchStrategy):
             self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
             final_snapshot = {k: v for k, v in iter_metrics.items() if not k.startswith("_")}
             all_iteration_metrics.append(final_snapshot)
-        else:
-            last_iter = len(self.repository.candidates_per_iteration) - 1
-            last_iter_cands = self.repository.get_candidates(last_iter)
-            wandb.log(
-                {
-                    f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-                        "best-loss": min([cand.score for cand in last_iter_cands]),
-                    }
-                }
-            )
-            return
 
-        # Final save when loop exited early (break)
         self._save_run_metrics(all_iteration_metrics, run_t0)
+        wandb.finish()
