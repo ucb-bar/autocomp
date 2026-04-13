@@ -16,7 +16,7 @@ Each iteration generates `beam_size × num_plan_candidates × num_code_candidate
 
 ## `models`
 
-Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider:
+Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated April 13, 2026):
 
 | Provider | Model string | Notes |
 |----------|-------------|-------|
