@@ -4,7 +4,7 @@ Practical guidance for choosing Autocomp search parameters. See the [main README
 
 ## `iterations` and `translate_iters`
 
-`iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies (converting code to the target representation, e.g., PyTorch → NKI); the remaining `iterations - translate_iters` iterations use optimization strategies. `translate_iters` should be enough for the LLM to produce at least one correct translation — increase it if no correct candidates appear by the end of the translation phase. Optimization iterations have diminishing returns; monitor whether scores are still improving and use `early_stop_iters` if needed. Total iteration count depends on your time and API budget.
+`iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies; the remaining use optimization strategies. Translation may take multiple (3–5) iterations if the kernel is complex and the LLM translates it incrementally. For challenging kernels, 8–15 total iterations is typical.
 
 When `translate_score=True`, translation ends early if any candidate reaches a perfect translation score (10.0). The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
 
