@@ -63,66 +63,18 @@ _NKI_V2_MAIN_TEMPLATE = '''
 if __name__ == "__main__":
     import os
     import glob as _glob
-    import hashlib
     import torch
     import torch_xla
     from torch_xla.core import xla_model as xm
 
-    import json as _json
-    from nki.compiler.backends.neuron.TraceKernel import TraceKernel
-    from nki._version import _version_identifier
-    _orig_specialize = TraceKernel.specialize_and_call
-    _trace_cache = {}
+    # Prime the ref kernel's NEFF by running test_nki(ref, ref).
+    # This compiles the ref kernel and populates the cache so the mtime
+    # snapshot below only captures NEFFs produced by the *solution*.
+    try:
+        test_nki(__REF_FUNC__, __REF_FUNC__)
+    except Exception:
+        pass
 
-    def _patched_specialize(self, boundargs, output_path_prefix=None):
-        import tempfile as _tf, inspect as _inspect
-        fn = getattr(self.func, "__name__", "kernel")
-        sk = "".join(str(a.shape) + "_" for a in boundargs.args if hasattr(a, "shape"))
-        try:
-            src = _inspect.getsource(self.func)
-        except (OSError, TypeError):
-            src = ""
-        cache_key = hashlib.md5(f"{fn}_{sk}_{src}".encode()).hexdigest()[:12]
-
-        if cache_key in _trace_cache:
-            cached = _trace_cache[cache_key]
-            self.klir_binary = cached["klir_binary"]
-            return cached["result"]
-
-        klir_dir = os.path.join(_tf.gettempdir(), "klir_binaries", f"{fn}_{cache_key}")
-        klir_file = os.path.join(klir_dir, f"{fn}.klir")
-        meta_file = os.path.join(klir_dir, f"{fn}_metadata.json")
-
-        if os.path.exists(klir_file) and os.path.exists(meta_file):
-            with open(meta_file, "r") as mf:
-                metadata = _json.load(mf)
-            inputs = metadata.get("inputs", [])
-            outputs = metadata.get("outputs", [])
-            shared = metadata.get("sharedConstants", [])
-            klir_binary = {
-                "binary": klir_file,
-                "input_names": [i["name"] for i in inputs] + [c["name"] for c in shared],
-                "output_names": [o["name"] for o in outputs],
-                "version_identifier": _version_identifier,
-            }
-            self.klir_binary = klir_binary
-            result = (0, klir_file, metadata)
-            _trace_cache[cache_key] = {"klir_binary": klir_binary, "result": result}
-            return result
-
-        result = _orig_specialize(self, boundargs, output_path_prefix=cache_key)
-        _, klir_path, metadata = result
-
-        os.makedirs(klir_dir, exist_ok=True)
-        with open(meta_file, "w") as mf:
-            _json.dump(metadata, mf)
-
-        _trace_cache[cache_key] = {"klir_binary": self.klir_binary, "result": result}
-        return result
-
-    TraceKernel.specialize_and_call = _patched_specialize
-
-    import re as _re
     _cache_root = "/var/tmp/neuron-compile-cache"
     _all_neffs = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
     _pre_mtimes = {n: os.path.getmtime(n) for n in _all_neffs}
@@ -134,9 +86,7 @@ if __name__ == "__main__":
     else:
         print("Test passed")
 
-    # Find ALL NEFFs with changed mtime (new file or recompiled).
-    # A single candidate can produce multiple NEFFs (e.g. mark_step splits).
-    # Report all so the evaluator can profile each and pick the slowest.
+    # Find NEFFs with changed mtime — only solution NEFFs since ref was primed.
     _all_neffs_post = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
     _changed = []
     for n in _all_neffs_post:
@@ -348,10 +298,9 @@ class TrnEvalBackend(EvalBackend):
     ) -> str:
         """Generate a Python script that compiles a kernel to a NEFF.
 
-        NKI v1: uses nki.baremetal(save_neff_name=...) to save the NEFF directly.
-        NKI v2: triggers compilation via @nki.jit with a deterministic cache
-                prefix, then discovers the cached NEFF path from Neuron runtime
-                logs and copies it to neff_dir.
+        Uses neuronxcc.nki.baremetal(save_neff_name=...) to compile without
+        needing a NeuronCore, enabling fully parallel CPU-only compilation.
+        Only works for NKI v1 tests (neuronxcc.nki imports + numpy arrays).
         """
         preamble = test_code.split("# SUBSTITUTE HERE")[0]
         postamble_raw = (
@@ -378,7 +327,11 @@ if _target_func is None:
     sys.exit(0)
 """
 
-        # 2-phase compilation only used for NKI v1 (baremetal).
+        is_v2 = not _test_is_nki_v1(test_code)
+        if is_v2:
+            return self._compile_script_nki_v2(
+                preamble, postamble, func_setup, neff_path, temp_dir,
+            )
         return self._compile_script_baremetal(
             preamble, postamble, func_setup, neff_path, temp_dir,
         )
@@ -386,7 +339,7 @@ if _target_func is None:
     def _compile_script_baremetal(
         self, preamble, postamble, func_setup, neff_path, temp_dir,
     ) -> str:
-        """NKI v1 compile script: use nki.baremetal to save NEFF directly."""
+        """NKI v1 compile script: use neuronxcc.nki.baremetal to save NEFF."""
         return f"""\
 import sys, json, os, traceback
 sys.path.insert(0, {repr(str(temp_dir.resolve()))})
@@ -409,6 +362,46 @@ try:
 except Exception:
     if not os.path.exists(_neff_path):
         _error_msg = traceback.format_exc()
+
+print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}))
+"""
+
+    def _compile_script_nki_v2(
+        self, preamble, postamble, func_setup, neff_path, temp_dir,
+    ) -> str:
+        """NKI v2 (0.3.0) compile script: use CompileKernel(simulation=True).
+
+        Compiles to NEFF via BIRSim on CPU, no NeuronCore required.
+        Shims torch/XLA so test_nki() calls produce numpy arrays that
+        CompileKernel can consume.
+        """
+        return f"""\
+import sys, json, os, traceback
+sys.path.insert(0, {repr(str(temp_dir.resolve()))})
+
+# Load the torch/XLA shim from the helper module
+sys.path.insert(0, {repr(str(pathlib.Path(__file__).parent.resolve()))})
+from _v2_compile_shim import install_shim, OnceCompileKernel
+install_shim()
+
+import numpy as np
+
+# === Test preamble ===
+{preamble}
+# === Test postamble ===
+{postamble}
+
+_neff_path = {repr(neff_path)}
+{func_setup}
+
+_raw = _target_func.func if hasattr(_target_func, "func") else _target_func
+_wrapper = OnceCompileKernel(_raw, _neff_path)
+
+_error_msg = ""
+try:
+    test_nki(_wrapper, _wrapper)
+except Exception:
+    _error_msg = traceback.format_exc()
 
 print(json.dumps({{"compiled": os.path.exists(_neff_path), "error": _error_msg}}))
 """
@@ -604,12 +597,7 @@ for _idx in range(_num_impls):
             _all_results[_idx] = _result
             continue
 
-        # Benchmark via nrt_execute loop
-        _latency = _impl_model.benchmark(warmup=10, iters=100)
-
         _result["correct"] = True
-        _result["latency"] = round(_latency, 3)
-        _result["stdout"] = "Latency: {{:.3f}} ms (P99)\\n".format(_latency)
 
     except Exception:
         _result["stderr"] = traceback.format_exc()
@@ -727,43 +715,40 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         # has exited and NeuronCores are free.
         if not is_v1:
             # Discover NEFFs for this candidate.
-            # Parse Neuron runtime log (per-process, immune to cross-core
-            # cache pollution from the shared compile cache).
+            # Primary: mtime-based NEFF_PATH from template (most reliable
+            # since the template primes the ref kernel before snapshotting).
             combined_output = p.stdout + "\n" + p.stderr
             neff_paths = []
 
-            cached = re.findall(
-                r'Using a cached neff at\s+(\S+model\.neff)', combined_output
-            )
-            compiled_mods = re.findall(
-                r'Compilation Successfully Completed for model\.(MODULE_\d+\+\w+)\.',
-                combined_output,
-            )
-            # Resolve compiled MODULE hashes to NEFF file paths
-            compiled_paths = []
-            for mod in dict.fromkeys(compiled_mods):
-                import glob as _g
-                cands = _g.glob(os.path.join(
-                    "/var/tmp/neuron-compile-cache", "**",
-                    mod, "model.neff",
-                ), recursive=True)
-                if cands:
-                    compiled_paths.append(cands[0])
+            for line in p.stdout.split("\n"):
+                if line.startswith("NEFF_PATH="):
+                    path = line.split("=", 1)[1].strip()
+                    if path and path not in neff_paths:
+                        neff_paths.append(path)
 
-            # Merge both sources, deduplicate, prefer cache-hit paths
-            for p_ in cached + compiled_paths:
-                if p_ not in neff_paths:
-                    neff_paths.append(p_)
-
-            # Last-resort fallback: mtime-based NEFF_PATH from template
-            # (can pick up NEFFs from other cores, so only use if runtime
-            # log parsing found nothing).
+            # Fallback: parse Neuron runtime log for compiled NEFF paths
+            # (useful when the mtime approach misses NEFFs, e.g. NKI v1).
             if not neff_paths:
-                for line in p.stdout.split("\n"):
-                    if line.startswith("NEFF_PATH="):
-                        path = line.split("=", 1)[1].strip()
-                        if path and path not in neff_paths:
-                            neff_paths.append(path)
+                cached = re.findall(
+                    r'Using a cached neff at\s+(\S+model\.neff)', combined_output
+                )
+                compiled_mods = re.findall(
+                    r'Compilation Successfully Completed for model\.(MODULE_\d+\+\w+)\.',
+                    combined_output,
+                )
+                compiled_paths = []
+                for mod in dict.fromkeys(compiled_mods):
+                    import glob as _g
+                    cands = _g.glob(os.path.join(
+                        "/var/tmp/neuron-compile-cache", "**",
+                        mod, "model.neff",
+                    ), recursive=True)
+                    if cands:
+                        compiled_paths.append(cands[0])
+
+                for p_ in cached + compiled_paths:
+                    if p_ not in neff_paths:
+                        neff_paths.append(p_)
 
             # Profile all discovered NEFFs and sum their total_times.
             # A single candidate can produce multiple NEFFs (graph splits via
@@ -848,8 +833,8 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
             logger.error("Ref NEFF compilation failed, cannot run Phase 2")
             return None
 
-        # Phase 2: sequential correctness + benchmark
-        logger.info("Phase 2: correctness + benchmark via libnrt")
+        # Phase 2: correctness via libnrt (no NKI recompilation)
+        logger.info("Phase 2: correctness via libnrt")
         phase2_script = self._generate_phase2_script(
             test_code, len(code_strs), temp_dir, neff_dir, compiled, compile_errors
         )
@@ -857,7 +842,6 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         with open(phase2_path, "w") as f:
             f.write(phase2_script)
 
-        # ref compilation (~60s) + per-implementation libnrt eval (~10s each)
         timeout = 120 + 60 * len(code_strs)
         cmd = ["python", str(phase2_path.resolve())]
         try:
@@ -878,11 +862,45 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
             )
             return None
 
-        for i, result in enumerate(results):
-            if result["correct"]:
-                logger.info(f"Code {i} latency: {result['latency']}")
+        # Phase 3: benchmark passing candidates via neuron-profile (accurate
+        # on-device latency from hardware counters, same as _evaluate_single).
+        # Run profiles in parallel across NeuronCores.
+        passing = [
+            (i, str((neff_dir / f"impl_{i}.neff").resolve()))
+            for i, r in enumerate(results)
+            if r["correct"] and os.path.exists(
+                str((neff_dir / f"impl_{i}.neff").resolve()))
+        ]
+        for i, r in enumerate(results):
+            if not r["correct"]:
+                logger.error(f"Code {i} failed correctness")
+
+        if passing:
+            num_cores = self._detect_num_cores()
+
+            def _profile_one(idx, neff_path, core_id):
+                lat = self._benchmark_via_neuron_profile(
+                    neff_path, temp_dir, f"{idx}_combined", core_id=core_id
+                )
+                if lat is not None:
+                    results[idx]["latency"] = round(lat, 3)
+                    results[idx]["stdout"] = f"Latency: {lat:.3f} ms\n"
+                    logger.info(f"Code {idx} latency: {results[idx]['latency']}")
+                else:
+                    logger.warning(f"Code {idx}: neuron-profile failed")
+
+            if len(passing) <= 1 or num_cores <= 1:
+                for idx, neff_path in passing:
+                    _profile_one(idx, neff_path, core_id=0)
             else:
-                logger.error(f"Code {i} failed")
+                with ThreadPoolExecutor(max_workers=min(num_cores, len(passing))) as ex:
+                    futs = []
+                    for j, (idx, neff_path) in enumerate(passing):
+                        futs.append(ex.submit(
+                            _profile_one, idx, neff_path, core_id=j % num_cores
+                        ))
+                    for f in futs:
+                        f.result()
 
         return results
 
@@ -916,8 +934,8 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
         results = None
         is_v1 = _test_is_nki_v1(test_code)
 
-        # NKI v1: 2-phase (parallel baremetal compile + libnrt benchmark)
-        if self.parallel and is_v1:
+        # 2-phase: parallel compile (baremetal for v1, BIRSim for v2) + libnrt benchmark
+        if self.parallel:
             results = self._try_combined_evaluation(test_code, code_strs, temp_dir)
         if results is not None:
             return results
