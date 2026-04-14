@@ -4,9 +4,11 @@ Practical guidance for choosing Autocomp search parameters. See the [main README
 
 ## `iterations` and `translate_iters`
 
-`iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies (converting code to the target representation, e.g., PyTorch → NKI); the remaining `iterations - translate_iters` iterations use optimization strategies. For simple kernels (single matmul, elementwise ops), use `translate_iters=2` with `iterations=6` (2 translation + 4 optimization). For complex kernels (fused multi-op pipelines), use `translate_iters=3` with `iterations=7` or `8`. Without translation, set `translate_iters=0` and `iterations=4`–`6`.
+`iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies (converting code to the target representation, e.g., PyTorch → NKI); the remaining `iterations - translate_iters` iterations use optimization strategies. `translate_iters` should be enough for the LLM to produce at least one correct translation — increase it if no correct candidates appear by the end of the translation phase. Optimization iterations have diminishing returns; monitor whether scores are still improving and use `early_stop_iters` if needed. Total iteration count depends on your time and API budget.
 
-When `translate_score=True`, translation ends early if any candidate reaches a perfect translation score (10.0). The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` (e.g., 4) is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
+When `translate_score=True`, translation ends early if any candidate reaches a perfect translation score (10.0). The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
+
+**Convergence**: Set `early_stop_iters` to automatically stop the search after N iterations without improvement. If the search converges and you want to push further, change the search conditions (swap/add models, adjust `dropout_menu_options`, add documentation or rules) rather than just adding more iterations.
 
 ## `translate_perf_threshold`
 
