@@ -675,7 +675,7 @@ class LLMAgent:
                 cand = candidate_lst[c_i]
                 for s_i in range(num_samples):
                     new_cand = CodeCandidate(
-                        cand, plan_label, loaded_code[c_i][s_i],
+                        cand, plan_label or cand.plan, loaded_code[c_i][s_i],
                         plan_gen_model=self.llm_client.model,
                         code_gen_model=self.llm_client.model,
                     )
@@ -742,7 +742,7 @@ class LLMAgent:
                     f.write(edited_code)
 
                 new_cand = CodeCandidate(
-                    candidate_lst[c_i], plan_label, edited_code,
+                    candidate_lst[c_i], plan_label or candidate_lst[c_i].plan, edited_code,
                     plan_gen_model=self.llm_client.model,
                     code_gen_model=self.llm_client.model,
                 )
