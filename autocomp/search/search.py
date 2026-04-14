@@ -1313,13 +1313,6 @@ class BeamSearchStrategy(SearchStrategy):
                             for c in correct_candidates
                         ],
                     )
-                    best_ts = max(c.translation_score for c in correct_candidates)
-                    if best_ts >= 10.0 and i < self.translate_iters:
-                        logger.info(
-                            "Translation score %.1f reached 10.0 — ending translation early (iter %d of %d).",
-                            best_ts, i, self.translate_iters,
-                        )
-                        self.translate_iters = i
 
             # Step 4: Filter and rank the implementations
             improving_candidates = self.filter_code_candidates(
@@ -1334,6 +1327,21 @@ class BeamSearchStrategy(SearchStrategy):
                 cur_iter=i,
                 num_iters=iterations,
             )
+
+            # Early-stop translation only when every beam candidate is fully translated
+            if translate and self.translate_score and i < self.translate_iters:
+                beam_scores = [
+                    c.translation_score for c in candidates_for_next_iter
+                    if c.translation_score is not None
+                ]
+                if beam_scores and min(beam_scores) >= 9.0:
+                    logger.info(
+                        "All %d beam candidates have translation score >= 9.0 (min=%.1f) — "
+                        "ending translation early (iter %d of %d).",
+                        len(beam_scores), min(beam_scores), i, self.translate_iters,
+                    )
+                    self.translate_iters = i
+
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
             # Step 5: Save the improving candidates and update the repository
@@ -1362,4 +1370,17 @@ class BeamSearchStrategy(SearchStrategy):
             all_iteration_metrics.append(final_snapshot)
 
         self._save_run_metrics(all_iteration_metrics, run_t0)
+        best = self._get_best_candidate()
+        initial_candidates = self.repository.get_candidates(0)
+        initial_score = initial_candidates[0].score if initial_candidates and initial_candidates[0].score is not None else None
+        elapsed = time.perf_counter() - run_t0
+        logger.info("=" * 60)
+        logger.info("Optimization complete. %d iterations in %.1f minutes.", len(all_iteration_metrics), elapsed / 60)
+        if initial_score is not None:
+            logger.info("Initial score: %.3f", initial_score)
+        if best and best.score is not None:
+            logger.info("Best score: %.3f", best.score)
+            if initial_score and initial_score > 0:
+                logger.info("Speedup: %.2fx", initial_score / best.score)
+        logger.info("=" * 60)
         wandb.finish()
