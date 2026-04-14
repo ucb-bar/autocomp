@@ -294,11 +294,8 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
         stdout_f = f"{remote_dir}/stdout.txt"
         stderr_f = f"{remote_dir}/stderr.txt"
 
-        # Kill any stale jaxbench_runner processes that might hold the TPU device
-        kill_stale = f"pkill -f 'jaxbench_runner\\.py' 2>/dev/null; sleep 1; "
         remote_cmd = (
             f"{setup_cmd}"
-            f"{kill_stale}"
             f"{run_python} > {stdout_f} 2> {stderr_f}; true"
         )
 
