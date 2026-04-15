@@ -344,7 +344,7 @@ class LLMAgent:
             for c_i, this_cand_loaded_plans in enumerate(loaded_plans):
                 for plan in this_cand_loaded_plans:
                     loaded_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
-            logger.info("Loaded %d optimization plans from cache", len(loaded_cands))
+            logger.info("%s: loaded %d optimization plans from cache", self.llm_client.model, len(loaded_cands))
             return loaded_cands
 
         if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_hw_feedback < 1):
@@ -454,7 +454,7 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d plan-based implementations from cache", len(loaded_candidates))
+            logger.info("%s: loaded %d plan-based implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         prompts_lst = []
@@ -542,7 +542,7 @@ class LLMAgent:
                     new_cand = CodeCandidate(cand, "direct implementation (no plan)", loaded_code[c_i][s_i],
                                              plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d direct implementations from cache", len(loaded_candidates))
+            logger.info("%s: loaded %d direct implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1):
@@ -688,7 +688,7 @@ class LLMAgent:
                     )
                     loaded_candidates.append(new_cand)
             log_label = "direct edit" if file_prefix == "direct_edit" else "edit from plan"
-            logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), log_label)
+            logger.info("%s: loaded %d %s implementations from cache", self.llm_client.model, len(loaded_candidates), log_label)
             return loaded_candidates
 
         # Save prompts
@@ -801,7 +801,7 @@ class LLMAgent:
             else:
                 break
         else:
-            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
+            logger.info("%s: loaded %d code implementations from cache", self.llm_client.model, num_samples)
             loaded_candidates = []
             for c_i in range(num_samples):
                 loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i], code_gen_model=self.llm_client.model))
@@ -872,7 +872,7 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d reimplemented code implementations rather than generating new ones", len(loaded_candidates))
+            logger.info("%s: loaded %d reimplemented code implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         prompts_lst = []
