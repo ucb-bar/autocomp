@@ -132,6 +132,11 @@ A reference example is available at `.built/trn1-nki1/` (auto-generated with Age
 
 ## How It Works
 
+<p align="center">
+  <img src="agent_builder.svg" alt="Agent Builder pipeline diagram" width="90%">
+</p>
+<p align="center"><em>The Agent Builder ingests documentation sources and produces a complete hardware-specific agent configuration.</em></p>
+
 The build pipeline has three stages: **ingest** (load and index sources), **synthesize** (LLM-based extraction), and **assemble** (write config files).
 
 The synthesizer first runs a **pre-filter** that removes clearly irrelevant documents via parallel yes/no LLM prompts (driven by `--agent-scope`), then **routes** each remaining document into component buckets (`isa`, `architecture`, `optimization`, `rules`, `examples`) using one LLM call per document.
