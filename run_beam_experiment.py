@@ -33,7 +33,7 @@ from autocomp.hw_config import TrnHardwareConfig
 # ---------------------------------------------------------------------------
 BEAM_SIZES = [1, 2, 4, 6, 8]
 PROB_TYPE = "trn-tutorial-nki1"
-PROB_IDS = [0, 1, 2, 3, 4, 5]
+PROB_IDS = [3,4]
 
 # Open-source models (via AWS Bedrock Converse API)
 MODELS = [
