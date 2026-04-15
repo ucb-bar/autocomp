@@ -506,6 +506,52 @@ class SearchStrategy:
                 candidates[cand_i].stderr = stats["stderr"]
         return candidates
 
+    def _score_translation(
+        self,
+        candidates: list[CodeCandidate],
+        save_dir: pathlib.Path,
+    ) -> None:
+        """Score translation completeness, with per-directory caching like evaluate_candidates."""
+        cache_path = save_dir / "translation_scores.json"
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text())
+            scores = [float(s) for s in cached]
+            if len(scores) == len(candidates):
+                logger.info("Loading cached translation scores from %s", cache_path)
+                for cand, ts in zip(candidates, scores):
+                    cand.translation_score = ts
+                return
+            logger.warning(
+                "Cached translation scores length mismatch (%d vs %d), recomputing",
+                len(scores), len(candidates),
+            )
+
+        original_code = self.repository.get_candidates(0)[0].code
+        scores = self.agent.score_translation_completeness(
+            original_code, candidates, prob=self.prob
+        )
+        for cand, ts in zip(candidates, scores):
+            cand.translation_score = ts
+
+        save_dir.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(scores))
+
+    def _check_translation_complete(self, beam_candidates: list[CodeCandidate], cur_iter: int) -> None:
+        """End translation early if all beam candidates are fully translated."""
+        if not self.translate_score or cur_iter >= self.translate_iters:
+            return
+        beam_scores = [
+            c.translation_score for c in beam_candidates
+            if c.translation_score is not None
+        ]
+        if beam_scores and min(beam_scores) >= 9.0:
+            logger.info(
+                "All %d beam candidates have translation score >= 9.0 (min=%.1f) — "
+                "ending translation early (iter %d of %d).",
+                len(beam_scores), min(beam_scores), cur_iter, self.translate_iters,
+            )
+            self.translate_iters = cur_iter
+
     def add_feedback(self, candidates: list[CodeCandidate]) -> list[CodeCandidate]:
         # NOTE: Assumes that feedback for a particular candidate only gets added once and does not get updated
         if self.give_hw_feedback <= 0:
@@ -637,6 +683,8 @@ class SearchStrategy:
 
     def should_early_stop(self, losses: list[float], cur_iter: int) -> bool:
         if self.early_stop_iters <= 0 or cur_iter < self.early_stop_iters + 1:
+            return False
+        if cur_iter <= self.translate_iters + self.early_stop_iters:
             return False
         old_loss = losses[cur_iter - self.early_stop_iters - 1]
         new_loss = losses[cur_iter - 1]
@@ -1113,6 +1161,8 @@ class BeamSearchStrategy(SearchStrategy):
                             all_iteration_metrics.append(json.load(f))
                     except Exception:
                         pass
+                # Replay translation early-stop from cached candidates
+                self._check_translation_complete(self.repository.get_candidates(i), i)
                 continue
 
             # Step 1 + 2: Generate implementations (plan-then-implement or direct)
@@ -1300,12 +1350,8 @@ class BeamSearchStrategy(SearchStrategy):
                     c for c in evaluated_code_candidates if c.score != float("inf")
                 ]
                 if correct_candidates:
-                    original_code = self.repository.get_candidates(0)[0].code
-                    scores = self.agent.score_translation_completeness(
-                        original_code, correct_candidates, prob=self.prob
-                    )
-                    for cand, ts in zip(correct_candidates, scores):
-                        cand.translation_score = ts
+                    ts_save_dir = self.output_dir / f"eval-results-iter-{i}"
+                    self._score_translation(correct_candidates, ts_save_dir)
                     logger.info(
                         "Translation scores: %s",
                         [
@@ -1329,18 +1375,8 @@ class BeamSearchStrategy(SearchStrategy):
             )
 
             # Early-stop translation only when every beam candidate is fully translated
-            if translate and self.translate_score and i < self.translate_iters:
-                beam_scores = [
-                    c.translation_score for c in candidates_for_next_iter
-                    if c.translation_score is not None
-                ]
-                if beam_scores and min(beam_scores) >= 9.0:
-                    logger.info(
-                        "All %d beam candidates have translation score >= 9.0 (min=%.1f) — "
-                        "ending translation early (iter %d of %d).",
-                        len(beam_scores), min(beam_scores), i, self.translate_iters,
-                    )
-                    self.translate_iters = i
+            if translate:
+                self._check_translation_complete(candidates_for_next_iter, i)
 
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 

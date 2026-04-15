@@ -928,6 +928,12 @@ class LLMClient:
             List of lists of normalized dicts, one inner list per prompt,
             each inner list containing num_samples responses.
         """
+        if self.provider == "dummy":
+            dummy = {"role": "assistant", "content": "dummy response", "tool_calls": [],
+                     "usage": {"input_tokens": 0, "output_tokens": 0, "duration_s": 0,
+                               "model": self.model, "phase": "dummy"}}
+            return [[dict(dummy) for _ in range(num_samples)] for _ in messages_lst]
+
         MAX_CONCURRENT = 9
         bedrock = getattr(self, "_bedrock_client", None)
 

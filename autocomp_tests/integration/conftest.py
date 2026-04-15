@@ -21,9 +21,21 @@ class DummyEvalBackend(EvalBackend):
         return results
 
 
+class FlatEvalBackend(EvalBackend):
+    """Eval backend that always returns the same latency (for testing early stopping)."""
+
+    def evaluate_code(self, prob: Prob, code_strs: list[str], simulator: str) -> list[dict]:
+        return [{"correct": True, "p99_latency": 1.0} for _ in code_strs]
+
+
 @pytest.fixture
 def dummy_eval_backend():
     return DummyEvalBackend()
+
+
+@pytest.fixture
+def flat_eval_backend():
+    return FlatEvalBackend()
 
 
 @pytest.fixture
