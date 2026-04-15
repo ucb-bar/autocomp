@@ -344,7 +344,7 @@ class LLMAgent:
             for c_i, this_cand_loaded_plans in enumerate(loaded_plans):
                 for plan in this_cand_loaded_plans:
                     loaded_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
-            logger.info("Loaded %d optimization plans rather than generating new ones", len(loaded_cands))
+            logger.info("Loaded %d optimization plans from cache", len(loaded_cands))
             return loaded_cands
 
         if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_hw_feedback < 1):
@@ -454,7 +454,7 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
+            logger.info("Loaded %d plan-based implementations from cache", len(loaded_candidates))
             return loaded_candidates
 
         prompts_lst = []
@@ -474,7 +474,7 @@ class LLMAgent:
             temperature=temperature,
             reasoning_effort="medium"
         )
-        logger.info("%s: finished generating %d code implementations for %d candidates.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
+        logger.info("%s: finished generating %d code responses for %d plans.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):
@@ -576,7 +576,7 @@ class LLMAgent:
             num_samples=samples_per_prompt,
             temperature=1,
         )
-        logger.info("%s: finished generating %d direct implementations for %d candidates.",
+        logger.info("%s: finished generating %d direct code responses for %d candidates.",
                      self.llm_client.model, len(prompts_lst) * samples_per_prompt, len(candidate_lst))
 
         full_responses = [[] for _ in range(len(candidate_lst))]
@@ -687,7 +687,8 @@ class LLMAgent:
                         code_gen_model=self.llm_client.model,
                     )
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), file_prefix)
+            log_label = "direct edit" if file_prefix == "direct_edit" else "edit from plan"
+            logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), log_label)
             return loaded_candidates
 
         # Save prompts
@@ -703,8 +704,12 @@ class LLMAgent:
             response_format=EDITS_JSON_SCHEMA,
             temperature=1,
         )
-        logger.info("%s: finished generating %d %s responses for %d candidates.",
-                    self.llm_client.model, len(messages_lst) * num_samples, file_prefix, len(candidate_lst))
+        if file_prefix == "direct_edit":
+            logger.info("%s: finished generating %d direct edit responses for %d candidates.",
+                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
+        else:
+            logger.info("%s: finished generating %d edit responses for %d plans.",
+                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i in range(len(candidate_lst)):

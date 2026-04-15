@@ -803,7 +803,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
                     save_strs=save_strs,
                     prob=self.prob,
                 )
-            logger.info(f"Generated {len(impl_candidates)} implementations.")
+            logger.info(f"Generated {len(impl_candidates)} implementations from {len(plan_only_candidates)} plans.")
 
             # Step 3: Evaluate the generated implementations
             save_dir = self.output_dir / f"eval-results-iter-{i}"
@@ -1032,8 +1032,10 @@ class BeamSearchStrategy(SearchStrategy):
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
-    def _save_run_metrics(self, all_iteration_metrics, run_t0):
-        run_total_s = round(time.perf_counter() - run_t0, 3)
+    def _save_run_metrics(self, all_iteration_metrics):
+        run_total_s = round(
+            sum(im.get("iteration_total_s", 0) for im in all_iteration_metrics), 3
+        )
         run_metrics = {
             "run_total_s": run_total_s,
             "iterations": all_iteration_metrics,
@@ -1075,16 +1077,16 @@ class BeamSearchStrategy(SearchStrategy):
                 return f"{n / 1_000:.1f}K"
             return str(n)
         logger.info(
-            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, total time: %ss",
             _fmt_tokens(total_in),
             _fmt_tokens(total_out),
             _fmt_tokens(total_tok),
             run_metrics.get("total_llm_duration_s", "?"),
             run_metrics.get("total_eval_duration_s", "?"),
-            run_metrics.get("run_total_s", "?"),
+            run_total_s,
         )
 
-    def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics, run_t0):
+    def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics):
         """Save current iteration metrics to disk and update run-level aggregate."""
         try:
             all_usage = list(self.agent._usage_accumulator)
@@ -1110,7 +1112,7 @@ class BeamSearchStrategy(SearchStrategy):
         except Exception:
             pass
         current_metrics = all_iteration_metrics + [snapshot]
-        self._save_run_metrics(current_metrics, run_t0)
+        self._save_run_metrics(current_metrics)
 
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
@@ -1212,7 +1214,7 @@ class BeamSearchStrategy(SearchStrategy):
                 iter_metrics["plan_duration_s"] = 0
                 iter_metrics["code_duration_s"] = code_duration
                 logger.info(f"Generated {len(impl_candidates)} direct implementations (no planning phase).")
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
             else:
                 # Standard 2-phase: plan then implement
                 save_dir = self.output_dir / f"generated-plans-iter-{i}"
@@ -1236,7 +1238,7 @@ class BeamSearchStrategy(SearchStrategy):
                 plan_duration = round(time.perf_counter() - plan_t0, 3)
                 iter_metrics["plan_duration_s"] = plan_duration
                 logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
                 save_dir = self.output_dir / f"generated-code-iter-{i}"
                 save_dir.mkdir(parents=True, exist_ok=True)
@@ -1263,10 +1265,10 @@ class BeamSearchStrategy(SearchStrategy):
                         code_icl_examples=self.code_icl_examples,
                         prob=self.prob,
                     )
-                logger.info(f"Generated {len(impl_candidates)} implementations.")
+                logger.info(f"Generated {len(impl_candidates)} implementations from {len(plan_only_candidates)} plans.")
                 code_duration = round(time.perf_counter() - code_t0, 3)
                 iter_metrics["code_duration_s"] = code_duration
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
             if (
                 len(current_candidates) > 1
@@ -1297,7 +1299,7 @@ class BeamSearchStrategy(SearchStrategy):
                 "num_candidates": len(impl_candidates),
             }
             logger.info(f"Evaluated {len(evaluated_code_candidates)} implementations.")
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
             # Step 3.5: Reimplement failed implementations
             if self.reimplement_failed:
@@ -1401,11 +1403,11 @@ class BeamSearchStrategy(SearchStrategy):
             self._save_best_candidate()
 
             # Final save for this iteration (captures complete usage data)
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
             final_snapshot = {k: v for k, v in iter_metrics.items() if not k.startswith("_")}
             all_iteration_metrics.append(final_snapshot)
 
-        self._save_run_metrics(all_iteration_metrics, run_t0)
+        self._save_run_metrics(all_iteration_metrics)
         best = self._get_best_candidate()
         initial_candidates = self.repository.get_candidates(0)
         initial_score = initial_candidates[0].score if initial_candidates and initial_candidates[0].score is not None else None
