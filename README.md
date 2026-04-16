@@ -62,7 +62,7 @@ Each hardware target requires two things: an **optimization agent** that knows h
 | Hardware target | Optimization agent(s) | Evaluation backend(s) |
 |---|---|---|
 | AWS Trainium | `built:trn1-nki1` (Trainium 1, NKI v1)<br>`built:trn2-nki1` (Trainium 2, NKI v1)<br>`built:trn2-nki2` (Trainium 2, NKI v2) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
-| Google TPU | `built:tpu-v6e` (TPU v6e) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))<br>`jaxbench` ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md)) |
+| Google TPU | `built:tpu-v6e` (TPU v6e)<br>`built:tpu-v5lite` (TPU v5e / v5 lite) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))<br>`jaxbench` ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
 | NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
 | Saturn (RVV) | `built:saturn-rvv` | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md))<br>`xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
