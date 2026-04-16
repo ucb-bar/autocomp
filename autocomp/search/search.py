@@ -1412,6 +1412,16 @@ class BeamSearchStrategy(SearchStrategy):
         initial_candidates = self.repository.get_candidates(0)
         initial_score = initial_candidates[0].score if initial_candidates and initial_candidates[0].score is not None else None
         elapsed = time.perf_counter() - run_t0
+
+        if best and best.score is not None:
+            wandb.log(
+                {
+                    f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
+                        "best-loss": best.score,
+                    }
+                }
+            )
+
         logger.info("=" * 60)
         logger.info("Optimization complete. %d iterations in %.1f minutes.", len(all_iteration_metrics), elapsed / 60)
         if initial_score is not None:
