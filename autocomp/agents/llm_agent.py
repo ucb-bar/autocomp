@@ -37,20 +37,49 @@ EDITS_JSON_SCHEMA = {
 }
 
 
+def _normalize_ws(s: str) -> str:
+    """Collapse each run of whitespace to a single space for fuzzy matching."""
+    return " ".join(s.split())
+
+
+def _fuzzy_replace(code: str, old: str, new: str) -> str | None:
+    """Try whitespace-normalized matching when an exact match fails.
+
+    Returns the edited code, or None if no match is found even after
+    normalisation.
+    """
+    norm_old = _normalize_ws(old)
+    lines = code.splitlines(keepends=True)
+    old_lines = old.splitlines()
+    window = len(old_lines)
+    for start in range(len(lines) - window + 1):
+        candidate = "".join(lines[start : start + window])
+        if _normalize_ws(candidate) == norm_old:
+            return code[: sum(len(l) for l in lines[:start])] + new + code[sum(len(l) for l in lines[: start + window]) :]
+    return None
+
+
 def apply_edits(code: str, edits: list[dict]) -> str:
     """Apply a sequence of str_replace edits to code.
 
     Each edit is {"old_str": ..., "new_str": ...}.
     Replaces all occurrences of old_str. Raises ValueError if old_str is not found.
+    Falls back to whitespace-normalised matching when an exact match fails.
     """
     for i, edit in enumerate(edits):
         old = edit["old_str"]
         new = edit["new_str"]
         if old == new:
             continue
-        if old not in code:
-            raise ValueError(f"Edit {i}: old_str not found in code:\n{old[:200]}")
-        code = code.replace(old, new)
+        if old in code:
+            code = code.replace(old, new)
+            continue
+        fuzzy = _fuzzy_replace(code, old, new)
+        if fuzzy is not None:
+            logger.debug("Edit %d: exact match failed, applied via whitespace-normalised match", i)
+            code = fuzzy
+            continue
+        raise ValueError(f"Edit {i}: old_str not found in code:\n{old[:200]}")
     return code
 
 
