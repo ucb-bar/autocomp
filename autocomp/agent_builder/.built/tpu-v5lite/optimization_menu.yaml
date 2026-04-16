@@ -1,0 +1,37 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Order grid so reduction axis is last, enabling VMEM accumulator reuse across iterations
+- strategy: Use `scratch_shapes=[pltpu.VMEM(...)]` for persistent high-precision accumulators across reduction loop iterations
+- strategy: Conditionally initialize accumulator on first reduction iteration and write back on last, avoiding HBM round-trips
+- strategy: Align block last two dimensions to hardware tile boundaries (multiples of 8 and 128)
+- strategy: Avoid singleton dimensions in last two axes; reshape to keep meaningful data in tiled dimensions
+- strategy: Perform reshapes and reductions on leading dimensions instead of last two, which require expensive hardware support
+- strategy: Fuse transpositions into `lax.dot_general` contraction dimensions instead of materializing transposed arrays
+- strategy: Use `preferred_element_type=jnp.float32` in dot operations; accumulate reductions in float32 with bfloat16 I/O
+- strategy: Upcast narrow types (bfloat16, int8) to float32 before elementwise ops since hardware computes elementwise in
+    32-bit
+- strategy: Use scalar prefetch to load small index/metadata into scalar registers for dynamic block indexing without pipeline
+    stalls
+- strategy: Use `input_output_aliases` for buffers needing both reads and writes across pipeline iterations
+- strategy: Generate random numbers inside kernels via hardware PRNG intrinsics, passing only a key through SMEM
+- strategy: Sweep block size configurations empirically to balance VMEM capacity, pipeline bubbles, and arithmetic intensity
+- strategy: Maximize block sizes up to ~16MB VMEM limit to increase arithmetic intensity per kernel invocation
+- strategy: Make parallel grid axis sizes multiples of TPU core count and mark with `dimension_semantics="parallel"`
+- strategy: Arrange grid iteration so consecutive indices reuse same input slices, letting compiler skip redundant HBM copies
+- strategy: Minimize control flow (cond, fori_loop); pack expensive operations into single basic blocks
+- strategy: Prefer cheap elementwise ops (add, mul, where) over expensive ones (sin, cos, division); use approximations
+- strategy: Use block-sparse index structures to skip computation on zero blocks entirely

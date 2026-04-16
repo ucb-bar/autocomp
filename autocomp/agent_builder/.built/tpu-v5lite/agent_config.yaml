@@ -1,0 +1,27 @@
+agent_name: tpu-v5lite
+version: '1.0'
+built_at: '2026-04-16T01:54:01+00:00'
+build:
+  main_model: us.anthropic.claude-opus-4-6-v1
+  light_model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  agent_scope: Optimizing JAX Pallas TPU kernel code targeting TPU v6e. The agent rewrites JAX/Pallas code for better performance
+    on Google TPU v5lite hardware. It uses the jax.experimental.pallas API and pallas.tpu module for TPU-specific operations.
+    Model-level concerns like sharding across multiple hosts, serving, and distributed training are out of scope.
+  sources:
+  - type: webpage
+    url: https://docs.jax.dev/en/latest/pallas/index.html
+    max_depth: 2
+    max_pages: 250
+  - type: webpage
+    url: https://docs.jax.dev/en/latest/pallas/tpu/index.html
+    max_depth: 2
+    max_pages: 250
+  - type: webpage
+    url: https://docs.jax.dev/en/latest/jax.experimental.pallas.tpu.html
+    max_depth: 2
+    max_pages: 250
+  - type: webpage
+    url: https://docs.cloud.google.com/tpu/docs/
+    max_depth: 2
+    max_pages: 250
+description: Auto-generated agent config for tpu-v5lite
