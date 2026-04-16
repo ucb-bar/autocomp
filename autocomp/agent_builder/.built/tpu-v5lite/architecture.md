@@ -1,82 +1,41 @@
-## TPU v6e (Trillium) Hardware Architecture Summary
+## TPU v5e Hardware Architecture Summary
 
-### Overview
-
-The TPU v6e is Google's Trillium-generation tensor processing unit, programmed via JAX Pallas kernels that lower through the Mosaic compiler to TPU machine code. The TPU executes as a **sequential, pipelined processor** — unlike GPUs, grid iterations run serially in lexicographic order, not in parallel. The programming model uses `pallas_call` with a grid of iterations, where `BlockSpec` definitions tile inputs/outputs into blocks that are automatically pipelined between memory levels. The compiler overlaps memory transfers with compute via double-buffering.
+The TPU v5e is a Google-designed ML accelerator optimized for matrix-heavy workloads. Each chip contains a single TensorCore — there is no Megacore (multi-TensorCore) and no SparseCore on this generation. Programming is done via JAX's `jax.experimental.pallas` API, which lowers through the Mosaic compiler to TPU machine code. The TPU executes as a sequential, single-threaded processor with a very wide vector datapath — not a massively parallel GPU-style architecture. Grid iterations in Pallas execute in lexicographic order, enabling data reuse across consecutive iterations and deterministic write ordering.
 
 ### Memory Hierarchy
 
-| Level | Name | Capacity | Access Characteristics |
-|-------|------|----------|----------------------|
-| **Off-chip** | HBM | 32 GiB | High latency, ~819 GB/s bandwidth (v5e reference). Cannot be accessed directly by compute — must be prefetched to VMEM/SMEM via DMA. Transfers are asynchronous and overlapped with compute by the compiler. |
-| **On-chip SRAM** | VMEM (Vector Memory) | 16+ MB (96 MB on v5p) | ~10× lower latency than HBM. **4 KiB transaction granularity** with alignment requirements. Default memory space for kernel `Ref` arguments. Spilled vector registers also consume VMEM. Each TensorCore has its own private VMEM. |
-| **On-chip SRAM** | SMEM (Scalar Memory) | Small | Supports **random access** at single-32-bit-value granularity. No alignment requirements. Used for control-flow data, dynamic indices, and irregular access patterns (e.g., block-sparse indexing). |
-| **Registers** | VREGs (Vector) | — | **2D tiles of 8×128 elements** (for 32-bit types on v6e). All vector/matrix computation operates on data in VREGs. Reading a VMEM `Ref` loads into VREGs. |
-| **Registers** | SREGs (Scalar) | — | Scalar values for control flow and address computation. |
+The TPU v5e has a three-level memory hierarchy:
 
-**Key data flow:** HBM → VMEM (automatic prefetch before kernel body) → VREGs (explicit `ref[...]` load) → Compute → VREGs → VMEM → HBM (automatic writeback after kernel body). The kernel author manages VMEM↔VREG transfers; the compiler manages HBM↔VMEM pipelining.
+1. **HBM (High-Bandwidth Memory):** 16 GB per chip, ~800 GiB/s bandwidth. This is the main off-chip memory where all `pallas_call` inputs and outputs reside by default. HBM cannot be accessed directly by compute units; data must be transferred to on-chip memory via DMA. These transfers are managed by the Pallas runtime/compiler and can be overlapped with computation through software pipelining.
 
-### Compute Units (per TensorCore)
+2. **VMEM (Vector Memory):** On-chip SRAM serving as the primary scratchpad for array data. This is the default memory space for Pallas kernel operands. VMEM has ~10× lower latency than HBM. Transaction granularity is 4 KiB with alignment requirements. Reads and writes aligned to multiples of 8 (second-to-last dimension) and 128 (last dimension) are always efficient. Pallas uses double-buffering by default to overlap HBM↔VMEM transfers with compute.
 
-1. **MXU (Matrix Multiply Unit):** Systolic array of **256×256 multiply-accumulators** (v6e; prior generations were 128×128). Executes matrix multiplications asynchronously in the background. Inputs must be **bfloat16**; accumulation is always **float32**. Even float32 operands are rounded to bfloat16 unless explicit precision is requested. Last-two-dimension transposes of operands fuse into matmul for free. Produces 16K multiply-accumulate operations per cycle.
+3. **SMEM (Scalar Memory):** On-chip SRAM for scalar values, supporting random access at 32-bit granularity with no alignment constraints. Used for control-flow data, loop indices, and indirect/sparse access patterns (e.g., scalar prefetch for block-sparse kernels).
 
-2. **Vector Processing Unit (VPU):** Operates on 2D vector registers (8×128 for 32-bit). Handles elementwise operations, reductions, and non-matmul computation. Hardware supports only **32-bit elementwise compute** — narrower types should be upcast. Cost tiers: cheap (add, mul, bitwise, comparisons, casts), medium (div, exp, tanh, pow), expensive (sin, cos).
+4. **Registers:** VREGs (vector registers) hold array data loaded from VMEM; SREGs (scalar registers) hold scalar data loaded from SMEM. All computation operates on register values. Vector registers are 2D tiles, nominally 8×128 for 32-bit values. The last two array dimensions are tiled onto these registers (8 sublanes × 128 lanes). Computation on arrays smaller than a full tile is padded to tile size — a 1×1 array costs the same as an 8×128 array. Excessive register pressure causes spills to VMEM, degrading performance.
 
-3. **Scalar Unit:** Handles control flow, address computation, and maintenance operations. Loops are **fully unrolled** at compile time — keep trip counts small.
+### Compute Units
 
-4. **XLU:** Handles matrix transpositions and permutations, asynchronously scheduled.
+Each TensorCore contains three types of compute units that can operate asynchronously with respect to each other:
 
-All three main compute units (Scalar, VPU, MXU) can operate **asynchronously** with respect to each other, managed by the compiler. From the programmer's perspective, execution is single-threaded.
+1. **Matrix Multiply Units (MXUs):** Four 128×128 systolic arrays per chip. Each MXU performs 16K multiply-accumulate operations per cycle. Inputs are bfloat16; accumulation is in float32. Even float32 operands are rounded to bfloat16 unless higher precision is explicitly requested. Peak throughput: **197 TFLOPS (bf16)** or **393 TOPS (int8)**. Transpositions of the last two dimensions of matmul operands can be fused into the MXU operation at no cost.
 
-**Reference throughput (v5e):** 197 TFLOP/s for bf16/f32 operations, yielding an arithmetic intensity crossover of ~240 FLOPs/byte. The v6e MXU is 4× larger (256×256 vs 128×128), so peak throughput is substantially higher.
+2. **Vector Processing Unit (VPU):** Handles elementwise operations (activations, reductions, etc.). Significantly lower throughput than MXUs. Cheap operations: add, sub, mul, max, min, abs, bitwise ops, comparisons, casts. Medium cost: division, exp, tanh, pow. Expensive: sin, cos. Reductions over leading dimensions are fastest; reductions over the last dimension are slowest. Broadcasting along all but the last two dimensions is free.
 
-### Tiling and Layout Constraints
+3. **Scalar Unit:** Handles control flow, memory address computation, and maintenance operations. Operates on 0D scalar values stored in SREGs.
 
-- Vector registers are **8×128 tiles** (sublanes × lanes) for 32-bit types. The last two dimensions of all arrays are tiled onto this shape.
-- **Block shape requirements:** Rank ≥ 1. The last two dimensions must be divisible by **8 and 128** respectively, OR equal to the full array dimension along that axis.
-- Reads/writes aligned to multiples of **8 and 128** in the last two dimensions are always supported for 32-bit types.
-- **All computation is padded to tile size:** a 1×1 array costs the same as an 8×128 array. Singleton dimensions in the last two axes are extremely wasteful — an 8×128×1×1 array is 1024× more expensive than 8×128 due to per-element tile padding.
+### Key Constraints and Optimization Characteristics
 
-### Dimension Sensitivity
+**Arithmetic intensity threshold:** With 197 TFLOPS bf16 and ~800 GiB/s HBM bandwidth, the crossover is ~246 ops/byte. Operations below this ratio (elementwise, reductions, small matmuls) are memory-bandwidth-bound; operations above it (large matmuls) are compute-bound. Fusing operations to avoid HBM round-trips is critical for bandwidth-bound kernels.
 
-- **Last two axes are special** and map to the physical tile layout.
-- Reductions: last dim = slowest, second-to-last = medium, leading dims = fastest.
-- Reshapes: free for all but last two dims. Only limited last-two-dim reshapes are supported.
-- Transpositions: arbitrary permutations of all but last two axes are **free** for ≥4D arrays. Last-two-dim transposes can fuse into matmul.
+**Tiling and block shape constraints:** Block dimensions in the last two axes must be divisible by 8 and 128 respectively, or equal to the full array dimension. Matrix tiles should align to 128×128 to fully utilize MXU systolic arrays. Sub-128 dimensions waste compute due to zero-padding. Blocks must have rank ≥ 1 (no scalar blocks). Larger blocks improve utilization but risk exceeding VMEM capacity.
 
-### Pipelining Model
+**Pipelining:** Pallas on TPU uses double-buffered software pipelining (2 buffer slots) to overlap HBM↔VMEM transfers with computation. Configurable via `pl.Buffered(buffer_count=N)`. Lookahead prefetch is available for variable-work iterations. Consecutive grid iterations accessing the same output slice skip redundant transfers, enabling efficient accumulation patterns. Reduction dimensions must be the innermost (last) grid dimensions.
 
-- Default pipelining is **double-buffered** (2 VMEM buffers per input/output) for HBM↔VMEM transfers.
-- Three pipeline stages per iteration: **copy_in** (HBM→VMEM), **compute** (VMEM↔VREGs), **copy_out** (VMEM→HBM).
-- Consecutive grid iterations that access the same input slice skip the HBM transfer — the existing VMEM buffer is reused. This enables accumulation patterns for reductions.
-- Reduction axes must be the **last (innermost) grid dimensions**. Output buffers contain garbage initially and must be explicitly initialized.
-- Block size is the **most important tuning parameter**: it controls pipeline granularity, VMEM consumption, and per-block arithmetic intensity.
+**Data types:** Native support for float32, bfloat16, all int/uint precisions (except int4), and bool. Elementwise operations natively execute at 32-bit width; narrower types should be upcast. bfloat16 halves memory footprint and transfer volume versus float32, directly benefiting bandwidth-bound kernels. Subnormals are flushed to zero.
 
-### Multicore (Megacore)
+**Layout sensitivity:** Arrays with singleton dimensions in the last two axes are extremely wasteful (each element occupies an entire 8×128 tile). Reshapes involving the last two dimensions are restricted and often memory-bound. Transpositions of all but the last two dimensions are free for arrays with ≥4 dimensions; only last-two-axis transposition is otherwise supported.
 
-- **Not available on v6e.** Megacore (2 TensorCores per chip) exists only on TPU v4 and v5p. Specifying `dimension_semantics` is a no-op on v6e.
+**Control flow:** `cond`, `fori_loop`, and `for_loop` are supported but loops are fully unrolled at compile time — keep trip counts small. Excessive control flow degrades code generation quality.
 
-### SparseCore
-
-- v6e has **2 SparseCores per chip**, each with 16 vector subcores (SIMD width 8 for f32, 16 for bf16).
-- Optimized for irregular/random memory access patterns: gather, scatter, sorting, histograms, ragged operations.
-- SparseCore and TensorCore can execute **concurrently** when placed in the same `jax.jit`.
-
-### Inter-Chip Interconnect (ICI)
-
-- TPUs are connected in pod topologies via ICI (ND torus). Communication uses a **push-only RDMA model** — a device can push data to any other device but can only read local data.
-- **v5e restriction:** devices can only route to power-of-2 offsets. Best practice: transfer only to neighboring devices.
-- DMA semaphores track async transfer progress. Barrier semaphores are a limited resource (~20-30 per TPU).
-
-### Supported Data Types
-
-`float32`, `bfloat16`, all `int*` except `int4`, all `uint*`, `bool_`. bfloat16 halves memory bandwidth requirements and is the native MXU input format. Subnormals are flushed to zero in bfloat16.
-
-### Key Optimization Principles
-
-1. **Maximize arithmetic intensity per block** — larger blocks amortize memory transfer costs and approach compute-bound regime.
-2. **Use bfloat16** for operands to halve memory bandwidth and match native MXU input format.
-3. **Avoid small trailing dimensions** — padding waste to 8×128 tiles is the dominant source of inefficiency for undersized blocks.
-4. **Place reduction axes last in the grid** to enable accumulation without extra HBM round-trips.
-5. **Fuse operations** (activations, transposes) into matmul kernels — these are essentially free when compute-bound.
-6. **Sweep block sizes** empirically — the optimal block size depends on the tradeoff between VMEM capacity, pipeline bubble overhead, and per-block arithmetic intensity.
+**Ref access semantics:** Input SRAM buffers are read-only (writes do not propagate to HBM). Output SRAM buffers are write-only (reads see uninitialized data). Accumulation into outputs requires consecutive grid iterations writing to the same slice, with explicit initialization via `pl.when(pl.program_id(axis) == 0)`.

@@ -1,379 +1,6 @@
-## distributed.html
-
-SUMMARY: This document covers distributed computing in Pallas for TPUs, demonstrating remote DMA operations, collective primitives (ppermute, all_gather, psum, psum_scatter), synchronization with semaphores, double-buffering, bi-directional communication, and nested pipelining techniques.
-
-```python
-import functools
-import jax
-from jax import lax
-from jax import numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-
-P = jax.sharding.PartitionSpec
-```
-
-```python
-def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
-    my_id = lax.axis_index('x')
-    right_neighbor = lax.rem(my_id + 1, num_devices)
-    remote_copy_op = pltpu.make_async_remote_copy(
-        src_ref=input_ref,
-        dst_ref=output_ref,
-        send_sem=send_sem,
-        recv_sem=recv_sem,
-        device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-    remote_copy_op.start()
-    remote_copy_op.wait()
-```
-
-```python
-def all_gather_kernel(input_ref,
-                      output_ref,
-                      local_copy_sem,
-                      send_sem,
-                      recv_sems):
-    outer_step = pl.program_id(0)
-    my_id = lax.axis_index('x')
-    right_neighbor = lax.rem(my_id + 1, num_devices)
-    copy_slot = my_id - outer_step
-    copy_slot = lax.rem(copy_slot + num_devices, num_devices)
-
-    @pl.when(outer_step == 0)
-    def _():
-        local_copy_op = pltpu.make_async_copy(
-            src_ref=input_ref,
-            dst_ref=output_ref.at[my_id],
-            sem=local_copy_sem,
-        )
-        local_copy_op.start()
-        local_copy_op.wait()
-
-    remote_copy_op = pltpu.make_async_remote_copy(
-        src_ref=output_ref.at[copy_slot],
-        dst_ref=output_ref.at[copy_slot],
-        send_sem=send_sem,
-        recv_sem=recv_sems.at[outer_step],
-        device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-    remote_copy_op.start()
-    remote_copy_op.wait()
-```
-
-```python
-def example_kernel(input_ref, output_ref, send_sem, recv_sem):
-    device_id = lax.axis_index('x')
-    copy_0_to_1 = pltpu.make_async_remote_copy(
-        src_ref=input_ref,
-        dst_ref=output_ref,
-        send_sem=send_sem,
-        recv_sem=recv_sem,
-        device_id=1,
-    )
-    copy_2_to_3 = pltpu.make_async_remote_copy(
-        src_ref=input_ref,
-        dst_ref=output_ref,
-        send_sem=send_sem,
-        recv_sem=recv_sem,
-        device_id=3,
-    )
-    copy_3_to_2 = pltpu.make_async_remote_copy(
-        src_ref=input_ref,
-        dst_ref=output_ref,
-        send_sem=send_sem,
-        recv_sem=recv_sem,
-        device_id=2,
-    )
-    @pl.when(device_id == 0)
-    def _():
-        copy_0_to_1.start()
-        copy_0_to_1.wait_send()
-    @pl.when(device_id == 1)
-    def _():
-        copy_0_to_1.wait_recv()
-    @pl.when(device_id == 2)
-    def _():
-        copy_2_to_3.start()
-        copy_2_to_3.wait_send()
-        copy_3_to_2.wait_recv()
-    @pl.when(device_id == 3)
-    def _():
-        copy_3_to_2.start()
-        copy_3_to_2.wait_send()
-        copy_2_to_3.wait_recv()
-```
-
-```python
-def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
-    """Performs a barrier with neighbors on the global barrier semaphore."""
-    barrier_sem = pltpu.get_barrier_semaphore()
-    for neighbor in [left_neighbor, right_neighbor]:
-        pl.semaphore_signal(
-            barrier_sem,
-            inc=1,
-            device_id=(neighbor,),
-            device_id_type=pl.DeviceIdType.MESH,
-        )
-    pl.semaphore_wait(barrier_sem, 2)
-    if double_barrier:
-        @functools.partial(pl.run_scoped,
-                           second_barrier=pltpu.SemaphoreType.REGULAR)
-        def _(second_barrier):
-            for neighbor in [left_neighbor, right_neighbor]:
-                pl.semaphore_signal(
-                    second_barrier,
-                    inc=1,
-                    device_id=(neighbor,),
-                    device_id_type=pl.DeviceIdType.MESH,
-                )
-            pl.semaphore_wait(second_barrier, 2)
-```
-
-```python
-def all_reduce_kernel(
-    x_ref,
-    o_ref,
-    hbm_scratch,
-    copy_sem,
-    remote_recv_sem,
-    remote_send_sem,
-    capacity_sem,
-    receive_scratch,
-):
-    outer_step = pl.program_id(0)
-    working_slot = lax.rem(outer_step, 2)
-    receiving_slot = 1 - working_slot
-
-    my_id = lax.axis_index('x')
-    right_neighbor = lax.rem(my_id + 1, num_devices)
-    left_neighbor = lax.rem(my_id - 1 + num_devices, num_devices)
-
-    @pl.when(outer_step == 0)
-    def _():
-        local_barrier(left_neighbor, right_neighbor)
-        o_ref[...] = jnp.zeros_like(o_ref)
-        receive_scratch[...] = jnp.zeros_like(receive_scratch)
-        initial_copy = pltpu.make_async_remote_copy(
-            src_ref=x_ref,
-            dst_ref=hbm_scratch.at[working_slot],
-            send_sem=remote_send_sem,
-            recv_sem=remote_recv_sem,
-            device_id=(right_neighbor,),
-            device_id_type=pl.DeviceIdType.MESH,
-        )
-        initial_copy.start()
-        initial_copy.wait()
-
-    pl.semaphore_signal(
-        capacity_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-
-    local_copy = pltpu.make_async_copy(
-        src_ref=hbm_scratch.at[working_slot],
-        dst_ref=receive_scratch,
-        sem=copy_sem,
-    )
-    local_copy.start()
-
-    pl.semaphore_wait(capacity_sem, 1)
-    remote_copy = pltpu.make_async_remote_copy(
-        src_ref=hbm_scratch.at[working_slot],
-        dst_ref=hbm_scratch.at[receiving_slot],
-        send_sem=remote_send_sem,
-        recv_sem=remote_recv_sem,
-        device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-    remote_copy.start()
-    local_copy.wait()
-    o_ref[...] += receive_scratch[...]
-    remote_copy.wait()
-```
-
-```python
-def reduce_scatter_kernel(
-    x_ref,
-    o_ref,
-    hbm_scratch,
-    local_copy_sem,
-    left_recv_sem,
-    left_send_sem,
-    right_recv_sem,
-    right_send_sem,
-    left_capacity_sem,
-    right_capacity_sem,
-    accum_scratch,
-):
-    outer_step = pl.program_id(0)
-    phase = pl.program_id(1)
-    is_start = jnp.logical_and(outer_step == 0, phase == 0)
-    last_iteration = outer_step == pl.num_programs(0) - 1
-
-    working_slot = lax.rem(outer_step, 2)
-    receiving_slot = 1 - working_slot
-    my_id = lax.axis_index('x')
-    right_neighbor = mod(my_id + 1, num_devices)
-    left_neighbor = mod(my_id - 1, num_devices)
-
-    left_copy_device = mod(my_id + outer_step + 1, num_devices)
-    right_copy_device = mod(my_id - outer_step - 1, num_devices)
-    left_copy_slice = pl.ds(0, block_size[0] // 2)
-    right_copy_slice = pl.ds(block_size[0] // 2, block_size[0] // 2)
-    current_phase_slice = pl.ds(phase * (block_size[0] // 2), block_size[0] // 2)
-
-    initial_left_copy = pltpu.make_async_remote_copy(
-        src_ref=x_ref.at[my_id, left_copy_slice],
-        dst_ref=hbm_scratch.at[working_slot, left_copy_slice],
-        send_sem=left_send_sem,
-        recv_sem=left_recv_sem,
-        device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-
-    initial_right_copy = pltpu.make_async_remote_copy(
-        src_ref=x_ref.at[my_id, right_copy_slice],
-        dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
-        send_sem=right_send_sem,
-        recv_sem=right_recv_sem,
-        device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-
-    left_copy = pltpu.make_async_remote_copy(
-        src_ref=hbm_scratch.at[working_slot, left_copy_slice],
-        dst_ref=hbm_scratch.at[receiving_slot, left_copy_slice],
-        send_sem=left_send_sem,
-        recv_sem=left_recv_sem,
-        device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-    right_copy = pltpu.make_async_remote_copy(
-        src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
-        dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
-        send_sem=right_send_sem,
-        recv_sem=right_recv_sem,
-        device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-    )
-
-    @pl.when(is_start)
-    def _():
-        local_barrier(left_neighbor, right_neighbor)
-        o_ref[...] = jnp.zeros_like(o_ref[...])
-        accum_scratch[...] = jnp.zeros_like(accum_scratch[...])
-        initial_left_copy.start()
-        initial_left_copy.wait()
-        initial_right_copy.start()
-        signal(LEFT, right_capacity_sem)
-        signal(RIGHT, left_capacity_sem)
-
-    @pl.when(~is_start)
-    def _():
-        @pl.when(phase == LEFT)
-        def _():
-            pl.semaphore_wait(right_capacity_sem, 1)
-            right_copy.start()
-
-        @pl.when(phase == RIGHT)
-        def _():
-            pl.semaphore_wait(left_capacity_sem, 1)
-            left_copy.start()
-
-    local_copy = pltpu.make_async_copy(
-        src_ref=hbm_scratch.at[working_slot, current_phase_slice],
-        dst_ref=accum_scratch,
-        sem=local_copy_sem,
-    )
-    local_copy.start()
-    local_copy.wait()
-
-    @pl.when(~last_iteration)
-    def _():
-        @pl.when(phase == LEFT)
-        def _():
-            accum_scratch[...] += x_ref[left_copy_device, left_copy_slice]
-
-        @pl.when(phase == RIGHT)
-        def _():
-            accum_scratch[...] += x_ref[right_copy_device, right_copy_slice]
-
-    local_copy = pltpu.make_async_copy(
-        src_ref=accum_scratch,
-        dst_ref=hbm_scratch.at[working_slot, current_phase_slice],
-        sem=local_copy_sem,
-    )
-    local_copy.start()
-    local_copy.wait()
-
-    @pl.when(is_start)
-    def _():
-        initial_right_copy.wait()
-
-    @pl.when(~is_start)
-    def _():
-        @pl.when(phase == LEFT)
-        def _():
-            right_copy.wait()
-            signal(LEFT, right_capacity_sem)
-
-        @pl.when(phase == RIGHT)
-        def _():
-            left_copy.wait()
-            signal(RIGHT, left_capacity_sem)
-
-    @pl.when(last_iteration)
-    def _():
-        @pl.when(phase == LEFT)
-        def _():
-            o_ref[left_copy_slice, ...] = accum_scratch[...]
-            pl.semaphore_wait(right_capacity_sem, 1)
-
-        @pl.when(phase == RIGHT)
-        def _():
-            o_ref[right_copy_slice, ...] = accum_scratch[...]
-            pl.semaphore_wait(left_capacity_sem, 1)
-```
-
-```python
-def inner_kernel(input_ref, accum_ref):
-    @pl.when(pl.program_id(1) == 0)
-    def _():
-        accum_ref[...] = jnp.zeros_like(accum_ref)
-    accum_ref[...] += input_ref[...]
-
-accum_pipeline = pltpu.emit_pipeline(
-    inner_kernel,
-    in_specs=[inner_block_spec],
-    out_specs=inner_block_spec,
-    grid=inner_grid,
-)
-
-@pl.when(~last_iteration)
-def _():
-    @pl.when(phase == LEFT)
-    def _():
-        accum_pipeline(
-            x_ref.at[left_copy_device, left_copy_slice],
-            hbm_scratch.at[working_slot, left_copy_slice],
-        )
-
-    @pl.when(phase == RIGHT)
-    def _():
-        accum_pipeline(
-            x_ref.at[right_copy_device, right_copy_slice],
-            hbm_scratch.at[working_slot, right_copy_slice],
-        )
-```
-
 ## jax-ai-stack
 
-SUMMARY: This document provides a comprehensive overview of the JAX AI stack for production ML on Cloud TPUs, covering the full ecosystem from core libraries (JAX, Flax, Optax, Orbax, Grain) through infrastructure (XLA, Pathways), advanced development tools (Pallas, Tokamax, Qwix), and application-layer solutions (MaxText, Tunix, vLLM). It demonstrates API usage patterns for optimization, quantization, and kernel authoring.
+SUMMARY: This document describes the JAX AI stack architecture for production ML on Cloud TPUs, covering the core libraries (JAX, Flax, Optax, Orbax, Grain), infrastructure (XLA, Pathways), advanced development tools (Pallas, Tokamax, Qwix), and application layer (MaxText, Tunix, vLLM). It demonstrates API usage patterns for composable optimization, quantization rules, and kernel authoring paradigms.
 
 ```python
 # Optax implementation of a RMSProp optimizer with a custom learning rate
@@ -386,8 +13,7 @@ optimizer = optax.chain(
 ```
 
 ```python
-# Qwix quantization example: applying w4a4 (4-bit weight, 4-bit activation) 
-# quantization to an LLM's MLP layers and w8 (8-bit weight) quantization to the embedder
+# Qwix quantization rule application example
 fp_model = ModelWithoutQuantization(...)
 rules = [
     qwix.QuantizationRule(
@@ -407,7 +33,7 @@ quantized_model = qwix.quantize_model(fp_model, qwix.PtqProvider(rules))
 
 ## matmul.html
 
-SUMMARY: This document covers writing efficient matrix multiplication kernels for TPU using JAX Pallas, demonstrating block matrix multiplication, pipelining, bfloat16 support, and kernel fusion techniques with BlockSpec and grid specifications.
+SUMMARY: This document covers writing efficient matrix multiplication kernels for TPU v5e using JAX Pallas, demonstrating block matrix multiplication, pipelining, bfloat16 support, and kernel fusion techniques with BlockSpec and grid specifications.
 
 ```python
 import functools
@@ -495,7 +121,9 @@ def matmul(
 ```
 
 ```python
-def matmul_kernel(x_ref, y_ref, z_ref, acc_ref, *, nsteps, transpose_rhs):
+def matmul_kernel(
+    x_ref, y_ref, z_ref, acc_ref, *, nsteps, transpose_rhs
+):
   @pl.when(pl.program_id(2) == 0)
   def _():
     acc_ref[...] = jnp.zeros_like(acc_ref)
@@ -615,7 +243,7 @@ def matmul(
 
 ## pipelining.html
 
-SUMMARY: This document covers software pipelining fundamentals for JAX Pallas kernels, explaining how to overlap communication and compute operations to hide memory latency. It demonstrates the Pallas API for writing pipelined kernels using grid, BlockSpec, and pallas_call, with examples of elementwise operations and reductions.
+SUMMARY: This document covers software pipelining techniques for overlapping communication and compute in JAX Pallas kernels, explaining memory hierarchies, the double-buffered pipeline pattern, the Pallas pipelining API (grid, BlockSpec, kernel, pallas_call), and practical examples including elementwise operations and reductions on TPU.
 
 ```python
 import jax
@@ -667,7 +295,7 @@ def add_matrices_pipelined_param(
   m, n = x.shape
   block_spec = pl.BlockSpec((bm, bn), lambda i, j: (i, j))
   return pl.pallas_call(
-      add_matrices_pipelined_kernel,
+      add_matrices_kernel,
       out_shape=x,
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
@@ -695,121 +323,9 @@ def correct_sum(x: jax.Array,
   )(x)
 ```
 
-## async_note.html
-
-SUMMARY: This document describes how to implement decomposed async operations in Pallas on TPU, enabling overlapping computation and communication across multiple kernels using semaphores and stateful references to manage lifetimes and scheduling.
-
-```python
-import functools
-import jax
-import jax.lax
-import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-
-# Basic async ppermute decomposition with start/done kernels
-
-def ppermute_start_kernel(
-    in_ref, send_sem, recv_sem, out_ref, _, *, axis_name,
-):
-  axis_size = jax.lax.psum(1, axis_name)
-  left_neighbor = jax.lax.rem(
-      jax.lax.axis_index(axis_name) - 1 + axis_size, axis_size
-  )
-  right_neighbor = jax.lax.rem(jax.lax.axis_index(axis_name) + 1, axis_size)
-  barrier_sem = pltpu.get_barrier_semaphore()
-  pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-  pltpu.semaphore_wait(barrier_sem, 1)
-  pltpu.make_async_remote_copy(
-      in_ref, out_ref, send_sem, recv_sem, device_id=right_neighbor
-  ).start()
-
-def ppermute_start(x, *, axis_name):
-  send_sem, recv_sem, x, out = pl.pallas_call(
-      functools.partial(ppermute_start_kernel, axis_name=axis_name),
-      out_shape=(
-          pltpu.SemaphoreType.DMA(()),
-          pltpu.SemaphoreType.DMA(()),
-          jax.ShapeDtypeStruct(x.shape, dtype=x.dtype),
-          jax.ShapeDtypeStruct(x.shape, dtype=x.dtype),
-      ),
-      in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
-      out_specs=(
-          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-          pl.BlockSpec(memory_space=pl.ANY),
-          pl.BlockSpec(memory_space=pl.ANY),
-      ),
-      input_output_aliases={0: 2}
-  )(x)
-  return send_sem, recv_sem, x, out
-
-def ppermute_done_kernel(_, ref, send_sem, recv_sem, _):
-  pltpu.make_async_copy(ref, ref, send_sem).wait()
-  pltpu.make_async_copy(ref, ref, recv_sem).wait()
-
-def ppermute_done(send_sem, recv_sem, x, out):
-  out = pl.pallas_call(
-      ppermute_done_kernel,
-      out_shape=(jax.ShapeDtypeStruct(out.shape, dtype=out.dtype),),
-      in_specs=[
-          pl.BlockSpec(memory_space=pl.ANY),
-          pl.BlockSpec(memory_space=pl.ANY),
-          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
-      ],
-      out_specs=pl.BlockSpec(memory_space=pl.ANY),
-      input_output_aliases={1: 0}
-  )(x, out, send_sem, recv_sem)
-  return out
-
-# Usage with optimization barriers for scheduling
-def f_with_barriers(x):
-  fut = ppermute_start(x)
-  x, fut = jax.lax.optimization_barrier((x, fut))
-  z = x + 1
-  z, fut = jax.lax.optimization_barrier((z, fut))
-  y = ppermute_done(fut)
-  return y, z
-
-# Usage in a loop with unrolling to avoid defensive copies
-def f_loop_unrolled(x):
-  def body(i, x):
-    fut = ppermute_start(x)
-    y = ppermute_done(fut)
-    return y
-  return jax.lax.fori_loop(0, 8, body, x, unroll=2)
-
-# Staggered loop passing futures across boundaries
-def f_staggered_loop(x):
-  fut = ppermute_start(x)
-  def body(i, fut):
-    x = ppermute_done(fut)
-    fut = ppermute_start(x)
-    return fut
-  fut = jax.lax.fori_loop(0, 7, body, fut, unroll=2)
-  return ppermute_done(fut)
-
-# Loop with accumulation
-def f_loop_accumulate(x):
-  out = jnp.zeros_like(x)
-  send_sem, recv_sem, x, out_buf = ppermute_start(x)
-  out = out + x
-  def body(i, carry):
-    out, (send_sem, recv_sem, x, out_buf) = carry
-    x = ppermute_done(send_sem, recv_sem, x, out_buf)
-    send_sem, recv_sem, x, out_buf = ppermute_start(x)
-    out = out + x
-    return out, (send_sem, recv_sem, x, out_buf)
-  out, (send_sem, recv_sem, x, out_buf) = jax.lax.fori_loop(
-      0, 7, body, (out, (send_sem, recv_sem, x, out_buf)), unroll=2
-  )
-  return out, ppermute_done(send_sem, recv_sem, x, out_buf)
-```
-
 ## sparse.html
 
-SUMMARY: This document covers block-sparse computation in JAX Pallas on TPU, demonstrating how to use scalar prefetch to enable dynamic block indexing and implement sparse kernels including block-aligned dynamic slicing, sparse-dense matrix multiplication, and dense matrix multiplication with block-sparse output masks.
+SUMMARY: This document covers block-sparse computation in JAX Pallas on TPU, demonstrating how to use scalar prefetch to enable dynamic block indexing and implement sparse kernels including block-aligned dynamic slicing, sparse-dense matrix multiplication, and dense matrix multiplication with sparse output masks.
 
 ```python
 import functools
@@ -1019,163 +535,9 @@ kernel = pl.pallas_call(
 )
 ```
 
-## core_map.html
-
-SUMMARY: This document covers Pallas `core_map` API for per-core TPU/GPU kernel programming, demonstrating inter-core communication, pipelining with automatic and manual work distribution, scalar prefetch with dynamic indexing, and SparseCore operations.
-
-```python
-from functools import partial
-import jax
-from jax.sharding import NamedSharding
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-from jax.experimental.pallas import tpu_sc as plsc
-import jax.numpy as jnp
-import numpy as np
-```
-
-```python
-# Simple per-core kernel with inter-core communication
-def swap_cores_kernel(in_hbm, out_hbm,
-                      in_vmem, scratch_vmem, out_vmem,
-                      sem, send_sem, recv_sem):
-  core_index = jax.lax.axis_index('core')
-  num_cores = jax.lax.axis_size('core')
-  slc_size = in_hbm.shape[-1] // num_cores
-  slc = pl.ds(core_index * slc_size, slc_size)
-
-  # Copy in a core-dependent slice of the input
-  pltpu.async_copy(in_hbm.at[:, slc], in_vmem, sem).wait()
-
-  # Barrier to synchronize cores
-  dst_core = (core_index + 1) % num_cores
-  sem0 = pltpu.get_barrier_semaphore()
-  pl.semaphore_signal(sem0, 1, device_id={'core': dst_core})
-  pl.semaphore_wait(sem0, 1)
-
-  # Swap data between cores
-  the_copy = pltpu.make_async_remote_copy(
-      in_vmem, scratch_vmem, send_sem, recv_sem, device_id={'core': dst_core},
-  )
-  the_copy.start()
-  the_copy.wait()
-
-  # Core-local compute
-  out_vmem[...] = scratch_vmem[...] * 2
-
-  # Copy out the output
-  pltpu.async_copy(out_vmem, out_hbm.at[:, slc], sem).wait()
-```
-
-```python
-# Top-level function using core_map with kernel decorator
-@jax.jit
-@partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
-def swap_cores(x):
-  scratch_shapes = [pltpu.VMEM(local_vmem_shape, x.dtype)] * 3 + [pltpu.SemaphoreType.DMA] * 3
-  return pl.kernel(swap_cores_kernel, out_shape=x, mesh=tc_mesh,
-                   scratch_shapes=scratch_shapes,
-                   compiler_params=pltpu.CompilerParams(collective_id=0))(x)
-```
-
-```python
-# Pipelining with automatic work parallelization
-def add_one_body(in_vmem, out_vmem):
-  out_vmem[...] = in_vmem[...] + 1
-
-def add_one_kernel(x_hbm_ref, o_hbm_ref):
-  in_shape = x_hbm_ref.shape
-  pltpu.emit_pipeline(
-      add_one_body,
-      grid=(in_shape[0] // 8, in_shape[1] // 128),
-      in_specs=[pl.BlockSpec(
-          block_shape=(8, 128), index_map=lambda i, j: (i, j),
-      )],
-      out_specs=[pl.BlockSpec(
-          block_shape=(8, 128), index_map=lambda i, j: (i, j),
-      )],
-      core_axis_name='core',
-      dimension_semantics=(pltpu.PARALLEL, pltpu.ARBITRARY),
-  )(x_hbm_ref, o_hbm_ref)
-
-@jax.jit
-@partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
-def add_one(x):
-  return pl.kernel(add_one_kernel, out_shape=x, mesh=tc_mesh, scratch_shapes=[])(x)
-```
-
-```python
-# Scalar prefetch with manual core work distribution
-def indexed_add_one_kernel(in_refs, out_refs, i_smem_ref):
-  (x_hbm_ref, i_hbm_ref), o_hbm_ref = in_refs, out_refs
-  in_shape = x_hbm_ref.shape
-  pltpu.sync_copy(i_hbm_ref, i_smem_ref)
-
-  core_idx = jax.lax.axis_index('core')
-  core_slc_size = in_shape[0] // num_cores
-  i_map = lambda i: core_idx * core_slc_size // 8 + i
-  j_map = lambda j: i_smem_ref[0] // 128 + j
-
-  pltpu.emit_pipeline(
-      add_one_body,
-      grid=(core_slc_size // 8, output_shape[1] // 128),
-      in_specs=[pl.BlockSpec(
-          block_shape=(8, 128), index_map=lambda i, j: (i_map(i), j_map(j)),
-      )],
-      out_specs=[pl.BlockSpec(
-          block_shape=(8, 128), index_map=lambda i, j: (i_map(i), j),
-      )]
-  )(x_hbm_ref, o_hbm_ref)
-
-@jax.jit
-@partial(jax.shard_map, mesh=mesh,
-         in_specs=(in_spec, jax.P()), out_specs=in_spec, check_vma=False)
-def indexed_add_one(x, index):
-  out_shape = jax.ShapeDtypeStruct((x.shape[0], x.shape[1] // 2), x.dtype)
-  return pl.kernel(indexed_add_one_kernel,
-                   out_shape=out_shape, mesh=tc_mesh,
-                   scratch_shapes=[pltpu.SMEM((1,), jnp.int32)])((x, index))
-```
-
-```python
-# SparseCore kernel with nested loops for register operations
-def sc_add_one_body(in_vmem, out_vmem):
-  @pl.loop(0, in_vmem.shape[0], step=SC_REG_OP_SHAPE[0])
-  def _reg_loop_0(c0):
-    @pl.loop(0, in_vmem.shape[1], step=SC_REG_OP_SHAPE[1])
-    def _reg_loop_1(c1):
-      slc = (pl.ds(c0, SC_REG_OP_SHAPE[0]), pl.ds(c1, SC_REG_OP_SHAPE[1]))
-      out_vmem[slc] = in_vmem[slc] + 1
-
-def sc_add_one_kernel(x_hbm_ref, o_hbm_ref):
-  in_shape = x_hbm_ref.shape
-  core_idx = jax.lax.axis_index('core')
-  subcore_idx = jax.lax.axis_index("subcore")
-  cm_idx = core_idx * sc_num_subcores + subcore_idx
-  slc_size = in_shape[0] // (sc_num_subcores * sc_num_cores)
-  index_map = lambda i, j: (
-      pl.ds(pl.multiple_of(cm_idx * slc_size + i * 8, 8), 8), j)
-
-  pltpu.emit_pipeline(
-      sc_add_one_body,
-      grid=(slc_size // 8, in_shape[1] // 128),
-      in_specs=[pl.BlockSpec(
-          block_shape=(pl.BoundedSlice(8), 128), index_map=index_map,
-      )],
-      out_specs=[pl.BlockSpec(
-          block_shape=(pl.BoundedSlice(8), 128), index_map=index_map,
-      )]
-  )(x_hbm_ref, o_hbm_ref)
-
-@jax.jit
-@partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
-def sc_add_one(x):
-  return pl.kernel(sc_add_one_kernel, out_shape=x, mesh=sc_mesh, scratch_shapes=[])(x)
-```
-
 ## quickstart.html
 
-SUMMARY: This document covers Pallas, a JAX extension for writing custom GPU and TPU kernels, demonstrating core APIs like `pallas_call`, `Ref` types, grids, `program_id`, and `BlockSpec` for memory-aware kernel programming with examples ranging from simple vector addition to optimized matrix multiplication.
+SUMMARY: This document introduces Pallas, a JAX extension for writing custom GPU and TPU kernels, demonstrating core concepts like Ref types for mutable buffers, grid-based parallelism with program_id, BlockSpecs for automatic input/output blocking, and kernel composition with vmap.
 
 ```python
 from functools import partial
@@ -1274,224 +636,17 @@ def matmul(x: jax.Array, y: jax.Array, *, activation):
   )(x, y)
 ```
 
-```python
-z = jax.vmap(partial(matmul, activation=jax.nn.relu))(x, y)
-```
-
-## sparsecore.html
-
-SUMMARY: This document covers SparseCore kernel writing in JAX Pallas, demonstrating how to write kernels targeting TPU SparseCores for sparse memory access operations, including basic kernels, pipelining, gather/scatter operations, and overlapping with TensorCore computations.
-
-```python
-from functools import partial
-import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-from jax.experimental.pallas import tpu_sc as plsc
-import jax.numpy as jnp
-import numpy as np
-
-# Basic SparseCore kernel with DMAs and scalar operations
-@jax.jit
-def cumsum(x):
-  scalar_mesh = plsc.ScalarSubcoreMesh(
-      axis_name="core", num_cores=2
-  )
-  
-  @pl.kernel(
-      out_shape=x,
-      mesh=scalar_mesh,
-      scratch_shapes=[
-          pltpu.SMEM((x.shape[1],), x.dtype),
-          pltpu.SemaphoreType.DMA,
-      ],
-  )
-  def kernel(x_ref, o_ref, tmp_ref, sem):
-    idx = jax.lax.axis_index('core')
-    pltpu.async_copy(x_ref.at[idx], tmp_ref, sem).wait()
-
-    @pl.loop(1, x.shape[1])
-    def _(i):
-      tmp_ref[i] += tmp_ref[i - 1]
-
-    pltpu.async_copy(tmp_ref, o_ref.at[idx], sem).wait()
-
-  return kernel(x)
-```
-
-```python
-# Pipelined SparseCore kernel with vector operations
-@jax.jit
-def sc_add_one(x):
-  vector_mesh = plsc.VectorSubcoreMesh(
-      core_axis_name="core", subcore_axis_name="subcore"
-  )
-  SC_REG_OP_SHAPE = (1, 16)
-  dma_block = (8, 128)
-  
-  @pl.kernel(out_shape=x, mesh=vector_mesh, scratch_shapes=[])
-  def sc_add_one_kernel(x_hbm_ref, o_hbm_ref):
-    in_shape = x_hbm_ref.shape
-
-    def sc_add_one_body(in_vmem, out_vmem):
-      @pl.loop(0, in_vmem.shape[0], step=SC_REG_OP_SHAPE[0])
-      def _(c0):
-        @pl.loop(0, in_vmem.shape[1], step=SC_REG_OP_SHAPE[1])
-        def _(c1):
-          slc = (pl.ds(c0, SC_REG_OP_SHAPE[0]), pl.ds(c1, SC_REG_OP_SHAPE[1]))
-          out_vmem.at[*slc][...] = in_vmem.at[*slc][...] + 1
-
-    pltpu.emit_pipeline(
-        sc_add_one_body,
-        grid=(in_shape[0] // dma_block[0], in_shape[1] // dma_block[1]),
-        in_specs=[
-            pl.BlockSpec(block_shape=dma_block, index_map=lambda i, j: (i, j))
-        ],
-        out_specs=[
-            pl.BlockSpec(block_shape=dma_block, index_map=lambda i, j: (i, j))
-        ],
-        core_axis_name=('core', 'subcore'),
-        dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
-    )(x_hbm_ref, o_hbm_ref)
-
-  return sc_add_one_kernel(x)
-```
-
-```python
-# Gather operation using indexed retrieval
-@jax.jit
-def gather(x, indices):
-  vector_mesh = plsc.VectorSubcoreMesh(
-      core_axis_name="core", subcore_axis_name="subcore"
-  )
-  gather_window_size = 128
-  value_dim = 128
-  num_indices = indices.shape[0]
-  indices = indices.reshape((1, num_indices))
-
-  @pl.kernel(
-      out_shape=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
-      mesh=vector_mesh,
-  )
-  def kernel(x_hbm, i_hbm, o_hbm):
-    def body(i_vmem, o_vmem):
-      pltpu.sync_copy(x_hbm.at[i_vmem.at[0]], o_vmem)
-
-    pltpu.emit_pipeline(
-        body,
-        grid=(num_indices // gather_window_size,),
-        in_specs=[
-            pl.BlockSpec((1, gather_window_size), index_map=lambda i: (0, i))
-        ],
-        out_specs=[
-            pl.BlockSpec(
-                (gather_window_size, value_dim), index_map=lambda i: (i, 0)
-            )
-        ],
-        core_axis_name='subcore',
-        dimension_semantics=(pltpu.PARALLEL,),
-    )(i_hbm, o_hbm)
-
-  return kernel(x, indices)
-```
-
-```python
-# Gather with indexed_by BlockSpec and computation
-@jax.jit
-def gather_add_one(x, indices):
-  gather_window_size = 128
-  value_dim = 128
-  num_indices = indices.shape[0]
-  
-  @partial(
-      pl.pallas_call,
-      out_shape=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
-      grid=(num_indices // gather_window_size,),
-      in_specs=(
-          plsc.BlockSpec(
-              (gather_window_size, value_dim), indexed_by=1, indexed_dim=0
-          ),
-          pl.BlockSpec((gather_window_size,), lambda i: i),
-      ),
-      out_specs=pl.BlockSpec((gather_window_size, value_dim), lambda i: (i, 0)),
-      compiler_params=pltpu.CompilerParams(
-          kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
-          dimension_semantics=(pltpu.PARALLEL,),
-      ),
-  )
-  def kernel(gathered_ref, _, o_ref):
-    @pl.loop(0, gather_window_size)
-    def _(c0):
-      @pl.loop(0, o_ref.shape[1], step=16)
-      def _(c1):
-        slc = (pl.ds(c0, 1), pl.ds(c1, 16))
-        o_ref.at[*slc][...] = gathered_ref.at[*slc][...] + 1
-
-  return kernel(x, indices)
-```
-
-```python
-# Scatter operation using indexed write
-@jax.jit
-def scatter(x, indices):
-  vector_mesh = plsc.VectorSubcoreMesh(
-      core_axis_name="core", subcore_axis_name="subcore"
-  )
-  gather_window_size = 128
-  value_dim = 128
-  num_indices = indices.shape[0]
-  batch_size = 4096
-  indices = indices.reshape((1, num_indices))
-
-  @pl.kernel(
-      out_shape=jax.ShapeDtypeStruct((batch_size, value_dim), x.dtype),
-      mesh=vector_mesh,
-      scratch_shapes=[],
-  )
-  def kernel(x_hbm, i_hbm, o_hbm):
-    def body(x_vmem, i_vmem):
-      pltpu.sync_copy(x_vmem, o_hbm.at[i_vmem.at[0]])
-
-    pltpu.emit_pipeline(
-        body,
-        grid=(num_indices // gather_window_size,),
-        in_specs=[
-            pl.BlockSpec(
-                (gather_window_size, value_dim), index_map=lambda i: (i, 0)
-            ),
-            pl.BlockSpec(
-                (1, gather_window_size,),
-                index_map=lambda i: (0, i),
-            ),
-        ],
-        out_specs=[],
-        core_axis_name='subcore',
-        dimension_semantics=(pltpu.PARALLEL,),
-    )(x_hbm, i_hbm)
-
-  return kernel(x, indices)
-```
-
-```python
-# Overlapping TensorCore and SparseCore kernels
-@jax.jit
-def tc_add_one(x):
-  return x + 1
-
-@jax.jit
-def two_add_ones(x):
-  return sc_add_one(x), tc_add_one(x)
-```
-
 ## vmapped_log_probs.html
 
-SUMMARY: This document demonstrates autobatching for Bayesian inference using JAX's vmap function, showing how to write non-batched probabilistic models that automatically handle batched inputs, and includes a complete variational inference example with SGD optimization.
+SUMMARY: This document demonstrates autobatching for Bayesian inference using JAX's vmap function, showing how to write non-batched model code that automatically handles batched inputs, and includes a complete variational inference example with SGD optimization.
 
 ```python
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import random
+import numpy as np
+import scipy as sp
 ```
 
 ```python
@@ -1503,17 +658,8 @@ def log_joint(beta):
 ```
 
 ```python
-def batched_log_joint(beta):
-    result = 0.
-    result = result + jnp.sum(jsp.stats.norm.logpdf(beta, loc=0., scale=1.),
-                           axis=-1)
-    result = result + jnp.sum(-jnp.log(1 + jnp.exp(-(2*y-1) * jnp.dot(all_x, beta.T).T)),
-                           axis=-1)
-    return result
-```
-
-```python
 vmap_batched_log_joint = jax.vmap(log_joint)
+vmap_batched_log_joint(batched_test_beta)
 ```
 
 ```python
@@ -1530,7 +676,7 @@ batched_log_joint = jax.jit(jax.vmap(log_joint))
 ```python
 def elbo(beta_loc, beta_log_scale, epsilon):
     beta_sample = beta_loc + jnp.exp(beta_log_scale) * epsilon
-    return jnp.mean(batched_log_joint(beta_sample), 0) + jnp.sum(beta_log_scale - 0.5 * jnp.log(2*jnp.pi))
+    return jnp.mean(batched_log_joint(beta_sample), 0) + jnp.sum(beta_log_scale - 0.5 * np.log(2*np.pi))
 
 elbo = jax.jit(elbo)
 elbo_val_and_grad = jax.jit(jax.value_and_grad(elbo, argnums=(0, 1)))
@@ -1547,14 +693,14 @@ normal_sample = jax.jit(normal_sample, static_argnums=(1,))
 
 ## prng.html
 
-SUMMARY: This document covers pseudo-random number generation APIs in JAX Pallas for TPU kernels, demonstrating three approaches: the portable jax.random API, the hardware PRNG with stateful and stateless modes, and block-invariant sampling for consistent random number generation across different block sizes.
+SUMMARY: This document covers pseudo-random number generation APIs in JAX Pallas for TPU kernels, demonstrating three approaches: the portable jax.random API, the hardware-accelerated stateful PRNG, and block-invariant sampling for consistent results across different block sizes.
 
 ```python
-from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax
 import jax.numpy as jnp
-import jax.random as jax_random
+from jax import random as jax_random
+import jax.experimental.pallas as pl
 
 # Example 1: Using jax.random API with key passed via VMEM
 def body(key_ref, o_ref):
@@ -1573,9 +719,7 @@ result = pl.pallas_call(
 ```
 
 ```python
-# Example 2: Stateful PRNG with hardware seed
-from jax.experimental.pallas import tpu as pltpu
-
+# Example 2: Stateful PRNG with hardware acceleration
 def kernel_body(o_ref):
     pltpu.prng_seed(0)
     o_ref[...] = pltpu.stateful_uniform(shape=o_ref.shape, minval=0.0, maxval=1.0)
@@ -1585,7 +729,7 @@ pl.pallas_call(kernel_body,
 ```
 
 ```python
-# Example 3: Stateless hardware PRNG with key passed via SMEM
+# Example 3: Stateless generation using hardware PRNG via pltpu.to_pallas_key
 def body(key_ref, o_ref):
     o_ref[...] = jax.random.uniform(
         key_ref[...], shape=o_ref[...].shape

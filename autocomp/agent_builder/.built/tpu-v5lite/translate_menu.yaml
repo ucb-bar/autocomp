@@ -1,18 +1,18 @@
 strategies:
 - strategy: Convert high-level code to hardware-specific kernel code
 - strategy: Convert a small amount of high-level code to hardware-specific kernel code
-- strategy: Decompose matrix multiplications into blocked accumulation loops over a 3D grid with the contraction dimension
-    last, using `pl.BlockSpec` index maps to tile inputs and a VMEM scratch accumulator to avoid repeated HBM round-trips
-    during reduction.
-- strategy: Replace element-wise or reduction operations on large arrays with pipelined `pl.pallas_call` kernels that tile
-    the computation into blocks whose last two dimensions are multiples of 8×128, sweeping block sizes to maximize arithmetic
-    intensity per VMEM transfer.
-- strategy: Convert scatter/gather or dynamically-indexed operations into kernels using `pltpu.PrefetchScalarGridSpec` with
-    scalar prefetch arguments in SMEM, enabling data-dependent `index_map` lookups that drive block selection at pipeline
-    time.
-- strategy: Fuse post-matmul activations, transposes, and elementwise ops into the innermost accumulation loop of a matrix
-    multiply kernel by applying them inside a `@pl.when(program_id == nsteps - 1)` guard before writing the final result from
-    the VMEM scratch to the output ref.
-- strategy: Lower multi-step reductions (e.g. softmax, layer-norm) by placing the reduction axis as the innermost grid dimension,
-    initializing output refs with `jnp.zeros_like` on the first iteration via `@pl.when(pl.program_id(axis) == 0)`, and accumulating
-    in-place across consecutive iterations that reuse the same VMEM output buffer.
+- strategy: Decompose large matrix operations into blocked matmul kernels using `pl.BlockSpec` with 128-aligned tile shapes
+    to fully utilize the four 128×128 MXU systolic arrays, accumulating partial results via consecutive grid iterations on
+    the innermost reduction axis.
+- strategy: Replace elementwise or reduction operations on large arrays with pipelined `pallas_call` kernels that tile inputs
+    into VMEM-resident blocks via `BlockSpec` index maps, using bfloat16 inputs to halve HBM transfer volume and stay within
+    the ~246 ops/byte arithmetic intensity threshold.
+- strategy: Convert sparse or masked computations into scalar-prefetch-driven kernels using `PrefetchScalarGridSpec` with
+    SMEM-resident index arrays, enabling data-dependent `index_map` lookups that skip zero blocks and avoid unnecessary HBM-to-VMEM
+    transfers.
+- strategy: Fuse chains of elementwise operations (activations, scaling, bias adds) into the epilogue of a matmul kernel body
+    to avoid HBM round-trips, applying the fused transform inside a `pl.when(pl.program_id(reduction_axis) == nsteps - 1)`
+    guard on the final accumulation step.
+- strategy: Restructure reduction operations so the reduction dimension is the innermost (last) grid axis with explicit `pl.when(pl.program_id(axis)
+    == 0)` initialization, enabling the pipeline to reuse the same output VMEM buffer across consecutive iterations for correct
+    in-place accumulation.

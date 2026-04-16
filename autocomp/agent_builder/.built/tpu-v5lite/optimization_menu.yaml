@@ -14,24 +14,23 @@ optimizations:
 - strategy: simplify or remove unnecessary code
 - strategy: try new parameter values
 - strategy: rewrite the algorithm to reduce total work
-- strategy: Order grid so reduction axis is last, enabling VMEM accumulator reuse across iterations
-- strategy: Use `scratch_shapes=[pltpu.VMEM(...)]` for persistent high-precision accumulators across reduction loop iterations
-- strategy: Conditionally initialize accumulator on first reduction iteration and write back on last, avoiding HBM round-trips
-- strategy: Align block last two dimensions to hardware tile boundaries (multiples of 8 and 128)
-- strategy: Avoid singleton dimensions in last two axes; reshape to keep meaningful data in tiled dimensions
-- strategy: Perform reshapes and reductions on leading dimensions instead of last two, which require expensive hardware support
-- strategy: Fuse transpositions into `lax.dot_general` contraction dimensions instead of materializing transposed arrays
-- strategy: Use `preferred_element_type=jnp.float32` in dot operations; accumulate reductions in float32 with bfloat16 I/O
-- strategy: Upcast narrow types (bfloat16, int8) to float32 before elementwise ops since hardware computes elementwise in
-    32-bit
-- strategy: Use scalar prefetch to load small index/metadata into scalar registers for dynamic block indexing without pipeline
-    stalls
-- strategy: Use `input_output_aliases` for buffers needing both reads and writes across pipeline iterations
-- strategy: Generate random numbers inside kernels via hardware PRNG intrinsics, passing only a key through SMEM
-- strategy: Sweep block size configurations empirically to balance VMEM capacity, pipeline bubbles, and arithmetic intensity
-- strategy: Maximize block sizes up to ~16MB VMEM limit to increase arithmetic intensity per kernel invocation
-- strategy: Make parallel grid axis sizes multiples of TPU core count and mark with `dimension_semantics="parallel"`
-- strategy: Arrange grid iteration so consecutive indices reuse same input slices, letting compiler skip redundant HBM copies
-- strategy: Minimize control flow (cond, fori_loop); pack expensive operations into single basic blocks
-- strategy: Prefer cheap elementwise ops (add, mul, where) over expensive ones (sin, cos, division); use approximations
-- strategy: Use block-sparse index structures to skip computation on zero blocks entirely
+- strategy: Place reduction axis last in grid to enable in-place SRAM accumulation without HBM round-trips
+- strategy: Align block dimensions to 8×128 tile boundaries to avoid wasted padding and register spills
+- strategy: Use `scratch_shapes=[pltpu.VMEM(...)]` for persistent high-precision accumulators during reduction loops
+- strategy: Maximize block sizes up to ~16 MB VMEM capacity to increase arithmetic intensity per pipeline step
+- strategy: Use scalar prefetch via `PrefetchScalarGridSpec` to load indices/metadata into SMEM without stalling vector core
+- strategy: Upcast bf16/int8 to float32 before elementwise ops, downcast only on final output write
+- strategy: Fuse transpose into `lax.dot_general` contraction dimensions instead of materializing transposed operands
+- strategy: Arrange grid iteration order so consecutive invocations reuse already-resident input slices
+- strategy: Increase pipeline buffer count beyond double buffering to hide memory latency for bandwidth-bound kernels
+- strategy: Generate random numbers inside kernel via hardware PRNG with key in SMEM instead of passing precomputed arrays
+- strategy: Avoid singleton dimensions in last two array axes to prevent full-tile waste per element
+- strategy: Reduce along second-to-last dimension rather than last dimension when possible
+- strategy: Prefer add/multiply over exp/tanh/division; restructure math to minimize expensive elementwise ops
+- strategy: Sweep block size configurations empirically since optimal VMEM/intensity/bubble tradeoff is hard to predict analytically
+- strategy: Compute arithmetic intensity accounting for tiling amplification to predict compute-bound vs memory-bound regime
+- strategy: Minimize control flow inside kernels; consolidate into single basic blocks to avoid unrolling overhead
+- strategy: Pass all data as explicit kernel inputs with BlockSpec instead of closing over constants
+- strategy: Use `pltpu.VMEM` scoped scratch buffers for temporary storage within kernel lifetime
+- strategy: Balance block size against pipeline depth to amortize startup/drain bubble cost over enough iterations
+- strategy: Explicitly initialize accumulator buffers to zero on first reduction iteration since SRAM starts undefined
