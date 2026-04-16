@@ -12,19 +12,27 @@ optimizations:
 - strategy: hoist redundant operations out of loops
 - strategy: eliminate redundant computation
 - strategy: simplify or remove unnecessary code
-- strategy: try new parameter values
 - strategy: rewrite the algorithm to reduce total work
 - strategy: Avoid using the `v0` register for non-mask operations to prevent unnecessary data movement
+- strategy: Hoist or batch scalar stores away from vector compute regions so pending scalar stores do not block younger vector memory operations
 - strategy: Prefer tail-agnostic and mask-agnostic policies over undisturbed modes to avoid reading destination registers
+- strategy: Prefer explicit copies or initialization plus tail-agnostic operations over tail-undisturbed policies when preserving the destination is not required
 - strategy: Prefer VL predication over masking when restricting computation to leading elements
 - strategy: Maximize LMUL (register grouping) to reduce dynamic instruction count and increase chime length, avoiding register
     spills
+- strategy: Keep `vsetvl` outside inner loops and group operations with the same SEW/LMUL to minimize configuration bubbles
+- strategy: Use register blocking to keep the working set in vector registers and reduce reload traffic
+- strategy: Match instruction ordering to Saturn issue topology; interleave integer and floating-point vector ops for Shared configs, but prioritize dependency reduction for Split configs
+- strategy: Choose segmented load/store NF so NF x ELEN matches DLEN when possible to maximize Saturn segment-buffer throughput
+- strategy: Distribute vector register destinations across VRF banks to reduce write-port conflicts between load and arithmetic results
+- strategy: Use multiple accumulators to hide FMA latency and sustain issue throughput
 - strategy: Use low LMUL for `vrgather.vv` to avoid quadratic costs, splitting high-LMUL shuffles into LMUL=1 shuffles
 - strategy: Fold immediate scalar values into vector operations using `.vi`, `.vx`, or `.vf` intrinsic variants to reduce
     register pressure
+- strategy: Prefer scalar-operand RVV forms such as `.vx`, `.vf`, or `vfmacc_vf` when one operand is broadcast across lanes
 - strategy: Use `vmv.v.x` or `vmv.v.i` intrinsics to splat values, and `vmerge.vxm` for masked splats
 - strategy: Use `vmv.v.i` with an immediate 0 to efficiently zero a vector register
-- strategy: Use whole register load/store and move (`vmv1r.v`) intrinsics for unpredicated VLEN-sized data movement
+- strategy: Use whole-register load/store and move intrinsics (`vmv1r.v` through `vmv8r.v`) for unpredicated VLEN-sized data movement without extra `vsetvl` setup
 - strategy: Prefer unit-stride memory operations over strided or indexed operations, which are limited to one element per
     cycle
 - strategy: Use unit-stride segment loads and stores for Array-of-Structures (AOS) to Structure-of-Arrays (SOA) conversions
@@ -34,9 +42,15 @@ optimizations:
 - strategy: Avoid vector instructions that write to scalar registers in inner loops to prevent scalar pipeline stalls
 - strategy: Vectorize reductions using element-wise vector operations in the loop body, deferring the final reduction to the
     tail code
+- strategy: Use fault-only-first loads (`vle*ff`) for data-dependent loop termination instead of per-element bounds or sentinel checks
+- strategy: Use widening FMA instructions such as `vfwmacc` or `vwmacc` for mixed-precision accumulation when they match the kernel math
+- strategy: Use `vnclip` or `vnclipu` for saturating narrowing downcasts that would otherwise require separate shift, clamp, and narrow steps
+- strategy: Avoid division or sqrt in inner loops; use strength reduction or move the expensive scalar work out of the vectorized hot path
+- strategy: Minimize FRM or rounding-mode changes; set the rounding mode once outside hot loops when possible
 - strategy: Round up VL to the data path width and issue a single `vsetvli` for operations without side effects on mixed-length
     vectors
 - strategy: Use `vmerge` or `vfmerge` intrinsics to replace unpredictable data-dependent branches
+- strategy: Use `vcompress.vm` for stream compaction and branch elimination when mask-selected elements need to be packed contiguously
 - strategy: Use fractional LMUL for mixed-width loops to reduce register pressure and avoid spill code
 - strategy: Use immediate AVL configurations for small known dimensions to avoid stripmining overhead
-- strategy: Prefer vector slide instructions over arbitrary register gathers, which are element-wise and much slower
+- strategy: Prefer vector slide instructions over arbitrary register gathers for regular access patterns; on Saturn, slides advance at DLEN bits per cycle while gathers and compress are element-wise
