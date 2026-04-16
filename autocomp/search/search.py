@@ -1367,8 +1367,6 @@ class BeamSearchStrategy(SearchStrategy):
                 evaluated_code_candidates, cur_iter=i, num_iters=iterations
             )
             cands_to_filter = improving_candidates + current_candidates
-            if self.translate_drop_original and i == self.translate_iters:
-                cands_to_filter = [c for c in cands_to_filter if c.parent is not None]
             candidates_for_next_iter = self.filter_code_candidates(
                 cands_to_filter,
                 num_to_keep=self.beam_size,
@@ -1379,6 +1377,17 @@ class BeamSearchStrategy(SearchStrategy):
             # Early-stop translation only when every beam candidate is fully translated
             if translate:
                 self._check_translation_complete(candidates_for_next_iter, i)
+
+            # On the final translation iteration (natural or early-stopped),
+            # re-select the beam excluding the original so all slots go to translated candidates.
+            if self.translate_drop_original and i == self.translate_iters:
+                cands_no_original = [c for c in cands_to_filter if c.parent is not None]
+                candidates_for_next_iter = self.filter_code_candidates(
+                    cands_no_original,
+                    num_to_keep=self.beam_size,
+                    cur_iter=i,
+                    num_iters=iterations,
+                )
 
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
