@@ -893,7 +893,7 @@ class BuiltLLMAgent(LLMAgent):
         user += "\nApply the following optimization plan by outputting JSON edits:\n"
         user += candidate.plan
         user += "\n\nRules:\n"
-        user += self._get_prompt_rules(planning=False, coding=False, prob=prob)
+        user += self._get_prompt_rules(planning=False, coding=True, prob=prob)
 
         return [
             {"role": "system", "content": system},
@@ -968,7 +968,7 @@ class BuiltLLMAgent(LLMAgent):
             user += "Output ONLY JSON edits.\n"
 
         user += "\nRules:\n"
-        user += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=translate)
+        user += self._get_prompt_rules(planning=True, coding=True, prob=prob, translate=translate)
 
         if cur_iter is not None and num_iters is not None:
             user += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
@@ -1020,6 +1020,49 @@ class BuiltLLMAgent(LLMAgent):
         prompt_text += "\nFixed code:"
 
         return prompt_text
+
+    def _get_reimplement_failed_edits_messages(self, candidate: CodeCandidate,
+                                                prob: Prob = None) -> list[dict]:
+        if prob is None:
+            raise ValueError("BuiltLLMAgent requires prob parameter to be provided")
+
+        system = (
+            "You are an expert performance engineer. "
+            "You fix failed high-performance code by outputting precise code edits.\n\n"
+            "You MUST respond with ONLY a JSON object in this exact format:\n"
+            '{"plan": "<brief reasoning about what caused the failure and how the edits fix it>", '
+            '"edits": [{"old_str": "<exact code to find>", "new_str": "<replacement code>"}, ...]}\n\n'
+            "Rules for edits:\n"
+            "- Each old_str must be an EXACT substring of the current code. All occurrences are replaced.\n"
+            "- Include enough context in old_str to target specific locations.\n"
+            "- Edits are applied sequentially, so later edits see the result of earlier ones.\n"
+            "- Do NOT output anything outside the JSON object.\n"
+        )
+
+        user = self._architecture + "\n"
+        user += self._get_isa_for_problem(prob, candidate.code) + "\n"
+        user += "\nThe current code is:\n```\n"
+        user += candidate.code
+        user += "\n```\n"
+
+        user += "\nHowever, the code failed with the following output:\n"
+        if candidate.stderr:
+            user += "=== STDERR ===\n"
+            stderr_lines = [line[:400] for line in candidate.stderr.split("\n")]
+            user += "\n".join(stderr_lines) + "\n"
+        if candidate.stdout:
+            user += "=== STDOUT ===\n"
+            stdout_lines = [line[:400] for line in candidate.stdout.split("\n")]
+            user += "\n".join(stdout_lines) + "\n"
+
+        user += "\nPlease fix the code to address the errors by outputting JSON edits.\n"
+        user += "\nRules:\n"
+        user += self._get_prompt_rules(planning=False, coding=True, prob=prob)
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
 
     def score_translation_completeness(
         self, original_code: str, candidates: list[CodeCandidate],

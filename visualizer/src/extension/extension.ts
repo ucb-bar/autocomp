@@ -4,6 +4,7 @@ import * as path from "path";
 import { ingestOutputDir } from "./ingest";
 import {
   summarizePlans,
+  validateConfig,
   type Provider,
   type SummarizeConfig,
   type PlanToSummarize,
@@ -25,7 +26,10 @@ class CodeContentProvider implements vscode.TextDocumentContentProvider {
 interface StoredSettings {
   provider: Provider;
   model: string;
+  models?: Partial<Record<Provider, string>>;
   awsRegion?: string;
+  gcpProject?: string;
+  gcpLocation?: string;
 }
 
 function getStoredSettings(context: vscode.ExtensionContext): StoredSettings {
@@ -50,9 +54,12 @@ async function sendSettings(
   const hasKey = !!(await getApiKey(context, settings.provider));
   const hasAwsSecretKey = !!(await context.secrets.get("autocomp.awsSecretKey"));
   const lastDir = context.workspaceState.get<string>(LAST_DIR_KEY) ?? "";
+  const hasCache = lastDir
+    ? fs.existsSync(path.join(lastDir, ".visualizer-data", "runs.json"))
+    : false;
   webview.postMessage({
     type: "settings",
-    data: { ...settings, hasApiKey: hasKey, hasAwsSecretKey, outputDir: lastDir },
+    data: { ...settings, hasApiKey: hasKey, hasAwsSecretKey, outputDir: lastDir, hasCache },
   });
 }
 
@@ -67,6 +74,34 @@ export function activate(context: vscode.ExtensionContext) {
       openPanel(context);
     }),
   );
+}
+
+function loadRunsIndex(dataDir: string, panel: vscode.WebviewPanel): void {
+  const runsJson = path.join(dataDir, "runs.json");
+  if (!fs.existsSync(runsJson)) {
+    vscode.window.showErrorMessage("Ingestion produced no runs.json");
+    panel.webview.postMessage({ type: "ingestError", error: "No runs found" });
+    return;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(runsJson, "utf-8"));
+    const EXPECTED_SCHEMA = 2;
+    let data: unknown[];
+    if (Array.isArray(raw)) {
+      data = raw;
+    } else {
+      if (raw.schema_version > EXPECTED_SCHEMA) {
+        vscode.window.showWarningMessage(
+          `runs.json schema v${raw.schema_version} is newer than expected (v${EXPECTED_SCHEMA}). ` +
+          "Consider updating the Autocomp Visualizer extension.",
+        );
+      }
+      data = raw.runs;
+    }
+    panel.webview.postMessage({ type: "runs", data });
+  } catch {
+    vscode.window.showErrorMessage("Failed to read runs.json");
+  }
 }
 
 function openPanel(context: vscode.ExtensionContext) {
@@ -131,32 +166,27 @@ function openPanel(context: vscode.ExtensionContext) {
           },
         );
 
-        const runsJson = path.join(dataDir, "runs.json");
-        if (!fs.existsSync(runsJson)) {
-          vscode.window.showErrorMessage("Ingestion produced no runs.json");
-          panel.webview.postMessage({ type: "ingestError", error: "No runs found" });
+        if (msg.open !== false) {
+          loadRunsIndex(dataDir, panel);
+        } else {
+          panel.webview.postMessage({ type: "ingestDone" });
+          await sendSettings(context, panel.webview);
+        }
+      } else if (msg.type === "openTraces") {
+        const outputDir = msg.dir as string;
+        if (!outputDir || !fs.existsSync(outputDir)) {
+          vscode.window.showErrorMessage(`Directory not found: ${outputDir}`);
+          panel.webview.postMessage({ type: "ingestError", error: "Directory not found" });
           return;
         }
-
-        try {
-          const raw = JSON.parse(fs.readFileSync(runsJson, "utf-8"));
-          const EXPECTED_SCHEMA = 2;
-          let data: unknown[];
-          if (Array.isArray(raw)) {
-            data = raw;
-          } else {
-            if (raw.schema_version > EXPECTED_SCHEMA) {
-              vscode.window.showWarningMessage(
-                `runs.json schema v${raw.schema_version} is newer than expected (v${EXPECTED_SCHEMA}). ` +
-                "Consider updating the Autocomp Visualizer extension.",
-              );
-            }
-            data = raw.runs;
-          }
-          panel.webview.postMessage({ type: "runs", data });
-        } catch {
-          vscode.window.showErrorMessage("Failed to read runs.json");
+        await context.workspaceState.update(LAST_DIR_KEY, outputDir);
+        dataDir = path.join(outputDir, ".visualizer-data");
+        if (!fs.existsSync(path.join(dataDir, "runs.json"))) {
+          panel.webview.postMessage({ type: "ingestError", error: "No cached data — ingest first" });
+          vscode.window.showInformationMessage("No cached traces found. Click Re-ingest to process the output directory.");
+          return;
         }
+        loadRunsIndex(dataDir, panel);
       } else if (msg.type === "selectRun") {
         if (!dataDir) return;
         const runFile = path.join(dataDir, path.basename(msg.file));
@@ -188,15 +218,30 @@ function openPanel(context: vscode.ExtensionContext) {
         });
       } else if (msg.type === "getSettings") {
         await sendSettings(context, panel.webview);
+      } else if (msg.type === "checkApiKey") {
+        const provider = msg.provider as Provider;
+        const hasKey = !!(await getApiKey(context, provider));
+        panel.webview.postMessage({ type: "apiKeyStatus", provider, hasApiKey: hasKey });
       } else if (msg.type === "saveSettings") {
-        const { provider, model, apiKey, awsRegion, awsSecretKey } = msg.data as {
+        const { provider, model, apiKey, awsRegion, awsSecretKey, gcpProject, gcpLocation } = msg.data as {
           provider: Provider;
           model: string;
           apiKey?: string;
           awsRegion?: string;
           awsSecretKey?: string;
+          gcpProject?: string;
+          gcpLocation?: string;
         };
-        await context.globalState.update(SETTINGS_KEY, { provider, model, awsRegion });
+        const existing = getStoredSettings(context);
+        const models = { ...existing.models, [provider]: model };
+        await context.globalState.update(SETTINGS_KEY, {
+          provider,
+          model,
+          models,
+          awsRegion: awsRegion ?? existing.awsRegion,
+          gcpProject: gcpProject ?? existing.gcpProject,
+          gcpLocation: gcpLocation ?? existing.gcpLocation,
+        });
         if (apiKey) {
           await context.secrets.store(`autocomp.apiKey.${provider}`, apiKey);
         }
@@ -204,6 +249,22 @@ function openPanel(context: vscode.ExtensionContext) {
           await context.secrets.store("autocomp.awsSecretKey", awsSecretKey);
         }
         await sendSettings(context, panel.webview);
+      } else if (msg.type === "validateSettings") {
+        const settings = getStoredSettings(context);
+        const apiKey = await getApiKey(context, settings.provider);
+        const config: SummarizeConfig = {
+          provider: settings.provider,
+          model: settings.model,
+          apiKey: apiKey ?? "",
+          awsRegion: settings.awsRegion,
+          awsSecretKey: settings.provider === "bedrock"
+            ? (await context.secrets.get("autocomp.awsSecretKey")) ?? undefined
+            : undefined,
+          gcpProject: settings.gcpProject,
+          gcpLocation: settings.gcpLocation,
+        };
+        const error = await validateConfig(config);
+        panel.webview.postMessage({ type: "validateResult", error });
       } else if (msg.type === "clearKey") {
         const provider = msg.provider as Provider;
         await context.secrets.delete(`autocomp.apiKey.${provider}`);
@@ -229,7 +290,7 @@ async function handleSummarize(
   const settings = getStoredSettings(context);
   const apiKey = await getApiKey(context, settings.provider);
 
-  if (!apiKey && settings.provider !== "bedrock") {
+  if (!apiKey && settings.provider !== "bedrock" && settings.provider !== "vertex-ai") {
     panel.webview.postMessage({ type: "summarizeResult", cancelled: true });
     panel.webview.postMessage({ type: "showSettings" });
     vscode.window.showWarningMessage(
@@ -264,6 +325,8 @@ async function handleSummarize(
     awsSecretKey: settings.provider === "bedrock"
       ? (await context.secrets.get("autocomp.awsSecretKey")) ?? undefined
       : undefined,
+    gcpProject: settings.gcpProject,
+    gcpLocation: settings.gcpLocation,
   };
 
   const results = await vscode.window.withProgress(

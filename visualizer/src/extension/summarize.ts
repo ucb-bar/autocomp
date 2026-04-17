@@ -4,8 +4,9 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import { GoogleAuth } from "google-auth-library";
 
-export type Provider = "openai" | "anthropic" | "bedrock" | "gemini";
+export type Provider = "openai" | "anthropic" | "bedrock" | "gemini" | "vertex-ai";
 
 export interface SummarizeConfig {
   provider: Provider;
@@ -15,6 +16,10 @@ export interface SummarizeConfig {
   awsRegion?: string;
   /** AWS secret access key for Bedrock (optional; uses default credential chain if omitted) */
   awsSecretKey?: string;
+  /** GCP project ID for Vertex AI */
+  gcpProject?: string;
+  /** GCP location for Vertex AI (defaults to us-central1) */
+  gcpLocation?: string;
 }
 
 const SYSTEM_PROMPT = `You are a concise technical summarizer. Given an optimization plan for a code transformation, produce a 1-2 sentence summary that captures the key strategy. Focus on what the plan does, not how it was generated. Be specific about the optimization technique. Do not use filler phrases.`;
@@ -94,12 +99,56 @@ async function callGemini(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userPrompt }] }],
-      generationConfig: { maxOutputTokens: 256, temperature: 0.3 },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
     }),
   });
   if (!resp.ok) {
     throw new Error(`Gemini API error: ${resp.status} ${await resp.text()}`);
+  }
+  const data = await resp.json();
+  return (
+    data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ""
+  );
+}
+
+async function callVertexAI(
+  config: SummarizeConfig,
+  userPrompt: string,
+): Promise<string> {
+  const project = config.gcpProject;
+  const location = config.gcpLocation || "global";
+  if (!project) {
+    throw new Error("GCP project ID is required for Vertex AI");
+  }
+  const auth = new GoogleAuth({ scopes: "https://www.googleapis.com/auth/cloud-platform" });
+  const token = await auth.getAccessToken();
+  if (!token) {
+    throw new Error(
+      "Could not obtain GCP credentials. Run `gcloud auth application-default login` " +
+      "or set GOOGLE_APPLICATION_CREDENTIALS.",
+    );
+  }
+  const host = location === "global"
+    ? "aiplatform.googleapis.com"
+    : `${location}-aiplatform.googleapis.com`;
+  const url =
+    `https://${host}/v1/projects/${project}` +
+    `/locations/${location}/publishers/google/models/${config.model}:generateContent`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`Vertex AI error: ${resp.status} ${await resp.text()}`);
   }
   const data = await resp.json();
   return (
@@ -120,6 +169,8 @@ async function complete(
       return callBedrock(config, userPrompt);
     case "gemini":
       return callGemini(config, userPrompt);
+    case "vertex-ai":
+      return callVertexAI(config, userPrompt);
     default:
       throw new Error(`Unknown provider: ${config.provider}`);
   }
@@ -137,28 +188,75 @@ export interface SummarizeResult {
 }
 
 /**
- * Summarize a batch of plans. Runs requests sequentially to avoid
- * rate-limit issues; callers can report per-plan progress.
+ * Make a minimal API call to verify that the provider credentials are valid.
+ * Returns null on success, or an error message string on failure.
+ */
+export async function validateConfig(config: SummarizeConfig): Promise<string | null> {
+  try {
+    await complete(config, "Say OK.");
+    return null;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
+ * Summarize a batch of plans with bounded concurrency.
+ * Bails early after 3 consecutive errors (likely a config problem).
  */
 export async function summarizePlans(
   config: SummarizeConfig,
   plans: PlanToSummarize[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<SummarizeResult[]> {
-  const results: SummarizeResult[] = [];
-  for (let i = 0; i < plans.length; i++) {
-    const { candidateId, plan } = plans[i];
-    try {
-      const summary = await complete(
-        config,
-        `Summarize this optimization plan:\n\n${plan}`,
-      );
-      results.push({ candidateId, summary });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      results.push({ candidateId, summary: "", error: msg });
+  const MAX_CONCURRENCY = 8;
+  const results: SummarizeResult[] = new Array(plans.length);
+  let done = 0;
+  let consecutiveErrors = 0;
+  let aborted = false;
+  let abortError = "";
+
+  const queue = plans.map((p, i) => ({ ...p, index: i }));
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < queue.length && !aborted) {
+      const idx = next++;
+      const { candidateId, plan, index } = queue[idx];
+      try {
+        const summary = await complete(
+          config,
+          `Summarize this optimization plan:\n\n${plan}`,
+        );
+        results[index] = { candidateId, summary };
+        consecutiveErrors = 0;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results[index] = { candidateId, summary: "", error: msg };
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          aborted = true;
+          abortError = msg;
+        }
+      }
+      done++;
+      onProgress?.(done, plans.length);
     }
-    onProgress?.(i + 1, plans.length);
   }
+
+  const workers = Array.from(
+    { length: Math.min(MAX_CONCURRENCY, plans.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
+  if (aborted) {
+    for (let i = 0; i < plans.length; i++) {
+      if (!results[i]) {
+        results[i] = { candidateId: plans[i].candidateId, summary: "", error: abortError };
+      }
+    }
+  }
+
   return results;
 }

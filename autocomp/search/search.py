@@ -372,12 +372,15 @@ class SearchStrategy:
             )
         else:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
+            eval_save_dir = self.output_dir / "eval-results-iter-0"
+            eval_save_dir.mkdir(parents=True, exist_ok=True)
             self.evaluate_candidates(
-                [orig_code_candidate], self.metric
+                [orig_code_candidate], self.metric, save_dir=eval_save_dir
             )  # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
                 if orig_code_candidate.stderr:
                     logger.error("Initial code failed with error: %s", orig_code_candidate.stderr)
+                logger.error("Initial code failure details saved to %s", eval_save_dir)
                 raise ValueError("Initial code is incorrect.")
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates(
@@ -486,9 +489,10 @@ class SearchStrategy:
                             f.write("New latency: " + str(stats[metric]) + "\n")
                         else:
                             f.write("New latency: N/A\n")
+                        plan_text = candidates[cand_i].plan
                         f.write(
                             "Plan: "
-                            + candidates[cand_i].plan.replace("\\n", "\n")
+                            + (plan_text.replace("\\n", "\n") if plan_text is not None else "N/A")
                             + "\n"
                         )
                         f.write("\n" + repr(candidates[cand_i]))
@@ -505,6 +509,52 @@ class SearchStrategy:
             if "stderr" in stats:
                 candidates[cand_i].stderr = stats["stderr"]
         return candidates
+
+    def _score_translation(
+        self,
+        candidates: list[CodeCandidate],
+        save_dir: pathlib.Path,
+    ) -> None:
+        """Score translation completeness, with per-directory caching like evaluate_candidates."""
+        cache_path = save_dir / "translation_scores.json"
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text())
+            scores = [float(s) for s in cached]
+            if len(scores) == len(candidates):
+                logger.info("Loading cached translation scores from %s", cache_path)
+                for cand, ts in zip(candidates, scores):
+                    cand.translation_score = ts
+                return
+            logger.warning(
+                "Cached translation scores length mismatch (%d vs %d), recomputing",
+                len(scores), len(candidates),
+            )
+
+        original_code = self.repository.get_candidates(0)[0].code
+        scores = self.agent.score_translation_completeness(
+            original_code, candidates, prob=self.prob
+        )
+        for cand, ts in zip(candidates, scores):
+            cand.translation_score = ts
+
+        save_dir.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(scores))
+
+    def _check_translation_complete(self, beam_candidates: list[CodeCandidate], cur_iter: int) -> None:
+        """End translation early if all beam candidates are fully translated."""
+        if not self.translate_score or cur_iter >= self.translate_iters:
+            return
+        beam_scores = [
+            c.translation_score for c in beam_candidates
+            if c.translation_score is not None
+        ]
+        if beam_scores and min(beam_scores) >= 9.0:
+            logger.info(
+                "All %d beam candidates have translation score >= 9.0 (min=%.1f) — "
+                "ending translation early (iter %d of %d).",
+                len(beam_scores), min(beam_scores), cur_iter, self.translate_iters,
+            )
+            self.translate_iters = cur_iter
 
     def add_feedback(self, candidates: list[CodeCandidate]) -> list[CodeCandidate]:
         # NOTE: Assumes that feedback for a particular candidate only gets added once and does not get updated
@@ -638,6 +688,8 @@ class SearchStrategy:
     def should_early_stop(self, losses: list[float], cur_iter: int) -> bool:
         if self.early_stop_iters <= 0 or cur_iter < self.early_stop_iters + 1:
             return False
+        if cur_iter <= self.translate_iters + self.early_stop_iters:
+            return False
         old_loss = losses[cur_iter - self.early_stop_iters - 1]
         new_loss = losses[cur_iter - 1]
         if old_loss == 0:
@@ -755,7 +807,7 @@ class ExhaustiveSearchStrategy(SearchStrategy):
                     save_strs=save_strs,
                     prob=self.prob,
                 )
-            logger.info(f"Generated {len(impl_candidates)} implementations.")
+            logger.info(f"Generated {len(impl_candidates)} implementations from {len(plan_only_candidates)} plans.")
 
             # Step 3: Evaluate the generated implementations
             save_dir = self.output_dir / f"eval-results-iter-{i}"
@@ -984,8 +1036,10 @@ class BeamSearchStrategy(SearchStrategy):
             combined_candidates.extend(this_pair_combined_candidates)
         return combined_candidates
 
-    def _save_run_metrics(self, all_iteration_metrics, run_t0):
-        run_total_s = round(time.perf_counter() - run_t0, 3)
+    def _save_run_metrics(self, all_iteration_metrics):
+        run_total_s = round(
+            sum(im.get("iteration_total_s", 0) for im in all_iteration_metrics), 3
+        )
         run_metrics = {
             "run_total_s": run_total_s,
             "iterations": all_iteration_metrics,
@@ -1027,16 +1081,16 @@ class BeamSearchStrategy(SearchStrategy):
                 return f"{n / 1_000:.1f}K"
             return str(n)
         logger.info(
-            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, run time: %ss",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, total time: %ss",
             _fmt_tokens(total_in),
             _fmt_tokens(total_out),
             _fmt_tokens(total_tok),
             run_metrics.get("total_llm_duration_s", "?"),
             run_metrics.get("total_eval_duration_s", "?"),
-            run_metrics.get("run_total_s", "?"),
+            run_total_s,
         )
 
-    def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics, run_t0):
+    def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics):
         """Save current iteration metrics to disk and update run-level aggregate."""
         try:
             all_usage = list(self.agent._usage_accumulator)
@@ -1062,7 +1116,7 @@ class BeamSearchStrategy(SearchStrategy):
         except Exception:
             pass
         current_metrics = all_iteration_metrics + [snapshot]
-        self._save_run_metrics(current_metrics, run_t0)
+        self._save_run_metrics(current_metrics)
 
     def optimize(self, iterations: int):
         """Run the optimization process with the selected search strategy for multiple iterations."""
@@ -1099,7 +1153,7 @@ class BeamSearchStrategy(SearchStrategy):
             losses.append(best_loss)
 
             if self.should_early_stop(losses, i):
-                break  # post-loop wandb log skipped; this iter's best was already logged above
+                break
 
             # If candidates already exist for this iteration, load them and skip all other steps
             save_dir = self.output_dir / f"candidates-iter-{i}"
@@ -1113,6 +1167,8 @@ class BeamSearchStrategy(SearchStrategy):
                             all_iteration_metrics.append(json.load(f))
                     except Exception:
                         pass
+                # Replay translation early-stop from cached candidates
+                self._check_translation_complete(self.repository.get_candidates(i), i)
                 continue
 
             # Step 1 + 2: Generate implementations (plan-then-implement or direct)
@@ -1162,7 +1218,7 @@ class BeamSearchStrategy(SearchStrategy):
                 iter_metrics["plan_duration_s"] = 0
                 iter_metrics["code_duration_s"] = code_duration
                 logger.info(f"Generated {len(impl_candidates)} direct implementations (no planning phase).")
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
             else:
                 # Standard 2-phase: plan then implement
                 save_dir = self.output_dir / f"generated-plans-iter-{i}"
@@ -1186,7 +1242,7 @@ class BeamSearchStrategy(SearchStrategy):
                 plan_duration = round(time.perf_counter() - plan_t0, 3)
                 iter_metrics["plan_duration_s"] = plan_duration
                 logger.info(f"Proposed {len(plan_only_candidates)} new {cur_word} plans.")
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
                 save_dir = self.output_dir / f"generated-code-iter-{i}"
                 save_dir.mkdir(parents=True, exist_ok=True)
@@ -1213,10 +1269,10 @@ class BeamSearchStrategy(SearchStrategy):
                         code_icl_examples=self.code_icl_examples,
                         prob=self.prob,
                     )
-                logger.info(f"Generated {len(impl_candidates)} implementations.")
+                logger.info(f"Generated {len(impl_candidates)} implementations from {len(plan_only_candidates)} plans.")
                 code_duration = round(time.perf_counter() - code_t0, 3)
                 iter_metrics["code_duration_s"] = code_duration
-                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+                self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
             if (
                 len(current_candidates) > 1
@@ -1247,7 +1303,7 @@ class BeamSearchStrategy(SearchStrategy):
                 "num_candidates": len(impl_candidates),
             }
             logger.info(f"Evaluated {len(evaluated_code_candidates)} implementations.")
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
 
             # Step 3.5: Reimplement failed implementations
             if self.reimplement_failed:
@@ -1265,15 +1321,26 @@ class BeamSearchStrategy(SearchStrategy):
                     save_strs = [
                         f"failed_{idx}" for idx in range(len(failed_candidates))
                     ]
-                    reimplemented_candidates = (
-                        self.code_agent.reimplement_failed_code_parallel(
-                            failed_candidates,
-                            1,
-                            save_dir,
-                            save_strs=save_strs,
-                            prob=self.prob,
+                    if self.use_edits:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_edits_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
                         )
-                    )
+                    else:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
+                        )
                     logger.info(
                         f"Generated {len(reimplemented_candidates)} reimplementations."
                     )
@@ -1300,12 +1367,8 @@ class BeamSearchStrategy(SearchStrategy):
                     c for c in evaluated_code_candidates if c.score != float("inf")
                 ]
                 if correct_candidates:
-                    original_code = self.repository.get_candidates(0)[0].code
-                    scores = self.agent.score_translation_completeness(
-                        original_code, correct_candidates, prob=self.prob
-                    )
-                    for cand, ts in zip(correct_candidates, scores):
-                        cand.translation_score = ts
+                    ts_save_dir = self.output_dir / f"eval-results-iter-{i}"
+                    self._score_translation(correct_candidates, ts_save_dir)
                     logger.info(
                         "Translation scores: %s",
                         [
@@ -1319,14 +1382,28 @@ class BeamSearchStrategy(SearchStrategy):
                 evaluated_code_candidates, cur_iter=i, num_iters=iterations
             )
             cands_to_filter = improving_candidates + current_candidates
-            if self.translate_drop_original and i == self.translate_iters:
-                cands_to_filter = [c for c in cands_to_filter if c.parent is not None]
             candidates_for_next_iter = self.filter_code_candidates(
                 cands_to_filter,
                 num_to_keep=self.beam_size,
                 cur_iter=i,
                 num_iters=iterations,
             )
+
+            # Early-stop translation only when every beam candidate is fully translated
+            if translate:
+                self._check_translation_complete(candidates_for_next_iter, i)
+
+            # On the final translation iteration (natural or early-stopped),
+            # re-select the beam excluding the original so all slots go to translated candidates.
+            if self.translate_drop_original and i == self.translate_iters:
+                cands_no_original = [c for c in cands_to_filter if c.parent is not None]
+                candidates_for_next_iter = self.filter_code_candidates(
+                    cands_no_original,
+                    num_to_keep=self.beam_size,
+                    cur_iter=i,
+                    num_iters=iterations,
+                )
+
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
 
             # Step 5: Save the improving candidates and update the repository
@@ -1350,20 +1427,32 @@ class BeamSearchStrategy(SearchStrategy):
             self._save_best_candidate()
 
             # Final save for this iteration (captures complete usage data)
-            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics, run_t0)
+            self._save_iter_metrics_incremental(iter_metrics, i, all_iteration_metrics)
             final_snapshot = {k: v for k, v in iter_metrics.items() if not k.startswith("_")}
             all_iteration_metrics.append(final_snapshot)
-        else:
-            last_iter = len(self.repository.candidates_per_iteration) - 1
-            last_iter_cands = self.repository.get_candidates(last_iter)
+
+        self._save_run_metrics(all_iteration_metrics)
+        best = self._get_best_candidate()
+        initial_candidates = self.repository.get_candidates(0)
+        initial_score = initial_candidates[0].score if initial_candidates and initial_candidates[0].score is not None else None
+        elapsed = time.perf_counter() - run_t0
+
+        if best and best.score is not None:
             wandb.log(
                 {
                     f"optimize-beam-{self.prob.prob_type}-{self.prob.prob_id}-{self.simulator}": {
-                        "best-loss": min([cand.score for cand in last_iter_cands]),
+                        "best-loss": best.score,
                     }
                 }
             )
-            return
 
-        # Final save when loop exited early (break)
-        self._save_run_metrics(all_iteration_metrics, run_t0)
+        logger.info("=" * 60)
+        logger.info("Optimization complete. %d iterations in %.1f minutes.", len(all_iteration_metrics), elapsed / 60)
+        if initial_score is not None:
+            logger.info("Initial score: %.3f", initial_score)
+        if best and best.score is not None:
+            logger.info("Best score: %.3f", best.score)
+            if initial_score and initial_score > 0:
+                logger.info("Speedup: %.2fx", initial_score / best.score)
+        logger.info("=" * 60)
+        wandb.finish()
