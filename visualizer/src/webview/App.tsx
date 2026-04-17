@@ -27,12 +27,14 @@ const PROVIDERS: { id: Provider; label: string; placeholder: string }[] = [
 interface SettingsData {
   provider: Provider;
   model: string;
+  models?: Partial<Record<Provider, string>>;
   hasApiKey: boolean;
   hasAwsSecretKey?: boolean;
   awsRegion?: string;
   gcpProject?: string;
   gcpLocation?: string;
   outputDir?: string;
+  hasCache?: boolean;
 }
 
 function SettingsPage({
@@ -41,12 +43,14 @@ function SettingsPage({
   hasRuns,
   ingesting,
   onIngest,
+  onOpen,
 }: {
   settings: SettingsData | null;
   onBack: () => void;
   hasRuns: boolean;
   ingesting: boolean;
   onIngest: (dir: string) => void;
+  onOpen: (dir: string) => void;
 }) {
   const [provider, setProvider] = useState<Provider>(settings?.provider ?? "openai");
   const [model, setModel] = useState(settings?.model ?? "");
@@ -60,6 +64,7 @@ function SettingsPage({
   const [validating, setValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [validationOk, setValidationOk] = useState(false);
+  const [hasKeyForProvider, setHasKeyForProvider] = useState(settings?.hasApiKey ?? false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -74,11 +79,15 @@ function SettingsPage({
           setValidationOk(true);
           setTimeout(() => setValidationOk(false), 4000);
         }
+      } else if (msg.type === "apiKeyStatus") {
+        if (msg.provider === provider) {
+          setHasKeyForProvider(msg.hasApiKey);
+        }
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, []);
+  }, [provider]);
 
   useEffect(() => {
     if (settings) {
@@ -87,9 +96,16 @@ function SettingsPage({
       setAwsRegion(settings.awsRegion ?? "us-east-1");
       setGcpProject(settings.gcpProject ?? "");
       setGcpLocation(settings.gcpLocation ?? "global");
+      setHasKeyForProvider(settings.hasApiKey);
       if (settings.outputDir) setOutputDir(settings.outputDir);
     }
   }, [settings]);
+
+  useEffect(() => {
+    vscode.postMessage({ type: "checkApiKey", provider });
+    setValidationError(null);
+    setValidationOk(false);
+  }, [provider]);
 
   const provInfo = PROVIDERS.find((p) => p.id === provider)!;
   const isBedrock = provider === "bedrock";
@@ -150,17 +166,32 @@ function SettingsPage({
               Browse
             </button>
           </div>
-          <div className="mt-3">
+          <div className="mt-3 flex items-center gap-2">
+            {settings?.hasCache && (
+              <button
+                onClick={() => { if (outputDir) onOpen(outputDir); }}
+                disabled={!outputDir || ingesting}
+                className={`px-4 py-2 rounded-md text-xs font-semibold transition-colors ${
+                  !outputDir || ingesting
+                    ? "text-stone-400 bg-stone-100 cursor-not-allowed"
+                    : "text-white bg-indigo-600 hover:bg-indigo-700"
+                }`}
+              >
+                Open Traces
+              </button>
+            )}
             <button
               onClick={() => { if (outputDir) onIngest(outputDir); }}
               disabled={!outputDir || ingesting}
               className={`px-4 py-2 rounded-md text-xs font-semibold transition-colors ${
                 !outputDir || ingesting
                   ? "text-stone-400 bg-stone-100 cursor-not-allowed"
-                  : "text-white bg-indigo-600 hover:bg-indigo-700"
+                  : settings?.hasCache
+                    ? "text-stone-600 bg-stone-100 hover:bg-stone-200"
+                    : "text-white bg-indigo-600 hover:bg-indigo-700"
               }`}
             >
-              {ingesting ? "Ingesting..." : "Ingest & Open Traces"}
+              {ingesting ? "Ingesting..." : settings?.hasCache ? "Re-ingest" : "Ingest & Open Traces"}
             </button>
           </div>
         </div>
@@ -177,7 +208,10 @@ function SettingsPage({
               {PROVIDERS.map((p) => (
                 <button
                   key={p.id}
-                  onClick={() => setProvider(p.id)}
+                  onClick={() => {
+                    setProvider(p.id);
+                    setModel(settings?.models?.[p.id] ?? "");
+                  }}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                     provider === p.id
                       ? "bg-violet-100 text-violet-700 ring-1 ring-violet-300"
@@ -250,17 +284,17 @@ function SettingsPage({
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={settings?.hasApiKey ? "••••••• (saved)" : isBedrock ? "AKIA..." : "sk-..."}
+                placeholder={hasKeyForProvider ? "••••••• (saved)" : isBedrock ? "AKIA..." : "sk-..."}
                 className="flex-1 border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
               />
-              {settings?.hasApiKey && (
+              {hasKeyForProvider && (
                 <span className="text-emerald-600 text-[10px] font-semibold uppercase tracking-wide">saved</span>
               )}
             </div>
             {needsApiKey && (
               <p className="text-[11px] text-stone-400 mt-1">Stored securely in VS Code SecretStorage.</p>
             )}
-            {settings?.hasApiKey && (
+            {hasKeyForProvider && (
               <button
                 onClick={() => vscode.postMessage({ type: "clearKey", provider })}
                 className="text-[11px] text-red-500 hover:text-red-600 underline mt-1"
@@ -346,8 +380,8 @@ function MetaBadge({ children }: { children: React.ReactNode }) {
 
 function GeneratedItem({ item }: { item: GeneratedImplementation }) {
   const [expanded, setExpanded] = useState(false);
-  const hasDetails = (item.plan_snippet && item.plan_snippet.length > 80)
-    || (item.error_summary && item.error_summary.length > 100);
+  const hasDetails = (item.plan_snippet && item.plan_snippet.length > 0)
+    || (item.error_summary && item.error_summary.length > 0);
 
   return (
     <div className="text-xs font-mono rounded bg-stone-50 border border-stone-100">
@@ -633,6 +667,8 @@ export default function App() {
         setSettings((prev) => prev ? { ...prev, outputDir: msg.dir } : prev);
       } else if (msg.type === "ingestError") {
         setIngesting(false);
+      } else if (msg.type === "ingestDone") {
+        setIngesting(false);
       } else if (msg.type === "showSettings") {
         setPage("settings");
         vscode.postMessage({ type: "getSettings" });
@@ -736,7 +772,11 @@ export default function App() {
         ingesting={ingesting}
         onIngest={(dir) => {
           setIngesting(true);
-          vscode.postMessage({ type: "ingestDir", dir });
+          vscode.postMessage({ type: "ingestDir", dir, open: !settings?.hasCache });
+        }}
+        onOpen={(dir) => {
+          setIngesting(true);
+          vscode.postMessage({ type: "openTraces", dir });
         }}
       />
     );

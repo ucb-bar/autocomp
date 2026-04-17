@@ -201,37 +201,62 @@ export async function validateConfig(config: SummarizeConfig): Promise<string | 
 }
 
 /**
- * Summarize a batch of plans. Runs requests sequentially to avoid
- * rate-limit issues; callers can report per-plan progress.
+ * Summarize a batch of plans with bounded concurrency.
+ * Bails early after 3 consecutive errors (likely a config problem).
  */
 export async function summarizePlans(
   config: SummarizeConfig,
   plans: PlanToSummarize[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<SummarizeResult[]> {
-  const results: SummarizeResult[] = [];
+  const MAX_CONCURRENCY = 8;
+  const results: SummarizeResult[] = new Array(plans.length);
+  let done = 0;
   let consecutiveErrors = 0;
-  for (let i = 0; i < plans.length; i++) {
-    const { candidateId, plan } = plans[i];
-    try {
-      const summary = await complete(
-        config,
-        `Summarize this optimization plan:\n\n${plan}`,
-      );
-      results.push({ candidateId, summary });
-      consecutiveErrors = 0;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      results.push({ candidateId, summary: "", error: msg });
-      consecutiveErrors++;
-      if (consecutiveErrors >= 3) {
-        for (let j = i + 1; j < plans.length; j++) {
-          results.push({ candidateId: plans[j].candidateId, summary: "", error: msg });
+  let aborted = false;
+  let abortError = "";
+
+  const queue = plans.map((p, i) => ({ ...p, index: i }));
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < queue.length && !aborted) {
+      const idx = next++;
+      const { candidateId, plan, index } = queue[idx];
+      try {
+        const summary = await complete(
+          config,
+          `Summarize this optimization plan:\n\n${plan}`,
+        );
+        results[index] = { candidateId, summary };
+        consecutiveErrors = 0;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results[index] = { candidateId, summary: "", error: msg };
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          aborted = true;
+          abortError = msg;
         }
-        break;
+      }
+      done++;
+      onProgress?.(done, plans.length);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(MAX_CONCURRENCY, plans.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
+  if (aborted) {
+    for (let i = 0; i < plans.length; i++) {
+      if (!results[i]) {
+        results[i] = { candidateId: plans[i].candidateId, summary: "", error: abortError };
       }
     }
-    onProgress?.(i + 1, plans.length);
   }
+
   return results;
 }

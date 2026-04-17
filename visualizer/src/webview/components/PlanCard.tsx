@@ -63,7 +63,7 @@ export default function PlanCard({
         {expanded ? "▾ Hide full plan" : "▸ Show full plan"}
       </button>
       {expanded && (
-        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs leading-relaxed text-gray-800 font-mono">
+        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs leading-relaxed text-gray-800 font-mono">
           {plan}
         </pre>
       )}
