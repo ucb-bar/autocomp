@@ -2,7 +2,7 @@
   "name": "autocomp-visualizer",
   "displayName": "Autocomp Trace Visualizer",
   "description": "Visualize beam search optimization traces from Autocomp — interactive score charts, beam trees, code diffs, and plan summaries.",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "publisher": "charleshong3",
   "license": "BSD-3-Clause",
   "repository": {

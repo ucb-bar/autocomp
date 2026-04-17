@@ -99,8 +99,8 @@ async function callGemini(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userPrompt }] }],
-      generationConfig: { maxOutputTokens: 256, temperature: 0.3 },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
     }),
   });
   if (!resp.ok) {
@@ -143,8 +143,8 @@ async function callVertexAI(
     },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userPrompt }] }],
-      generationConfig: { maxOutputTokens: 256, temperature: 0.3 },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
     }),
   });
   if (!resp.ok) {
@@ -188,6 +188,19 @@ export interface SummarizeResult {
 }
 
 /**
+ * Make a minimal API call to verify that the provider credentials are valid.
+ * Returns null on success, or an error message string on failure.
+ */
+export async function validateConfig(config: SummarizeConfig): Promise<string | null> {
+  try {
+    await complete(config, "Say OK.");
+    return null;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
  * Summarize a batch of plans. Runs requests sequentially to avoid
  * rate-limit issues; callers can report per-plan progress.
  */
@@ -197,6 +210,7 @@ export async function summarizePlans(
   onProgress?: (done: number, total: number) => void,
 ): Promise<SummarizeResult[]> {
   const results: SummarizeResult[] = [];
+  let consecutiveErrors = 0;
   for (let i = 0; i < plans.length; i++) {
     const { candidateId, plan } = plans[i];
     try {
@@ -205,9 +219,17 @@ export async function summarizePlans(
         `Summarize this optimization plan:\n\n${plan}`,
       );
       results.push({ candidateId, summary });
+      consecutiveErrors = 0;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       results.push({ candidateId, summary: "", error: msg });
+      consecutiveErrors++;
+      if (consecutiveErrors >= 3) {
+        for (let j = i + 1; j < plans.length; j++) {
+          results.push({ candidateId: plans[j].candidateId, summary: "", error: msg });
+        }
+        break;
+      }
     }
     onProgress?.(i + 1, plans.length);
   }

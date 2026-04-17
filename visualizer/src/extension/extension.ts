@@ -4,6 +4,7 @@ import * as path from "path";
 import { ingestOutputDir } from "./ingest";
 import {
   summarizePlans,
+  validateConfig,
   type Provider,
   type SummarizeConfig,
   type PlanToSummarize,
@@ -208,6 +209,22 @@ function openPanel(context: vscode.ExtensionContext) {
           await context.secrets.store("autocomp.awsSecretKey", awsSecretKey);
         }
         await sendSettings(context, panel.webview);
+      } else if (msg.type === "validateSettings") {
+        const settings = getStoredSettings(context);
+        const apiKey = await getApiKey(context, settings.provider);
+        const config: SummarizeConfig = {
+          provider: settings.provider,
+          model: settings.model,
+          apiKey: apiKey ?? "",
+          awsRegion: settings.awsRegion,
+          awsSecretKey: settings.provider === "bedrock"
+            ? (await context.secrets.get("autocomp.awsSecretKey")) ?? undefined
+            : undefined,
+          gcpProject: settings.gcpProject,
+          gcpLocation: settings.gcpLocation,
+        };
+        const error = await validateConfig(config);
+        panel.webview.postMessage({ type: "validateResult", error });
       } else if (msg.type === "clearKey") {
         const provider = msg.provider as Provider;
         await context.secrets.delete(`autocomp.apiKey.${provider}`);

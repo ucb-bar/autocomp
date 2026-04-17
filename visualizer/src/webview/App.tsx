@@ -57,6 +57,28 @@ function SettingsPage({
   const [gcpLocation, setGcpLocation] = useState(settings?.gcpLocation ?? "global");
   const [outputDir, setOutputDir] = useState(settings?.outputDir ?? "");
   const [saved, setSaved] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationOk, setValidationOk] = useState(false);
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const msg = event.data;
+      if (msg.type === "validateResult") {
+        setValidating(false);
+        if (msg.error) {
+          setValidationError(msg.error);
+          setValidationOk(false);
+        } else {
+          setValidationError(null);
+          setValidationOk(true);
+          setTimeout(() => setValidationOk(false), 4000);
+        }
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   useEffect(() => {
     if (settings) {
@@ -90,7 +112,11 @@ function SettingsPage({
     setApiKey("");
     setAwsSecretKey("");
     setSaved(true);
+    setValidating(true);
+    setValidationError(null);
+    setValidationOk(false);
     setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => vscode.postMessage({ type: "validateSettings" }), 100);
   };
 
   return (
@@ -264,15 +290,31 @@ function SettingsPage({
             </div>
           )}
 
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={handleSave}
-              className="px-4 py-2 rounded-md text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 transition-colors"
-            >
-              Save
-            </button>
-            {saved && (
-              <span className="text-xs text-emerald-600 font-medium">Saved</span>
+          <div className="pt-1">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSave}
+                disabled={validating}
+                className={`px-4 py-2 rounded-md text-xs font-semibold transition-colors ${
+                  validating
+                    ? "text-stone-400 bg-stone-100 cursor-wait"
+                    : "text-white bg-violet-600 hover:bg-violet-700"
+                }`}
+              >
+                {validating ? "Validating..." : "Save & Validate"}
+              </button>
+              {saved && !validating && !validationError && !validationOk && (
+                <span className="text-xs text-emerald-600 font-medium">Saved</span>
+              )}
+              {validationOk && (
+                <span className="text-xs text-emerald-600 font-medium">Connected successfully</span>
+              )}
+            </div>
+            {validationError && (
+              <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                <p className="text-xs font-medium text-red-700">Connection failed</p>
+                <p className="text-[11px] text-red-600 mt-0.5 font-mono break-all">{validationError}</p>
+              </div>
             )}
           </div>
         </div>
