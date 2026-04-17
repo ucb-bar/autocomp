@@ -72,7 +72,8 @@ def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
         times_ms = []
         for _ in range(NUM_TRIALS):
             t0 = time.perf_counter()
-            out = impl_fn(*inputs)
+            with jax.named_scope('bench_kernel'):
+                out = impl_fn(*inputs)
             jax.block_until_ready(out)
             times_ms.append((time.perf_counter() - t0) * 1000.0)
 
