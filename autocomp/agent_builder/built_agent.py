@@ -893,7 +893,7 @@ class BuiltLLMAgent(LLMAgent):
         user += "\nApply the following optimization plan by outputting JSON edits:\n"
         user += candidate.plan
         user += "\n\nRules:\n"
-        user += self._get_prompt_rules(planning=False, coding=False, prob=prob)
+        user += self._get_prompt_rules(planning=False, coding=True, prob=prob)
 
         return [
             {"role": "system", "content": system},
@@ -968,7 +968,7 @@ class BuiltLLMAgent(LLMAgent):
             user += "Output ONLY JSON edits.\n"
 
         user += "\nRules:\n"
-        user += self._get_prompt_rules(planning=True, coding=False, prob=prob, translate=translate)
+        user += self._get_prompt_rules(planning=True, coding=True, prob=prob, translate=translate)
 
         if cur_iter is not None and num_iters is not None:
             user += f"\nRemember that this is phase {cur_iter} out of {num_iters} optimization phases."
