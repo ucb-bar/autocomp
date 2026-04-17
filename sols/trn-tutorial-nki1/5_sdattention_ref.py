@@ -1,5 +1,5 @@
 @nki.jit
-def test (q_ref, k_ref, v_ref, use_causal_mask=False,
+def solution(q_ref, k_ref, v_ref, use_causal_mask=False,
                                            mixed_precision=True):
   # Use q_ref dtype as the intermediate tensor dtype
   # Assume all IO tensors have the same dtype

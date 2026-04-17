@@ -12,6 +12,7 @@ Usage:
     python run_beam_experiment.py --beam-sizes 1 2 4  # subset of beam sizes
     python run_beam_experiment.py --prob-ids 0 1 2    # subset of problems
 """
+
 import argparse
 import json
 import pathlib
@@ -20,26 +21,26 @@ import time
 import traceback
 
 from autocomp.common import logger
+from autocomp.hw_config import TrnHardwareConfig
+from autocomp.search.prob import Prob
 from autocomp.search.search import (
+    BeamSearchStrategy,
     create_backend_and_agents,
     load_initial_code,
-    BeamSearchStrategy,
 )
-from autocomp.search.prob import Prob
-from autocomp.hw_config import TrnHardwareConfig
 
 # ---------------------------------------------------------------------------
 # Experiment configuration
 # ---------------------------------------------------------------------------
 BEAM_SIZES = [1, 2, 4, 6, 8]
 PROB_TYPE = "trn-tutorial-nki1"
-PROB_IDS = [3,4]
+PROB_IDS = [5]
 
 # Open-source models (via AWS Bedrock Converse API)
 MODELS = [
-    "aws::zai.glm-5",               # GLM-5
-    "aws::moonshotai.kimi-k2.5",    # Kimi K2.5
-    "aws::deepseek.v3.2",           # DeepSeek V3.2
+    "aws::zai.glm-5",  # GLM-5
+    "aws::moonshotai.kimi-k2.5",  # Kimi K2.5
+    "aws::deepseek.v3.2",  # DeepSeek V3.2
 ]
 
 # Fixed hyperparameters
@@ -90,6 +91,7 @@ OUTPUT_ROOT = pathlib.Path("output") / "beam_experiment"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _sanitize_models(models):
     return [m.replace("/", "_") for m in models]
 
@@ -97,7 +99,13 @@ def _sanitize_models(models):
 def _build_output_dir(beam_size: int, prob_id: int) -> pathlib.Path:
     """Construct a deterministic, human-readable output directory name."""
     model_suffix = "_".join(m.split("::")[-1][-20:] for m in _sanitize_models(MODELS))
-    hw_desc = HW_CONFIG.get_hw_description().replace(" ", "").replace("(", "_").replace(")", "").replace(",", "_")
+    hw_desc = (
+        HW_CONFIG.get_hw_description()
+        .replace(" ", "")
+        .replace("(", "_")
+        .replace(")", "")
+        .replace(",", "_")
+    )
     name = (
         f"{AGENT_NAME}_{PROB_TYPE}_{prob_id}_beam_iters{ITERATIONS}"
         f"_{hw_desc}_{model_suffix}"
@@ -173,16 +181,24 @@ def run_single(beam_size: int, prob_id: int) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import autocomp.common.my_logging
+
     autocomp.common.my_logging.move_log(output_dir, tag="search")
     logger.info(
         "=== Beam experiment: beam_size=%d  prob_id=%d  output=%s ===",
-        beam_size, prob_id, output_dir,
+        beam_size,
+        prob_id,
+        output_dir,
     )
 
     prob = Prob(PROB_TYPE, prob_id)
     initial_code = load_initial_code(BACKEND_NAME, prob)
     eval_backend, agent, code_agent = create_backend_and_agents(
-        BACKEND_NAME, AGENT_NAME, HW_CONFIG, prob, models, None,
+        BACKEND_NAME,
+        AGENT_NAME,
+        HW_CONFIG,
+        prob,
+        models,
+        None,
         menu_strategy=MENU_STRATEGY,
         fine_grained_isa=FINE_GRAINED_ISA,
         example_rate=EXAMPLE_RATE,
@@ -265,14 +281,21 @@ def save_summary(all_results: list, path: pathlib.Path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="Beam-size sweep experiment")
     parser.add_argument(
-        "--beam-sizes", type=int, nargs="+", default=BEAM_SIZES,
+        "--beam-sizes",
+        type=int,
+        nargs="+",
+        default=BEAM_SIZES,
         help="Beam sizes to sweep (default: 1 2 4 6 8)",
     )
     parser.add_argument(
-        "--prob-ids", type=int, nargs="+", default=PROB_IDS,
+        "--prob-ids",
+        type=int,
+        nargs="+",
+        default=PROB_IDS,
         help="Problem IDs to run (default: 0 1 2 3 4 5)",
     )
     args = parser.parse_args()
@@ -283,7 +306,9 @@ def main():
     total_runs = len(beam_sizes) * len(prob_ids)
     logger.info(
         "Starting beam experiment: %d beam_sizes × %d problems = %d total runs",
-        len(beam_sizes), len(prob_ids), total_runs,
+        len(beam_sizes),
+        len(prob_ids),
+        total_runs,
     )
     logger.info("Beam sizes: %s", beam_sizes)
     logger.info("Problem IDs: %s  (prob_type=%s)", prob_ids, PROB_TYPE)
@@ -297,7 +322,9 @@ def main():
         try:
             with open(summary_path) as f:
                 all_results = json.load(f)
-            logger.info("Loaded %d prior results from %s", len(all_results), summary_path)
+            logger.info(
+                "Loaded %d prior results from %s", len(all_results), summary_path
+            )
         except Exception:
             pass
 
@@ -315,13 +342,19 @@ def main():
             if (beam_size, prob_id) in completed:
                 logger.info(
                     "[%d/%d] Skipping beam_size=%d prob_id=%d (already completed with same models)",
-                    run_num, total_runs, beam_size, prob_id,
+                    run_num,
+                    total_runs,
+                    beam_size,
+                    prob_id,
                 )
                 continue
 
             logger.info(
                 "[%d/%d] Running beam_size=%d  prob_id=%d",
-                run_num, total_runs, beam_size, prob_id,
+                run_num,
+                total_runs,
+                beam_size,
+                prob_id,
             )
             try:
                 result = run_single(beam_size, prob_id)
@@ -329,7 +362,10 @@ def main():
             except Exception as e:
                 logger.error(
                     "Run failed (beam_size=%d, prob_id=%d): %s\n%s",
-                    beam_size, prob_id, e, traceback.format_exc(),
+                    beam_size,
+                    prob_id,
+                    e,
+                    traceback.format_exc(),
                 )
                 result = {
                     "beam_size": beam_size,
@@ -342,7 +378,9 @@ def main():
             all_results.append(result)
             save_summary(all_results, summary_path)
 
-    logger.info("Experiment complete. %d runs saved to %s", len(all_results), summary_path)
+    logger.info(
+        "Experiment complete. %d runs saved to %s", len(all_results), summary_path
+    )
     _print_summary_table(all_results)
 
 
@@ -381,10 +419,14 @@ def _print_summary_table(results: list):
     # Token cost summary
     print("\nTotal LLM tokens (input+output) by beam_size:")
     for b in beam_sizes:
-        runs = [r for r in results if r["beam_size"] == b and r.get("status") == "success"]
+        runs = [
+            r for r in results if r["beam_size"] == b and r.get("status") == "success"
+        ]
         tok_in = sum(r.get("total_input_tokens") or 0 for r in runs)
         tok_out = sum(r.get("total_output_tokens") or 0 for r in runs)
-        print(f"  beam={b}: input={tok_in:,}  output={tok_out:,}  total={tok_in+tok_out:,}")
+        print(
+            f"  beam={b}: input={tok_in:,}  output={tok_out:,}  total={tok_in + tok_out:,}"
+        )
 
 
 if __name__ == "__main__":
