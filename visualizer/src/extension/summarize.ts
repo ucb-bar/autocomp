@@ -117,7 +117,7 @@ async function callVertexAI(
   userPrompt: string,
 ): Promise<string> {
   const project = config.gcpProject;
-  const location = config.gcpLocation || "us-central1";
+  const location = config.gcpLocation || "global";
   if (!project) {
     throw new Error("GCP project ID is required for Vertex AI");
   }
@@ -129,8 +129,11 @@ async function callVertexAI(
       "or set GOOGLE_APPLICATION_CREDENTIALS.",
     );
   }
+  const host = location === "global"
+    ? "aiplatform.googleapis.com"
+    : `${location}-aiplatform.googleapis.com`;
   const url =
-    `https://${location}-aiplatform.googleapis.com/v1/projects/${project}` +
+    `https://${host}/v1/projects/${project}` +
     `/locations/${location}/publishers/google/models/${config.model}:generateContent`;
   const resp = await fetch(url, {
     method: "POST",

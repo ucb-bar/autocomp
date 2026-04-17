@@ -54,7 +54,7 @@ function SettingsPage({
   const [awsSecretKey, setAwsSecretKey] = useState("");
   const [awsRegion, setAwsRegion] = useState(settings?.awsRegion ?? "us-east-1");
   const [gcpProject, setGcpProject] = useState(settings?.gcpProject ?? "");
-  const [gcpLocation, setGcpLocation] = useState(settings?.gcpLocation ?? "us-central1");
+  const [gcpLocation, setGcpLocation] = useState(settings?.gcpLocation ?? "global");
   const [outputDir, setOutputDir] = useState(settings?.outputDir ?? "");
   const [saved, setSaved] = useState(false);
 
@@ -64,7 +64,7 @@ function SettingsPage({
       setModel(settings.model);
       setAwsRegion(settings.awsRegion ?? "us-east-1");
       setGcpProject(settings.gcpProject ?? "");
-      setGcpLocation(settings.gcpLocation ?? "us-central1");
+      setGcpLocation(settings.gcpLocation ?? "global");
       if (settings.outputDir) setOutputDir(settings.outputDir);
     }
   }, [settings]);
@@ -84,7 +84,7 @@ function SettingsPage({
         awsRegion: isBedrock ? (awsRegion || "us-east-1") : undefined,
         awsSecretKey: isBedrock ? (awsSecretKey || undefined) : undefined,
         gcpProject: isVertexAI ? (gcpProject || undefined) : undefined,
-        gcpLocation: isVertexAI ? (gcpLocation || "us-central1") : undefined,
+        gcpLocation: isVertexAI ? (gcpLocation || "global") : undefined,
       },
     });
     setApiKey("");
@@ -206,7 +206,7 @@ function SettingsPage({
                   type="text"
                   value={gcpLocation}
                   onChange={(e) => setGcpLocation(e.target.value)}
-                  placeholder="us-central1"
+                  placeholder="global"
                   className="w-full max-w-[14rem] border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
                 />
                 <p className="text-[11px] text-stone-400 mt-1">Uses <code className="text-stone-500">gcloud auth</code> credentials from the machine.</p>
