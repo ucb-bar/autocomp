@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { formatModel } from "../lib/format";
 
+function fmt(n: number, maxDecimals = 3): string {
+  return parseFloat(n.toFixed(maxDecimals)).toString();
+}
+
 interface PlanCardProps {
   plan: string | null;
   planSummary?: string;
@@ -45,9 +49,9 @@ export default function PlanCard({
         )}
         {improvement !== null && score != null && parentScore != null && (
           <span className="inline-block text-xs text-gray-600">
-            {parentScore.toFixed(2)} → {score.toFixed(2)}{" "}
+            {fmt(parentScore)} → {fmt(score)}{" "}
             <span className={improvement > 0 ? "font-medium text-green-700" : "text-red-600"}>
-              ({improvement > 0 ? "+" : ""}{improvement.toFixed(1)}% {improvement > 0 ? "faster" : "slower"})
+              ({improvement > 0 ? "+" : ""}{fmt(improvement, 1)}% {improvement > 0 ? "faster" : "slower"})
             </span>
           </span>
         )}
@@ -59,7 +63,7 @@ export default function PlanCard({
         {expanded ? "▾ Hide full plan" : "▸ Show full plan"}
       </button>
       {expanded && (
-        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs leading-relaxed text-gray-800 font-mono">
+        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs leading-relaxed text-gray-800 font-mono">
           {plan}
         </pre>
       )}

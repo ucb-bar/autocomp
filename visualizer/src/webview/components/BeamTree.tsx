@@ -17,7 +17,7 @@ const PADDING = 40;
 
 function formatScore(score: number | null): string {
   if (score === null) return "N/A";
-  return `${score.toFixed(3)}`;
+  return parseFloat(score.toFixed(3)).toString();
 }
 
 function scoreColor(
