@@ -27,7 +27,7 @@ optimizations:
 - strategy: Avoid singleton dimensions in last two array axes to prevent full-tile waste per element
 - strategy: Reduce along second-to-last dimension rather than last dimension when possible
 - strategy: Prefer add/multiply over exp/tanh/division; restructure math to minimize expensive elementwise ops
-- strategy: Sweep block size configurations empirically since optimal VMEM/intensity/bubble tradeoff is hard to predict analytically
+- strategy: Tune block sizes jointly — systematically vary BM, BN, BK together under the VMEM budget constraint (16 MiB including double-buffering and scratch), considering the tradeoff between fewer grid tiles (larger blocks → less pipeline overhead) and fitting in VMEM, and whether eliminating a K-reduction loop (BK = full K) with a smaller BN outperforms a K-tiled approach with larger BN
 - strategy: Compute arithmetic intensity accounting for tiling amplification to predict compute-bound vs memory-bound regime
 - strategy: Minimize control flow inside kernels; consolidate into single basic blocks to avoid unrolling overhead
 - strategy: Pass all data as explicit kernel inputs with BlockSpec instead of closing over constants

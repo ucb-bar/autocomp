@@ -35,3 +35,4 @@ optimizations:
 - strategy: Use `pltpu.sync_copy` for explicit HBM-to-VMEM transfers when manual memory control is needed
 - strategy: Precompute data-independent metadata with numpy before the kernel so it compiles to constants
 - strategy: Skip or shrink iterations that produce zero-contribution results due to masking or structure
+- strategy: Tune block sizes jointly — systematically vary BM, BN, BK together under the VMEM budget constraint (16 MiB including double-buffering and scratch), considering the tradeoff between fewer grid tiles (larger blocks → less pipeline overhead) and fitting in VMEM, and whether eliminating a K-reduction loop (BK = full K) with a smaller BN outperforms a K-tiled approach with larger BN
