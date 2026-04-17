@@ -1,6 +1,10 @@
 import { useMemo, useState, useCallback } from "react";
 import type { IterationData, BeamCandidate } from "../lib/types";
 
+function fmt(n: number, maxDecimals = 3): string {
+  return parseFloat(n.toFixed(maxDecimals)).toString();
+}
+
 interface ScoreChartProps {
   iterations: IterationData[];
   onCandidateSelect?: (candidate: BeamCandidate | null) => void;
@@ -181,7 +185,7 @@ export default function ScoreChart({
           {yTicks.map((y, i) => (
             <text key={`yl${i}`} x={PAD.left - 8} y={yScale(y) + 3}
               textAnchor="end" className="fill-stone-400" fontSize={10}>
-              {y.toFixed(y < 1 ? 2 : 1)}
+              {fmt(y, y < 1 ? 2 : 1)}
             </text>
           ))}
           <text x={14} y={PAD.top + plotH / 2} textAnchor="middle"
@@ -212,7 +216,7 @@ export default function ScoreChart({
                 x={W - PAD.right + 4} y={yScale(globalBest) + 3}
                 fontSize={9} className="fill-emerald-600" fontWeight={600}
               >
-                {globalBest.toFixed(globalBest < 1 ? 3 : 2)}
+                {fmt(globalBest, globalBest < 1 ? 3 : 2)}
               </text>
             </>
           )}
@@ -293,7 +297,7 @@ export default function ScoreChart({
                 <span className="font-semibold text-stone-800">
                   iter {dot.iter}
                 </span>
-                <span className="text-stone-700">{dot.score.toFixed(3)}</span>
+                <span className="text-stone-700">{fmt(dot.score)}</span>
                 {dot.candidate.plan_summary ? (
                   <span className="text-stone-500 truncate">
                     {dot.candidate.plan_summary}
@@ -308,10 +312,10 @@ export default function ScoreChart({
             return (
               <>
                 <span className="font-semibold text-stone-800">
-                  {infoTrace.points[0].score.toFixed(3)} → {infoTrace.finalScore.toFixed(3)}
+                  {fmt(infoTrace.points[0].score)} → {fmt(infoTrace.finalScore)}
                 </span>
                 <span className="text-emerald-600 font-semibold">
-                  {(infoTrace.points[0].score / infoTrace.finalScore).toFixed(1)}x
+                  {fmt(infoTrace.points[0].score / infoTrace.finalScore, 1)}x
                 </span>
                 <span className="text-stone-400">
                   {infoTrace.points.length} steps
@@ -358,10 +362,10 @@ export default function ScoreChart({
                   className="inline-block w-3 h-0.5 rounded"
                   style={{ backgroundColor: color }}
                 />
-                {last.score.toFixed(3)}
+                {fmt(last.score)}
                 {traceSpeedup > 1 && (
                   <span className={isBestSpeedup ? "text-emerald-600 font-semibold" : "text-stone-400"}>
-                    ({traceSpeedup.toFixed(1)}x)
+                    ({fmt(traceSpeedup, 1)}x)
                   </span>
                 )}
               </button>

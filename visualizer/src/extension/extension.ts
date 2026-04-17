@@ -26,6 +26,8 @@ interface StoredSettings {
   provider: Provider;
   model: string;
   awsRegion?: string;
+  gcpProject?: string;
+  gcpLocation?: string;
 }
 
 function getStoredSettings(context: vscode.ExtensionContext): StoredSettings {
@@ -189,14 +191,16 @@ function openPanel(context: vscode.ExtensionContext) {
       } else if (msg.type === "getSettings") {
         await sendSettings(context, panel.webview);
       } else if (msg.type === "saveSettings") {
-        const { provider, model, apiKey, awsRegion, awsSecretKey } = msg.data as {
+        const { provider, model, apiKey, awsRegion, awsSecretKey, gcpProject, gcpLocation } = msg.data as {
           provider: Provider;
           model: string;
           apiKey?: string;
           awsRegion?: string;
           awsSecretKey?: string;
+          gcpProject?: string;
+          gcpLocation?: string;
         };
-        await context.globalState.update(SETTINGS_KEY, { provider, model, awsRegion });
+        await context.globalState.update(SETTINGS_KEY, { provider, model, awsRegion, gcpProject, gcpLocation });
         if (apiKey) {
           await context.secrets.store(`autocomp.apiKey.${provider}`, apiKey);
         }
@@ -229,7 +233,7 @@ async function handleSummarize(
   const settings = getStoredSettings(context);
   const apiKey = await getApiKey(context, settings.provider);
 
-  if (!apiKey && settings.provider !== "bedrock") {
+  if (!apiKey && settings.provider !== "bedrock" && settings.provider !== "vertex-ai") {
     panel.webview.postMessage({ type: "summarizeResult", cancelled: true });
     panel.webview.postMessage({ type: "showSettings" });
     vscode.window.showWarningMessage(
@@ -264,6 +268,8 @@ async function handleSummarize(
     awsSecretKey: settings.provider === "bedrock"
       ? (await context.secrets.get("autocomp.awsSecretKey")) ?? undefined
       : undefined,
+    gcpProject: settings.gcpProject,
+    gcpLocation: settings.gcpLocation,
   };
 
   const results = await vscode.window.withProgress(

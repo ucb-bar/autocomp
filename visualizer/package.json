@@ -70,6 +70,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1023.0",
+    "google-auth-library": "^10.6.2",
     "openai": "^6.33.0"
   }
 }

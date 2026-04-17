@@ -473,7 +473,7 @@ export function ingestRun(runDir: string): Record<string, unknown> | null {
         kept = true;
         beamScoreCounts[latency]--;
       } else if (correct && latency != null) {
-        whyRejected = `score ${latency.toFixed(3)} ms not in top beam`;
+        whyRejected = `score ${parseFloat(latency.toFixed(3))} ms not in top beam`;
       }
 
       const item: Record<string, unknown> = {

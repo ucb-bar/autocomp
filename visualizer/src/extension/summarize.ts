@@ -4,8 +4,9 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import { GoogleAuth } from "google-auth-library";
 
-export type Provider = "openai" | "anthropic" | "bedrock" | "gemini";
+export type Provider = "openai" | "anthropic" | "bedrock" | "gemini" | "vertex-ai";
 
 export interface SummarizeConfig {
   provider: Provider;
@@ -15,6 +16,10 @@ export interface SummarizeConfig {
   awsRegion?: string;
   /** AWS secret access key for Bedrock (optional; uses default credential chain if omitted) */
   awsSecretKey?: string;
+  /** GCP project ID for Vertex AI */
+  gcpProject?: string;
+  /** GCP location for Vertex AI (defaults to us-central1) */
+  gcpLocation?: string;
 }
 
 const SYSTEM_PROMPT = `You are a concise technical summarizer. Given an optimization plan for a code transformation, produce a 1-2 sentence summary that captures the key strategy. Focus on what the plan does, not how it was generated. Be specific about the optimization technique. Do not use filler phrases.`;
@@ -107,6 +112,47 @@ async function callGemini(
   );
 }
 
+async function callVertexAI(
+  config: SummarizeConfig,
+  userPrompt: string,
+): Promise<string> {
+  const project = config.gcpProject;
+  const location = config.gcpLocation || "us-central1";
+  if (!project) {
+    throw new Error("GCP project ID is required for Vertex AI");
+  }
+  const auth = new GoogleAuth({ scopes: "https://www.googleapis.com/auth/cloud-platform" });
+  const token = await auth.getAccessToken();
+  if (!token) {
+    throw new Error(
+      "Could not obtain GCP credentials. Run `gcloud auth application-default login` " +
+      "or set GOOGLE_APPLICATION_CREDENTIALS.",
+    );
+  }
+  const url =
+    `https://${location}-aiplatform.googleapis.com/v1/projects/${project}` +
+    `/locations/${location}/publishers/google/models/${config.model}:generateContent`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 256, temperature: 0.3 },
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`Vertex AI error: ${resp.status} ${await resp.text()}`);
+  }
+  const data = await resp.json();
+  return (
+    data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ""
+  );
+}
+
 async function complete(
   config: SummarizeConfig,
   userPrompt: string,
@@ -120,6 +166,8 @@ async function complete(
       return callBedrock(config, userPrompt);
     case "gemini":
       return callGemini(config, userPrompt);
+    case "vertex-ai":
+      return callVertexAI(config, userPrompt);
     default:
       throw new Error(`Unknown provider: ${config.provider}`);
   }

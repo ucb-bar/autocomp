@@ -14,13 +14,14 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi();
 
-type Provider = "openai" | "anthropic" | "bedrock" | "gemini";
+type Provider = "openai" | "anthropic" | "bedrock" | "gemini" | "vertex-ai";
 
 const PROVIDERS: { id: Provider; label: string; placeholder: string }[] = [
   { id: "openai", label: "OpenAI", placeholder: "gpt-5.4-mini" },
   { id: "anthropic", label: "Anthropic", placeholder: "claude-haiku-4-5-20251001" },
   { id: "bedrock", label: "AWS Bedrock", placeholder: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
-  { id: "gemini", label: "Google Gemini", placeholder: "gemini-3-flash-preview" },
+  { id: "gemini", label: "Google AI Studio", placeholder: "gemini-3-flash-preview" },
+  { id: "vertex-ai", label: "Google Vertex AI", placeholder: "gemini-3-flash-preview" },
 ];
 
 interface SettingsData {
@@ -29,6 +30,8 @@ interface SettingsData {
   hasApiKey: boolean;
   hasAwsSecretKey?: boolean;
   awsRegion?: string;
+  gcpProject?: string;
+  gcpLocation?: string;
   outputDir?: string;
 }
 
@@ -50,6 +53,8 @@ function SettingsPage({
   const [apiKey, setApiKey] = useState("");
   const [awsSecretKey, setAwsSecretKey] = useState("");
   const [awsRegion, setAwsRegion] = useState(settings?.awsRegion ?? "us-east-1");
+  const [gcpProject, setGcpProject] = useState(settings?.gcpProject ?? "");
+  const [gcpLocation, setGcpLocation] = useState(settings?.gcpLocation ?? "us-central1");
   const [outputDir, setOutputDir] = useState(settings?.outputDir ?? "");
   const [saved, setSaved] = useState(false);
 
@@ -58,12 +63,16 @@ function SettingsPage({
       setProvider(settings.provider);
       setModel(settings.model);
       setAwsRegion(settings.awsRegion ?? "us-east-1");
+      setGcpProject(settings.gcpProject ?? "");
+      setGcpLocation(settings.gcpLocation ?? "us-central1");
       if (settings.outputDir) setOutputDir(settings.outputDir);
     }
   }, [settings]);
 
   const provInfo = PROVIDERS.find((p) => p.id === provider)!;
   const isBedrock = provider === "bedrock";
+  const isVertexAI = provider === "vertex-ai";
+  const needsApiKey = !isBedrock && !isVertexAI;
 
   const handleSave = () => {
     vscode.postMessage({
@@ -74,6 +83,8 @@ function SettingsPage({
         apiKey: apiKey || undefined,
         awsRegion: isBedrock ? (awsRegion || "us-east-1") : undefined,
         awsSecretKey: isBedrock ? (awsSecretKey || undefined) : undefined,
+        gcpProject: isVertexAI ? (gcpProject || undefined) : undefined,
+        gcpLocation: isVertexAI ? (gcpLocation || "us-central1") : undefined,
       },
     });
     setApiKey("");
@@ -177,6 +188,33 @@ function SettingsPage({
             </div>
           )}
 
+          {isVertexAI && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-stone-500 mb-1">GCP Project ID</label>
+                <input
+                  type="text"
+                  value={gcpProject}
+                  onChange={(e) => setGcpProject(e.target.value)}
+                  placeholder="my-gcp-project"
+                  className="w-full max-w-[20rem] border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-stone-500 mb-1">GCP Location</label>
+                <input
+                  type="text"
+                  value={gcpLocation}
+                  onChange={(e) => setGcpLocation(e.target.value)}
+                  placeholder="us-central1"
+                  className="w-full max-w-[14rem] border border-stone-200 rounded-md px-3 py-2 text-xs font-mono text-stone-700 bg-white focus:outline-none focus:ring-1 focus:ring-violet-300"
+                />
+                <p className="text-[11px] text-stone-400 mt-1">Uses <code className="text-stone-500">gcloud auth</code> credentials from the machine.</p>
+              </div>
+            </>
+          )}
+
+          {!isVertexAI && (
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-1">
               {isBedrock ? "Access Key ID (optional)" : "API Key"}
@@ -193,7 +231,7 @@ function SettingsPage({
                 <span className="text-emerald-600 text-[10px] font-semibold uppercase tracking-wide">saved</span>
               )}
             </div>
-            {!isBedrock && (
+            {needsApiKey && (
               <p className="text-[11px] text-stone-400 mt-1">Stored securely in VS Code SecretStorage.</p>
             )}
             {settings?.hasApiKey && (
@@ -205,6 +243,7 @@ function SettingsPage({
               </button>
             )}
           </div>
+          )}
 
           {isBedrock && (
             <div>
@@ -301,7 +340,7 @@ function GeneratedItem({ item }: { item: GeneratedImplementation }) {
               kept
             </span>
           )}
-          {item.score !== null && <span>{item.score.toFixed(3)}</span>}
+          {item.score !== null && <span>{formatScore(item.score)}</span>}
           {item.model && <span className="text-stone-300">{formatModel(item.model)}</span>}
           {hasDetails && <span className="text-[10px]">{expanded ? "▾" : "▸"}</span>}
         </span>
@@ -330,6 +369,10 @@ function GeneratedItem({ item }: { item: GeneratedImplementation }) {
       )}
     </div>
   );
+}
+
+function formatScore(n: number, maxDecimals = 3): string {
+  return parseFloat(n.toFixed(maxDecimals)).toString();
 }
 
 function formatDuration(seconds?: number): string {
@@ -579,7 +622,7 @@ export default function App() {
       if (!parent) break;
       chain.push({
         id: parent.id,
-        label: `${parent.id}${parent.score != null ? ` (${parent.score.toFixed(3)})` : ""}`,
+        label: `${parent.id}${parent.score != null ? ` (${formatScore(parent.score)})` : ""}`,
         code: parent.code ?? "",
       });
       cur = parent;
@@ -588,7 +631,7 @@ export default function App() {
     if (original && (chain.length === 0 || chain[chain.length - 1].id !== original.id)) {
       chain.push({
         id: "__original__",
-        label: `Original${run?.original_score != null ? ` (${run.original_score.toFixed(3)})` : ""}`,
+        label: `Original${run?.original_score != null ? ` (${formatScore(run.original_score)})` : ""}`,
         code: original.code ?? "",
       });
     }
@@ -726,11 +769,11 @@ export default function App() {
                     <div className="text-right flex-shrink-0">
                       {r.speedup && (
                         <div className="text-lg font-semibold text-indigo-700 font-mono">
-                          {r.speedup}x
+                          {formatScore(r.speedup, 2)}x
                         </div>
                       )}
                       <div className="text-xs text-stone-400 font-mono mt-0.5">
-                        {r.original_score?.toFixed(3)} → {r.best_score?.toFixed(3)}
+                        {r.original_score != null ? formatScore(r.original_score) : "—"} → {r.best_score != null ? formatScore(r.best_score) : "—"}
                       </div>
                     </div>
                   </div>
@@ -757,7 +800,7 @@ export default function App() {
             </h1>
             {run.speedup && (
               <span className="text-lg font-semibold text-indigo-700 font-mono">
-                {run.speedup}x speedup
+                {formatScore(run.speedup, 2)}x speedup
               </span>
             )}
           </div>
@@ -781,7 +824,7 @@ export default function App() {
             )}
           </div>
           <div className="text-sm text-stone-400 font-mono mt-2">
-            {run.original_score?.toFixed(3)} → {run.best_score?.toFixed(3)}
+            {run.original_score != null ? formatScore(run.original_score) : "—"} → {run.best_score != null ? formatScore(run.best_score) : "—"}
           </div>
           <details className="mt-2 group">
             <summary className="text-xs text-stone-400 hover:text-stone-600 cursor-pointer select-none transition-colors">
@@ -853,7 +896,7 @@ export default function App() {
               Candidate Summary
               {selected && (
                 <span className="ml-2 font-mono text-stone-400 font-normal">
-                  {selected.id}{selected.score != null && ` · ${selected.score.toFixed(3)}`}
+                  {selected.id}{selected.score != null && ` · ${formatScore(selected.score)}`}
                 </span>
               )}
             </h2>
