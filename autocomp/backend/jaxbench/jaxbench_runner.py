@@ -85,14 +85,19 @@ def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
             impl_out = impl_fn(*inputs)
             jax.block_until_ready(impl_out)
 
-        if not jnp.allclose(ref_out, impl_out, atol=atol, rtol=rtol):
-            max_diff = float(jnp.max(jnp.abs(ref_out - impl_out)))
-            result["error"] = f"correctness check failed (max_diff={max_diff:.6f})"
-            return result
+        abs_diff = jnp.abs(ref_out - impl_out)
+        max_diff = float(jnp.max(abs_diff))
+        ref_max = jnp.maximum(jnp.max(jnp.abs(ref_out)), 1e-6)
+        global_rel_diff = float(max_diff / ref_max)
+        elem_rel_diff = float(jnp.max(abs_diff / jnp.maximum(jnp.abs(ref_out), 1e-6)))
 
-        max_diff = float(jnp.max(jnp.abs(ref_out - impl_out)))
-        denom = jnp.maximum(jnp.max(jnp.abs(ref_out)), 1e-6)
-        max_rel_diff = float(jnp.max(jnp.abs(ref_out - impl_out) / denom))
+        if not jnp.allclose(ref_out, impl_out, atol=atol, rtol=rtol):
+            result["error"] = (
+                f"correctness check failed (max_diff={max_diff:.6f}, "
+                f"global_rel_diff={global_rel_diff:.6f}, "
+                f"elem_rel_diff={elem_rel_diff:.6f})"
+            )
+            return result
 
         # Device-side profiling via Perfetto traces
         trace_dir = f"/tmp/jaxbench_runner_trace_{os.getpid()}"
@@ -131,7 +136,8 @@ def _eval_impl(impl_path: str, inputs, ref_out, atol=ATOL, rtol=RTOL):
         result["timing_method"] = timing_method
         result["all_times_ms"] = [round(t, 3) for t in times_ms]
         result["max_diff"] = round(max_diff, 6)
-        result["max_rel_diff"] = round(max_rel_diff, 6)
+        result["global_rel_diff"] = round(global_rel_diff, 6)
+        result["elem_rel_diff"] = round(elem_rel_diff, 6)
 
     except SystemExit:
         result["error"] = "SystemExit raised"

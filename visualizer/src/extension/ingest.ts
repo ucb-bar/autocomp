@@ -344,7 +344,7 @@ function loadEvalResults(runDir: string, iteration: number): Record<string, unkn
       const text = fs.readFileSync(path.join(resultsDir, file), "utf-8");
       const firstLine = text.split("\n")[0];
       const planMatch = text.match(/Plan: (.+?)(?:\nCodeCandidate|$)/s);
-      const planSnippet = planMatch ? planMatch[1].trim().slice(0, 120).trim() : "";
+      const planSnippet = planMatch ? planMatch[1].trim() : "";
       fullResults.push({ plan_snippet: planSnippet, raw_first_line: firstLine });
     } catch {
       fullResults.push({});
@@ -473,7 +473,7 @@ export function ingestRun(runDir: string): Record<string, unknown> | null {
         kept = true;
         beamScoreCounts[latency]--;
       } else if (correct && latency != null) {
-        whyRejected = `score ${latency.toFixed(3)} ms not in top beam`;
+        whyRejected = `score ${parseFloat(latency.toFixed(3))} ms not in top beam`;
       }
 
       const item: Record<string, unknown> = {
@@ -481,7 +481,7 @@ export function ingestRun(runDir: string): Record<string, unknown> | null {
         kept,
         score: correct && latency != null ? latency : null,
         plan_snippet: (er.plan_snippet as string) ?? "",
-        error_summary: correct ? null : ((er.stderr as string) ?? "").slice(0, 200),
+        error_summary: correct ? null : ((er.stderr as string) ?? ""),
         model: (er.model as string) ?? "",
       };
       if (whyRejected != null) item.why_rejected = whyRejected;

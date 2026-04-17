@@ -6,7 +6,7 @@ Practical guidance for choosing Autocomp search parameters. See the [main README
 
 `iterations` is the total number of iterations. The first `translate_iters` of those use translation strategies; the remaining use optimization strategies. Translation may take multiple (3–5) iterations if the kernel is complex and the LLM translates it incrementally. For challenging kernels, 8–15 total iterations is typical.
 
-When `translate_score=True`, translation ends early if any candidate reaches a perfect translation score (10.0). The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
+When `translate_score=True`, translation ends early once **all** beam candidates reach a translation score >= 9.0. This ensures no partially-translated code enters the optimization phase. The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
 
 **Convergence**: Set `early_stop_iters` to automatically stop the search after N iterations without improvement. If the search converges and you want to push further, change the search conditions (swap/add models, adjust `dropout_menu_options`, add documentation or rules) rather than just adding more iterations.
 

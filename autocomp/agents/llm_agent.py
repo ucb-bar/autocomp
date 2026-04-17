@@ -37,20 +37,49 @@ EDITS_JSON_SCHEMA = {
 }
 
 
+def _normalize_ws(s: str) -> str:
+    """Collapse each run of whitespace to a single space for fuzzy matching."""
+    return " ".join(s.split())
+
+
+def _fuzzy_replace(code: str, old: str, new: str) -> str | None:
+    """Try whitespace-normalized matching when an exact match fails.
+
+    Returns the edited code, or None if no match is found even after
+    normalisation.
+    """
+    norm_old = _normalize_ws(old)
+    lines = code.splitlines(keepends=True)
+    old_lines = old.splitlines()
+    window = len(old_lines)
+    for start in range(len(lines) - window + 1):
+        candidate = "".join(lines[start : start + window])
+        if _normalize_ws(candidate) == norm_old:
+            return code[: sum(len(l) for l in lines[:start])] + new + code[sum(len(l) for l in lines[: start + window]) :]
+    return None
+
+
 def apply_edits(code: str, edits: list[dict]) -> str:
     """Apply a sequence of str_replace edits to code.
 
     Each edit is {"old_str": ..., "new_str": ...}.
     Replaces all occurrences of old_str. Raises ValueError if old_str is not found.
+    Falls back to whitespace-normalised matching when an exact match fails.
     """
     for i, edit in enumerate(edits):
         old = edit["old_str"]
         new = edit["new_str"]
         if old == new:
             continue
-        if old not in code:
-            raise ValueError(f"Edit {i}: old_str not found in code:\n{old[:200]}")
-        code = code.replace(old, new)
+        if old in code:
+            code = code.replace(old, new)
+            continue
+        fuzzy = _fuzzy_replace(code, old, new)
+        if fuzzy is not None:
+            logger.debug("Edit %d: exact match failed, applied via whitespace-normalised match", i)
+            code = fuzzy
+            continue
+        raise ValueError(f"Edit {i}: old_str not found in code:\n{old[:200]}")
     return code
 
 
@@ -344,7 +373,7 @@ class LLMAgent:
             for c_i, this_cand_loaded_plans in enumerate(loaded_plans):
                 for plan in this_cand_loaded_plans:
                     loaded_cands.append(CodeCandidate(candidate_lst[c_i], plan, None, plan_gen_model=self.llm_client.model))
-            logger.info("Loaded %d optimization plans rather than generating new ones", len(loaded_cands))
+            logger.info("%s: loaded %d optimization plans from cache", self.llm_client.model, len(loaded_cands))
             return loaded_cands
 
         if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_util_feedback < 1) or (0 < give_hw_feedback < 1):
@@ -454,7 +483,7 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d code implementations rather than generating new ones", len(loaded_candidates))
+            logger.info("%s: loaded %d plan-based implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         prompts_lst = []
@@ -474,7 +503,7 @@ class LLMAgent:
             temperature=temperature,
             reasoning_effort="medium"
         )
-        logger.info("%s: finished generating %d code implementations for %d candidates.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
+        logger.info("%s: finished generating %d code responses for %d plans.", self.llm_client.model, len(prompts_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i, cand_responses in enumerate(responses):
@@ -542,7 +571,7 @@ class LLMAgent:
                     new_cand = CodeCandidate(cand, "direct implementation (no plan)", loaded_code[c_i][s_i],
                                              plan_gen_model=self.llm_client.model, code_gen_model=self.llm_client.model)
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d direct implementations from cache", len(loaded_candidates))
+            logger.info("%s: loaded %d direct implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1):
@@ -576,7 +605,7 @@ class LLMAgent:
             num_samples=samples_per_prompt,
             temperature=1,
         )
-        logger.info("%s: finished generating %d direct implementations for %d candidates.",
+        logger.info("%s: finished generating %d direct code responses for %d candidates.",
                      self.llm_client.model, len(prompts_lst) * samples_per_prompt, len(candidate_lst))
 
         full_responses = [[] for _ in range(len(candidate_lst))]
@@ -642,15 +671,21 @@ class LLMAgent:
         num_samples: int, save_dir: pathlib.Path, save_strs: list[str],
         file_prefix: str, plan_label: str,
         base_code_lst: list[str] = None,
+        plan_labels: list[str] = None,
     ) -> list[CodeCandidate]:
         """Shared pipeline: call LLM with structured JSON edits, parse, and apply.
 
         Returns one CodeCandidate per (candidate, sample) pair.
 
+        *candidate_lst* must contain implemented candidates (with code).
+
+        If *plan_labels* is provided, each candidate gets its own plan
+        (used by the plan-then-edit path).  Otherwise *plan_label* is
+        applied uniformly (used by the direct-edit path).
+
         If *base_code_lst* is provided, edits are applied against that code
         (one entry per candidate).  Otherwise falls back to
-        ``candidate.parent.code`` (plan-then-edit path) or
-        ``candidate.code`` (direct-edit path).
+        ``candidate.parent.code`` or ``candidate.code``.
         """
         # Check for cached results
         loaded_code = []
@@ -673,14 +708,16 @@ class LLMAgent:
             loaded_candidates = []
             for c_i in range(len(candidate_lst)):
                 cand = candidate_lst[c_i]
+                cand_plan = plan_labels[c_i] if plan_labels else plan_label
                 for s_i in range(num_samples):
                     new_cand = CodeCandidate(
-                        cand, plan_label, loaded_code[c_i][s_i],
+                        cand, cand_plan, loaded_code[c_i][s_i],
                         plan_gen_model=self.llm_client.model,
                         code_gen_model=self.llm_client.model,
                     )
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d %s implementations from cache", len(loaded_candidates), file_prefix)
+            log_label = "direct edit" if file_prefix == "direct_edit" else "edit from plan"
+            logger.info("%s: loaded %d %s implementations from cache", self.llm_client.model, len(loaded_candidates), log_label)
             return loaded_candidates
 
         # Save prompts
@@ -696,8 +733,12 @@ class LLMAgent:
             response_format=EDITS_JSON_SCHEMA,
             temperature=1,
         )
-        logger.info("%s: finished generating %d %s responses for %d candidates.",
-                    self.llm_client.model, len(messages_lst) * num_samples, file_prefix, len(candidate_lst))
+        if file_prefix == "direct_edit":
+            logger.info("%s: finished generating %d direct edit responses for %d candidates.",
+                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
+        else:
+            logger.info("%s: finished generating %d edit responses for %d plans.",
+                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
 
         candidates: list[CodeCandidate] = []
         for c_i in range(len(candidate_lst)):
@@ -741,8 +782,10 @@ class LLMAgent:
                 with open(path, "w") as f:
                     f.write(edited_code)
 
+                cand = candidate_lst[c_i]
+                cand_plan = plan_labels[c_i] if plan_labels else plan_label
                 new_cand = CodeCandidate(
-                    candidate_lst[c_i], plan_label, edited_code,
+                    cand, cand_plan, edited_code,
                     plan_gen_model=self.llm_client.model,
                     code_gen_model=self.llm_client.model,
                 )
@@ -752,7 +795,12 @@ class LLMAgent:
     def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,
                                       save_dir: pathlib.Path, save_strs: list[str] = None,
                                       code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
-        """Edit-based code generation: ask the LLM for structured JSON edits instead of full rewrites."""
+        """Edit-based code generation: ask the LLM for structured JSON edits instead of full rewrites.
+
+        candidate_lst contains plan-only intermediates (code=None) from the
+        planning phase.  We unwrap them so _run_edits_pipeline always receives
+        implemented parent candidates, matching the direct-edit path.
+        """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
 
@@ -761,9 +809,13 @@ class LLMAgent:
             messages = self._get_implement_edits_messages(candidate_lst[c_i], prob)
             messages_lst.append(messages)
 
+        plans = [cand.plan for cand in candidate_lst]
+        parents = [cand.parent for cand in candidate_lst]
+
         return self._run_edits_pipeline(
-            messages_lst, candidate_lst, num_samples, save_dir, save_strs,
-            file_prefix="edit_impl", plan_label=None,
+            messages_lst, parents, num_samples, save_dir, save_strs,
+            file_prefix="edit_impl", plan_label=None, plan_labels=plans,
+            base_code_lst=[cand.parent.code for cand in candidate_lst],
         )
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
@@ -778,7 +830,7 @@ class LLMAgent:
             else:
                 break
         else:
-            logger.info("Loaded %d code implementations rather than generating new ones", num_samples)
+            logger.info("%s: loaded %d code implementations from cache", self.llm_client.model, num_samples)
             loaded_candidates = []
             for c_i in range(num_samples):
                 loaded_candidates.append(CodeCandidate(candidates, "Combined code", loaded_code[c_i], code_gen_model=self.llm_client.model))
@@ -849,7 +901,7 @@ class LLMAgent:
                     new_cand.code = loaded_code[c_i][s_i]
                     new_cand.code_gen_model = self.llm_client.model
                     loaded_candidates.append(new_cand)
-            logger.info("Loaded %d reimplemented code implementations rather than generating new ones", len(loaded_candidates))
+            logger.info("%s: loaded %d reimplemented code implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
         prompts_lst = []
