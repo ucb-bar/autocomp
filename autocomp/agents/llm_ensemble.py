@@ -263,6 +263,20 @@ class LLMEnsemble:
             cands.extend(result)
         return cands
 
+    def reimplement_failed_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
+        """Edit-based analogue of reimplement_failed_code_parallel."""
+        num_to_gen_per_agent = self.divide_work(num_samples)
+        tasks = []
+        for i, llm in enumerate(self.llms):
+            if num_to_gen_per_agent[i] > 0:
+                this_model_save_strs = [save_str+"_"+self.llms[i].llm_client.model for save_str in save_strs]
+                tasks.append((llm.reimplement_failed_code_edits_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob))
+
+        cands = []
+        for result in self._run_parallel(tasks):
+            cands.extend(result)
+        return cands
+
     def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
         """Score translation completeness using the first agent in the ensemble."""
         return self.llms[0].score_translation_completeness(original_code, candidates, prob=prob)

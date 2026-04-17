@@ -1317,15 +1317,26 @@ class BeamSearchStrategy(SearchStrategy):
                     save_strs = [
                         f"failed_{idx}" for idx in range(len(failed_candidates))
                     ]
-                    reimplemented_candidates = (
-                        self.code_agent.reimplement_failed_code_parallel(
-                            failed_candidates,
-                            1,
-                            save_dir,
-                            save_strs=save_strs,
-                            prob=self.prob,
+                    if self.use_edits:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_edits_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
                         )
-                    )
+                    else:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
+                        )
                     logger.info(
                         f"Generated {len(reimplemented_candidates)} reimplementations."
                     )

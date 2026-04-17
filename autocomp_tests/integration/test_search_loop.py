@@ -167,6 +167,24 @@ def test_use_edits_with_translation(built_agent, dummy_eval_backend, dummy_prob,
     _assert_basic_outputs(strategy, tmp_output_dir, 3)
 
 
+def test_reimplement_failed_edits(built_agent, fail_first_eval_backend, dummy_prob, tmp_output_dir):
+    """use_edits=True + reimplement_failed=True routes through the edit-based reimplement path."""
+    strategy = _make_strategy(
+        tmp_output_dir, fail_first_eval_backend, built_agent, dummy_prob,
+        use_edits=True,
+        reimplement_failed=True,
+    )
+    strategy.optimize(iterations=2)
+
+    # Reimplementation artifacts must exist with the edit-specific file prefix.
+    reimpl_dirs = list(tmp_output_dir.glob("reimplemented-code-iter-*"))
+    assert reimpl_dirs, "Expected a reimplemented-code-iter-* directory to be created"
+    edit_files = [f for d in reimpl_dirs for f in d.glob("reimplement_edit_*")]
+    assert edit_files, "Expected edit-based reimplement artifacts (reimplement_edit_*)"
+
+    _assert_basic_outputs(strategy, tmp_output_dir, 2)
+
+
 # ---------------------------------------------------------------------------
 # Translation iterations
 # ---------------------------------------------------------------------------

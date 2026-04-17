@@ -92,7 +92,6 @@ def parse_edits_response(response_text: str) -> list[dict] | None:
         data = json.loads(response_text)
     except json.JSONDecodeError:
         # Try to extract JSON from markdown code blocks
-        import re
         m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
         if m:
             try:
@@ -235,6 +234,15 @@ class LLMAgent:
 
         Subclasses should override this to provide system/user messages that
         combine optimization selection with structured JSON edit output.
+        """
+        raise NotImplementedError
+
+    def _get_reimplement_failed_edits_messages(self, candidate: CodeCandidate, prob: Prob = None) -> list[dict]:
+        """Return messages for fixing a failed candidate via structured JSON edits.
+
+        Subclasses should override this to provide system/user messages that
+        include the failed code, its stderr/stdout, and instruct the model to
+        return structured JSON edits.
         """
         raise NotImplementedError
 
@@ -648,6 +656,7 @@ class LLMAgent:
             assert len(candidate_lst) == len(save_strs)
 
         messages_lst = []
+        templates = []
         for c_i, candidate in enumerate(candidate_lst):
             messages = self._get_direct_implement_edits_messages(
                 candidate, prob,
@@ -659,38 +668,47 @@ class LLMAgent:
                 translate=translate,
             )
             messages_lst.append(messages)
+            templates.append(CodeCandidate(
+                candidate, "direct implementation (no plan)", candidate.code,
+                plan_gen_model=self.llm_client.model,
+            ))
 
         return self._run_edits_pipeline(
-            messages_lst, candidate_lst, num_samples, save_dir, save_strs,
-            file_prefix="direct_edit", plan_label="direct implementation (no plan)",
-            base_code_lst=[c.code for c in candidate_lst],
+            messages_lst, [c.code for c in candidate_lst], templates,
+            num_samples, save_dir, save_strs,
+            file_prefix="direct_edit", log_label="direct edit",
         )
 
     def _run_edits_pipeline(
-        self, messages_lst: list[list[dict]], candidate_lst: list[CodeCandidate],
+        self, messages_lst: list[list[dict]], base_code_lst: list[str],
+        templates: list[CodeCandidate],
         num_samples: int, save_dir: pathlib.Path, save_strs: list[str],
-        file_prefix: str, plan_label: str,
-        base_code_lst: list[str] = None,
-        plan_labels: list[str] = None,
+        file_prefix: str, log_label: str,
     ) -> list[CodeCandidate]:
         """Shared pipeline: call LLM with structured JSON edits, parse, and apply.
 
-        Returns one CodeCandidate per (candidate, sample) pair.
+        For each input index ``c_i``:
+        - ``messages_lst[c_i]`` is the prompt sent to the LLM.
+        - ``base_code_lst[c_i]`` is the code the edits are applied to.
+        - ``templates[c_i]`` is a ``CodeCandidate`` whose identity (parent,
+          plan, hw_feedback, etc.) is used for every produced sample.  Each
+          result candidate is ``copy_candidate(template)`` with ``.code`` set
+          to the edited code and ``.code_gen_model`` set to this agent's model.
 
-        *candidate_lst* must contain implemented candidates (with code).
-
-        If *plan_labels* is provided, each candidate gets its own plan
-        (used by the plan-then-edit path).  Otherwise *plan_label* is
-        applied uniformly (used by the direct-edit path).
-
-        If *base_code_lst* is provided, edits are applied against that code
-        (one entry per candidate).  Otherwise falls back to
-        ``candidate.parent.code`` or ``candidate.code``.
+        Returns one CodeCandidate per (input, sample) pair.
         """
+        assert len(messages_lst) == len(base_code_lst) == len(templates) == len(save_strs)
+
+        def _build_result(c_i: int, edited_code: str) -> CodeCandidate:
+            new_cand = copy_candidate(templates[c_i])
+            new_cand.code = edited_code
+            new_cand.code_gen_model = self.llm_client.model
+            return new_cand
+
         # Check for cached results
         loaded_code = []
         code_not_found = False
-        for c_i in range(len(candidate_lst)):
+        for c_i in range(len(messages_lst)):
             this_cand_loaded = []
             save_str = save_strs[c_i]
             for s_i in range(num_samples):
@@ -706,22 +724,15 @@ class LLMAgent:
             loaded_code.append(this_cand_loaded)
         else:
             loaded_candidates = []
-            for c_i in range(len(candidate_lst)):
-                cand = candidate_lst[c_i]
-                cand_plan = plan_labels[c_i] if plan_labels else plan_label
+            for c_i in range(len(messages_lst)):
                 for s_i in range(num_samples):
-                    new_cand = CodeCandidate(
-                        cand, cand_plan, loaded_code[c_i][s_i],
-                        plan_gen_model=self.llm_client.model,
-                        code_gen_model=self.llm_client.model,
-                    )
-                    loaded_candidates.append(new_cand)
-            log_label = "direct edit" if file_prefix == "direct_edit" else "edit from plan"
-            logger.info("%s: loaded %d %s implementations from cache", self.llm_client.model, len(loaded_candidates), log_label)
+                    loaded_candidates.append(_build_result(c_i, loaded_code[c_i][s_i]))
+            logger.info("%s: loaded %d %s implementations from cache",
+                        self.llm_client.model, len(loaded_candidates), log_label)
             return loaded_candidates
 
         # Save prompts
-        for c_i in range(len(candidate_lst)):
+        for c_i in range(len(messages_lst)):
             prompt_path = save_dir / f"{file_prefix}_prompt{'' if not save_strs[c_i] else '_' + save_strs[c_i]}.txt"
             with open(prompt_path, "w") as f:
                 f.write(str(messages_lst[c_i]))
@@ -733,21 +744,12 @@ class LLMAgent:
             response_format=EDITS_JSON_SCHEMA,
             temperature=1,
         )
-        if file_prefix == "direct_edit":
-            logger.info("%s: finished generating %d direct edit responses for %d candidates.",
-                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
-        else:
-            logger.info("%s: finished generating %d edit responses for %d plans.",
-                        self.llm_client.model, len(messages_lst) * num_samples, len(candidate_lst))
+        logger.info("%s: finished generating %d %s responses for %d candidates.",
+                    self.llm_client.model, len(messages_lst) * num_samples, log_label, len(messages_lst))
 
         candidates: list[CodeCandidate] = []
-        for c_i in range(len(candidate_lst)):
-            if base_code_lst is not None:
-                base_code = base_code_lst[c_i]
-            elif candidate_lst[c_i].parent:
-                base_code = candidate_lst[c_i].parent.code
-            else:
-                base_code = candidate_lst[c_i].code
+        for c_i in range(len(messages_lst)):
+            base_code = base_code_lst[c_i]
             for s_i in range(num_samples):
                 response = grouped_results[c_i][s_i]
                 response_text = response.get("content", "") or ""
@@ -782,14 +784,7 @@ class LLMAgent:
                 with open(path, "w") as f:
                     f.write(edited_code)
 
-                cand = candidate_lst[c_i]
-                cand_plan = plan_labels[c_i] if plan_labels else plan_label
-                new_cand = CodeCandidate(
-                    cand, cand_plan, edited_code,
-                    plan_gen_model=self.llm_client.model,
-                    code_gen_model=self.llm_client.model,
-                )
-                candidates.append(new_cand)
+                candidates.append(_build_result(c_i, edited_code))
         return candidates
 
     def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,
@@ -798,24 +793,26 @@ class LLMAgent:
         """Edit-based code generation: ask the LLM for structured JSON edits instead of full rewrites.
 
         candidate_lst contains plan-only intermediates (code=None) from the
-        planning phase.  We unwrap them so _run_edits_pipeline always receives
-        implemented parent candidates, matching the direct-edit path.
+        planning phase.  We unwrap them so the output candidates' parent is
+        the implemented parent (``cand.parent``), matching the direct-edit path.
         """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
 
         messages_lst = []
+        templates = []
         for c_i in range(len(candidate_lst)):
-            messages = self._get_implement_edits_messages(candidate_lst[c_i], prob)
-            messages_lst.append(messages)
-
-        plans = [cand.plan for cand in candidate_lst]
-        parents = [cand.parent for cand in candidate_lst]
+            cand = candidate_lst[c_i]
+            messages_lst.append(self._get_implement_edits_messages(cand, prob))
+            templates.append(CodeCandidate(
+                cand.parent, cand.plan, cand.parent.code,
+                plan_gen_model=self.llm_client.model,
+            ))
 
         return self._run_edits_pipeline(
-            messages_lst, parents, num_samples, save_dir, save_strs,
-            file_prefix="edit_impl", plan_label=None, plan_labels=plans,
-            base_code_lst=[cand.parent.code for cand in candidate_lst],
+            messages_lst, [cand.parent.code for cand in candidate_lst], templates,
+            num_samples, save_dir, save_strs,
+            file_prefix="edit_impl", log_label="edit from plan",
         )
 
     def combine_candidates(self, candidates: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_str: str="", prob: Prob = None) -> list[CodeCandidate]:
@@ -944,6 +941,30 @@ class LLMAgent:
                 this_cands.append(new_cand)
             candidates.extend(this_cands)
         return candidates
+
+    def reimplement_failed_code_edits_parallel(
+        self, candidate_lst: list[CodeCandidate], num_samples: int,
+        save_dir: pathlib.Path, save_strs: list[str] = None, prob: Prob = None,
+    ) -> list[CodeCandidate]:
+        """Edit-based analogue of reimplement_failed_code_parallel.
+
+        Asks the LLM for structured JSON edits against each failed candidate's
+        own code (using stderr/stdout as context).  Each produced candidate
+        preserves the failed candidate's lineage (parent, plan, hw_feedback)
+        via copy_candidate, matching the full-rewrite reimplement path.
+        """
+        if save_strs is not None:
+            assert len(candidate_lst) == len(save_strs)
+
+        messages_lst = [
+            self._get_reimplement_failed_edits_messages(cand, prob) for cand in candidate_lst
+        ]
+
+        return self._run_edits_pipeline(
+            messages_lst, [cand.code for cand in candidate_lst], list(candidate_lst),
+            num_samples, save_dir, save_strs,
+            file_prefix="reimplement_edit", log_label="reimplement edit",
+        )
 
     def _get_reimplement_failed_code_prompt(self, candidate: CodeCandidate, prob: Prob = None) -> str:
         """
