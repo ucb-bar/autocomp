@@ -372,12 +372,15 @@ class SearchStrategy:
             )
         else:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
+            eval_save_dir = self.output_dir / "eval-results-iter-0"
+            eval_save_dir.mkdir(parents=True, exist_ok=True)
             self.evaluate_candidates(
-                [orig_code_candidate], self.metric
+                [orig_code_candidate], self.metric, save_dir=eval_save_dir
             )  # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
                 if orig_code_candidate.stderr:
                     logger.error("Initial code failed with error: %s", orig_code_candidate.stderr)
+                logger.error("Initial code failure details saved to %s", eval_save_dir)
                 raise ValueError("Initial code is incorrect.")
             self.add_feedback([orig_code_candidate])
             self.repository.add_candidates(
@@ -486,9 +489,10 @@ class SearchStrategy:
                             f.write("New latency: " + str(stats[metric]) + "\n")
                         else:
                             f.write("New latency: N/A\n")
+                        plan_text = candidates[cand_i].plan
                         f.write(
                             "Plan: "
-                            + candidates[cand_i].plan.replace("\\n", "\n")
+                            + (plan_text.replace("\\n", "\n") if plan_text is not None else "N/A")
                             + "\n"
                         )
                         f.write("\n" + repr(candidates[cand_i]))
@@ -1317,15 +1321,26 @@ class BeamSearchStrategy(SearchStrategy):
                     save_strs = [
                         f"failed_{idx}" for idx in range(len(failed_candidates))
                     ]
-                    reimplemented_candidates = (
-                        self.code_agent.reimplement_failed_code_parallel(
-                            failed_candidates,
-                            1,
-                            save_dir,
-                            save_strs=save_strs,
-                            prob=self.prob,
+                    if self.use_edits:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_edits_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
                         )
-                    )
+                    else:
+                        reimplemented_candidates = (
+                            self.code_agent.reimplement_failed_code_parallel(
+                                failed_candidates,
+                                1,
+                                save_dir,
+                                save_strs=save_strs,
+                                prob=self.prob,
+                            )
+                        )
                     logger.info(
                         f"Generated {len(reimplemented_candidates)} reimplementations."
                     )

@@ -167,6 +167,24 @@ def test_use_edits_with_translation(built_agent, dummy_eval_backend, dummy_prob,
     _assert_basic_outputs(strategy, tmp_output_dir, 3)
 
 
+def test_reimplement_failed_edits(built_agent, fail_first_eval_backend, dummy_prob, tmp_output_dir):
+    """use_edits=True + reimplement_failed=True routes through the edit-based reimplement path."""
+    strategy = _make_strategy(
+        tmp_output_dir, fail_first_eval_backend, built_agent, dummy_prob,
+        use_edits=True,
+        reimplement_failed=True,
+    )
+    strategy.optimize(iterations=2)
+
+    # Reimplementation artifacts must exist with the edit-specific file prefix.
+    reimpl_dirs = list(tmp_output_dir.glob("reimplemented-code-iter-*"))
+    assert reimpl_dirs, "Expected a reimplemented-code-iter-* directory to be created"
+    edit_files = [f for d in reimpl_dirs for f in d.glob("reimplement_edit_*")]
+    assert edit_files, "Expected edit-based reimplement artifacts (reimplement_edit_*)"
+
+    _assert_basic_outputs(strategy, tmp_output_dir, 2)
+
+
 # ---------------------------------------------------------------------------
 # Translation iterations
 # ---------------------------------------------------------------------------
@@ -281,4 +299,35 @@ def test_resume_from_cache(built_agent, dummy_eval_backend, dummy_prob, tmp_outp
     for i in range(1, 4):
         cands = strategy2.repository.get_candidates(i)
         assert len(cands) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Initial code failure handling
+# ---------------------------------------------------------------------------
+
+def test_initial_code_failure_writes_artifact(built_agent, dummy_prob, tmp_output_dir):
+    """If the initial code fails, the standard eval-results artifact (with stderr/stdout)
+    is written to eval-results-iter-0 before the ValueError is raised."""
+    from autocomp.backend.eval_backend import EvalBackend
+
+    class AlwaysFailBackend(EvalBackend):
+        def evaluate_code(self, prob, code_strs, simulator):
+            return [
+                {"correct": False, "stderr": "boom: initial code broke", "stdout": "partial output"}
+                for _ in code_strs
+            ]
+
+    with pytest.raises(ValueError, match="Initial code is incorrect"):
+        _make_strategy(tmp_output_dir, AlwaysFailBackend(), built_agent, dummy_prob)
+
+    result_dir = tmp_output_dir / "eval-results-iter-0"
+    assert result_dir.is_dir(), "Expected eval-results-iter-0 to be created"
+
+    result = json.loads((result_dir / "code_0_result.txt").read_text())
+    assert result["correct"] is False
+    assert result["stderr"] == "boom: initial code broke"
+    assert result["stdout"] == "partial output"
+
+    full = (result_dir / "code_0_result_full.txt").read_text()
+    assert "boom: initial code broke" in full
 
