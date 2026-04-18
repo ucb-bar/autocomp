@@ -49,6 +49,11 @@ def _ensure_platform_override():
         )
         instance_type = urllib.request.urlopen(req, timeout=2).read().decode().strip()
         platform = instance_type.split(".")[0]
+        # NKI compiler expects base platform names (trn1, trn2, trn3, inf2)
+        import re
+        base_platform = re.match(r"(trn\d+|inf\d+)", platform)
+        if base_platform:
+            platform = base_platform.group(1)
         os.environ["NEURON_PLATFORM_TARGET_OVERRIDE"] = platform
         logger.info(f"Auto-detected platform={platform} from instance={instance_type}")
     except Exception:
@@ -56,29 +61,24 @@ def _ensure_platform_override():
 
 
 # Template for the __main__ block injected into NKI v2 test scripts.
-# Phase A: correctness only. Finds the NEFF path and prints it.
-# Phase B (neuron-profile) runs in _evaluate_single after this process exits.
+# Runs correctness, compiles NEFF via CompileKernel (CPU-only), prints path.
+# Actual benchmarking via neuron-profile happens in _evaluate_single after
+# this subprocess exits and NeuronCores are freed.
 # Placeholder __REF_FUNC__ is replaced at runtime.
 _NKI_V2_MAIN_TEMPLATE = '''
 if __name__ == "__main__":
     import os
+    import time
+    import tempfile
     import glob as _glob
+    import numpy as np
     import torch
     import torch_xla
-    from torch_xla.core import xla_model as xm
+    import torch_xla.core.xla_model as xm
 
-    # Prime the ref kernel's NEFF by running test_nki(ref, ref).
-    # This compiles the ref kernel and populates the cache so the mtime
-    # snapshot below only captures NEFFs produced by the *solution*.
-    try:
-        test_nki(__REF_FUNC__, __REF_FUNC__)
-    except Exception:
-        pass
+    _device = xm.xla_device()
 
-    _cache_root = "/var/tmp/neuron-compile-cache"
-    _all_neffs = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
-    _pre_mtimes = {n: os.path.getmtime(n) for n in _all_neffs}
-
+    # Correctness test via torch on XLA
     test_result = test_nki(__REF_FUNC__, solution)
     if not test_result:
         print("Test failed")
@@ -86,16 +86,69 @@ if __name__ == "__main__":
     else:
         print("Test passed")
 
-    # Find NEFFs with changed mtime — only solution NEFFs since ref was primed.
-    _all_neffs_post = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
-    _changed = []
-    for n in _all_neffs_post:
-        mt = os.path.getmtime(n)
-        if n not in _pre_mtimes or mt != _pre_mtimes[n]:
-            _changed.append(n)
+    # Compile NEFF via CompileKernel (CPU-only, no NeuronCore needed).
+    # Prints NEFF_PATH so the caller can benchmark via neuron-profile
+    # after this process exits and NeuronCores are freed.
+    _raw_fn = getattr(solution, "func", None)
+    _bench_data_fn = _get_bench_data if "_get_bench_data" in dir() else None
+    if _raw_fn is not None and _bench_data_fn is not None:
+        try:
+            from nki.framework.compiled import CompileKernel
 
-    for _np in _changed:
-        print(f"NEFF_PATH={_np}")
+            _ad = tempfile.mkdtemp(prefix="nki_bench_")
+            _ck = CompileKernel(func=_raw_fn, artifacts_dir=_ad, _enable_simulation=True)
+
+            _bd_cpu = _bench_data_fn(xm.xla_device())
+            _NP_DTYPE_MAP = {
+                'torch.bfloat16': np.float16, 'torch.float16': np.float16,
+                'torch.float32': np.float32, 'torch.float64': np.float64,
+                'torch.int32': np.int32, 'torch.int64': np.int64,
+            }
+            _np_inputs = []
+            for _t in _bd_cpu:
+                _ndt = _NP_DTYPE_MAP.get(str(_t.dtype), np.float32)
+                _np_inputs.append(_t.detach().cpu().to(torch.float32).numpy().astype(_ndt))
+            _ck_result = _ck(*_np_inputs)
+
+            _neff = os.path.join(_ad, "kernel.neff")
+            if os.path.exists(_neff):
+                print(f"NEFF_PATH={_neff}")
+        except Exception as _e:
+            import traceback
+            print(f"NEFF compilation failed: {_e}", flush=True)
+            traceback.print_exc()
+
+    # Fallback for non-NKI solutions (e.g. torch.einsum): use XLA wall-clock
+    # timing with mark_step/wait_device_ops. torch_neuronx.trace splits the
+    # graph into multiple NEFFs which profile unreliably; wall-clock captures
+    # the end-to-end time the framework actually pays.
+    if _raw_fn is None and _bench_data_fn is not None:
+        try:
+            _bd = _bench_data_fn(xm.xla_device())
+            for _ in range(3):  # warmup
+                _out = solution(*_bd)
+                xm.mark_step(); xm.wait_device_ops()
+            import time as _t
+            _N = 20
+            _t0 = _t.perf_counter()
+            for _ in range(_N):
+                _out = solution(*_bd)
+                xm.mark_step()
+            xm.wait_device_ops()
+            _t1 = _t.perf_counter()
+            _lat_ms = (_t1 - _t0) * 1000.0 / _N
+            print(f"Latency: {_lat_ms:.3f} ms")
+            print("NKI_BENCHMARK=true")
+        except Exception as _e:
+            import traceback
+            print(f"wall-clock bench failed: {_e}", flush=True)
+            traceback.print_exc()
+
+    if _bench_data_fn is None:
+        _cache_root = "/var/tmp/neuron-compile-cache"
+        _all_neffs_post = _glob.glob(os.path.join(_cache_root, "**", "model.neff"), recursive=True)
+        for _np in _all_neffs_post:
+            print(f"NEFF_PATH={_np}")
 '''
 
 
@@ -110,13 +163,21 @@ class TrnEvalBackend(EvalBackend):
 
     @staticmethod
     def _detect_num_cores() -> int:
-        """Return the number of NeuronCores visible on this instance."""
+        """Return the number of physical NeuronCores visible on this instance.
+
+        neuron-ls nc_count reports logical NCs (e.g. 8 on Trn3 with LNC 2),
+        but NEURON_RT_VISIBLE_CORES uses physical core IDs.
+        Use neuroncore_ids list length for the physical count.
+        """
         try:
             out = subprocess.check_output(
                 ["neuron-ls", "--json-output"], text=True, timeout=5, stderr=subprocess.DEVNULL
             )
             data = json.loads(out)
-            return sum(d.get("nc_count", 0) for d in data)
+            total_physical = sum(len(d.get("neuroncore_ids", [])) for d in data)
+            if total_physical > 0:
+                return total_physical
+            return max(1, sum(d.get("nc_count", 0) for d in data))
         except Exception:
             pass
         try:
@@ -221,6 +282,23 @@ class TrnEvalBackend(EvalBackend):
                 if match:
                     return match.group(1)
         return "ref"
+
+    def _ref_is_nki_kernel(self, test_code: str, ref_func_name: str) -> bool:
+        """Return True if the ref function is decorated with @nki.jit.
+
+        The BIRSim (v2) and baremetal (v1) parallel compile paths both
+        require the ref to be an NKI kernel — they feed it through NKI's
+        compiler to produce a NEFF. If ref is plain torch (e.g. einsum),
+        Phase 1 will fail with parser errors on unsupported Python.
+        """
+        lines = test_code.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(rf"\s*def\s+{re.escape(ref_func_name)}\s*\(", line):
+                for j in range(max(0, i - 5), i):
+                    if "@nki.jit" in lines[j] or "@baremetal" in lines[j]:
+                        return True
+                return False
+        return False
 
     def _extract_imports(self, test_code: str) -> str:
         """Extract all import lines from the test code."""
@@ -583,9 +661,8 @@ for _idx in range(_num_impls):
             _co = [_impl_out] if isinstance(_impl_out, np.ndarray) else list(_impl_out)
 
             for _r, _c in zip(_ro, _co):
-                if not np.allclose(
+                if not np.array_equal(
                     _r.astype(np.float32), _c.astype(np.float32),
-                    atol=1e-3, rtol=1e-3,
                 ):
                     _passed = False
                     break
@@ -713,7 +790,8 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
 
         # For NKI v2: benchmark via neuron-profile now that the subprocess
         # has exited and NeuronCores are free.
-        if not is_v1:
+        # Skip if the template already benchmarked via SpikeModel.
+        if not is_v1 and "NKI_BENCHMARK=true" not in p.stdout:
             # Discover NEFFs for this candidate.
             # Primary: mtime-based NEFF_PATH from template (most reliable
             # since the template primes the ref kernel before snapshotting).
@@ -815,6 +893,17 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
 
         # Copy nrt_helper.py into temp_dir so Phase 2 script can import it
         shutil.copy2(_NRT_HELPER_PATH, temp_dir / "nrt_helper.py")
+
+        # Phase 1 (BIRSim CPU compile / baremetal) requires ref to be an NKI
+        # kernel. If ref is plain torch (e.g. torch.einsum for the LM head
+        # baseline), skip Phase 1 and fall back to per-core _evaluate_single.
+        ref_func_name = self._extract_ref_func_name(test_code)
+        if not self._ref_is_nki_kernel(test_code, ref_func_name):
+            logger.info(
+                f"Ref '{ref_func_name}' is not an NKI kernel (no @nki.jit); "
+                "skipping parallel compile and using per-core evaluation"
+            )
+            return None
 
         # Phase 1: parallel compilation (ref + all implementations)
         logger.info(
