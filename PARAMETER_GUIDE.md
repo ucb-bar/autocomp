@@ -8,7 +8,7 @@ Practical guidance for choosing Autocomp search parameters. See the [main README
 
 When `translate_score=True`, translation ends early once **all** beam candidates reach a translation score >= 9.0. This ensures no partially-translated code enters the optimization phase. The remaining iterations automatically switch to optimization mode, so setting a generous `translate_iters` is safe — simple kernels that translate in one iteration will not waste budget on redundant translation.
 
-**Convergence**: Set `early_stop_iters` to automatically stop the search after N iterations without improvement. If the search converges and you want to push further, change the search conditions (swap/add models, adjust `dropout_menu_options`, add documentation or rules) rather than just adding more iterations. Convergence speed depends on `beam_size` — at `beam_size=1` or `2`, the best score is typically locked in by iteration 3–5 and additional iterations rarely help; at `beam_size=6` or `8`, runs are often still improving at iteration 8, so a larger budget is warranted. For `beam_size` ≤ 2, 5–6 iterations is usually sufficient. For `beam_size` ≥ 6, use the full 8 or more.
+**Convergence**: Set `early_stop_iters` to automatically stop the search after N iterations without improvement. If the search converges and you want to push further, change the search conditions (swap/add models, adjust `dropout_menu_options`, add documentation or rules) rather than just adding more iterations.
 
 ## `translate_perf_threshold`
 
