@@ -578,10 +578,17 @@ class SearchStrategy:
         num_to_keep: int | None = None,
         cur_iter: int = 0,
         num_iters: int = 0,
+        exempt_parent_check: set[int] | None = None,
     ) -> list:
         """
         Filter and return the top N code candidates based on their score.
         If N (num_to_keep) is not provided, will return all candidates with a higher score than their parent.
+
+        The parent-score gate applies the current `keep_factor` as a regression budget
+        (e.g. 1.1 allows up to 10% regression vs. parent during early opt iters). When
+        `num_to_keep` is set, candidates whose id() is in `exempt_parent_check` bypass
+        this gate — used for previous-beam members that earned their slot under a
+        possibly more lenient keep_factor so they aren't retroactively evicted.
         """
         # Filter out incorrect candidates
         code_candidates = [c for c in code_candidates if c.score != float("inf")]
@@ -618,14 +625,18 @@ class SearchStrategy:
             for cand in code_candidates:
                 if len(cur_candidates) >= num_to_keep:
                     break
+                # Root candidate (parent=None) bypasses parent/dedup checks entirely.
                 if cand.parent is None:
                     cur_candidates.append(cand)
                     continue
                 if not use_translation_sort:
-                    # Don't keep any candidates with a score same or higher than their parent
-                    if cand.score >= cand.parent.score * keep_factor:
+                    # Apply the regression budget (keep_factor) against parent score.
+                    # Incumbents carried over from previous beam are exempt so they
+                    # aren't retroactively evicted when keep_factor tightens.
+                    exempt = exempt_parent_check is not None and id(cand) in exempt_parent_check
+                    if not exempt and cand.score >= cand.parent.score * keep_factor:
                         logger.debug(
-                            f"Working candidate has score {cand.score} >= parent score {cand.parent.score}."
+                            f"Working candidate has score {cand.score} >= parent score {cand.parent.score} * keep_factor {keep_factor}."
                         )
                         logger.debug(f"Candidate plan:\n{cand.plan}")
                         logger.debug(f"Candidate code:\n{cand.code}")
@@ -821,8 +832,16 @@ class ExhaustiveSearchStrategy(SearchStrategy):
             improving_candidates = self.filter_code_candidates(
                 evaluated_code_candidates, cur_iter=i, num_iters=iterations
             )
+            # Beam selection over all evaluated children + current beam. Incumbents
+            # are placed first (so they win ties) and exempted from the parent-gate
+            # so they aren't retroactively evicted when keep_factor tightens.
+            cands_to_filter = current_candidates + evaluated_code_candidates
             candidates_for_next_iter = self.filter_code_candidates(
-                improving_candidates, num_to_keep=1, cur_iter=i, num_iters=iterations
+                cands_to_filter,
+                num_to_keep=1,
+                cur_iter=i,
+                num_iters=iterations,
+                exempt_parent_check={id(c) for c in current_candidates},
             )
 
             # Step 5: Save the improving candidates and update the repository
@@ -1381,12 +1400,17 @@ class BeamSearchStrategy(SearchStrategy):
             improving_candidates = self.filter_code_candidates(
                 evaluated_code_candidates, cur_iter=i, num_iters=iterations
             )
-            cands_to_filter = improving_candidates + current_candidates
+            # Beam selection over all evaluated children + current beam. Incumbents
+            # are placed first (so they win ties) and exempted from the parent-gate
+            # so they aren't retroactively evicted when keep_factor tightens.
+            cands_to_filter = current_candidates + evaluated_code_candidates
+            exempt_ids = {id(c) for c in current_candidates}
             candidates_for_next_iter = self.filter_code_candidates(
                 cands_to_filter,
                 num_to_keep=self.beam_size,
                 cur_iter=i,
                 num_iters=iterations,
+                exempt_parent_check=exempt_ids,
             )
 
             # Early-stop translation only when every beam candidate is fully translated
@@ -1402,6 +1426,7 @@ class BeamSearchStrategy(SearchStrategy):
                     num_to_keep=self.beam_size,
                     cur_iter=i,
                     num_iters=iterations,
+                    exempt_parent_check=exempt_ids,
                 )
 
             candidates_for_next_iter = self.add_feedback(candidates_for_next_iter)
