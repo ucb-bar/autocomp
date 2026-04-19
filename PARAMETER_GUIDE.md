@@ -20,6 +20,8 @@ Each iteration generates `beam_size × num_plan_candidates × num_code_candidate
 
 `beam_size=4` is often a reasonable default. A study across 6 Trainium NKI kernels at beam sizes {1, 2, 4, 6, 8} showed that beam 4 captures most of the improvement available at beam 8 at significantly lower cost. Low beam sizes can still work; even `beam_size=1` produced meaningful improvements over baseline for all tested kernels. However, the ideal beam size (and other search parameters) depends heavily on the characteristics of your specific search space. For example, kernels with multiple fundamentally different algorithmic approaches benefit from larger beam sizes, which enable parallel exploration of diverse paths and help avoid getting stuck in local optima. For very challenging kernels where cost and time are not significant concerns, a beam size of 6–8 can lead to more consistent results.
 
+Beam size can also affect convergence rate: since smaller beam sizes can get caught in local optima, they tend to converge in fewer iterations.
+
 ## `models`
 
 Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated April 13, 2026):
