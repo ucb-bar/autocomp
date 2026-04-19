@@ -25,6 +25,7 @@ class SynthesizedComponents:
     architecture_summary: str
     isa_docs: str
     optimization_menu: list[str]
+    translate_menu: list[str]
     rules: dict[str, list[str]]  # keys: "general", "planning", "coding"
     code_examples: str = ""
 
@@ -46,9 +47,9 @@ _BUCKET_DESCRIPTIONS = {
     "isa": "API / instruction-set reference (function signatures, parameter descriptions, class definitions, instruction semantics, and their inline usage examples/snippets). NOT standalone tutorials or sample programs.",
     "architecture": "hardware architecture (memory hierarchy, compute units, system design, chip overview, programming model)",
     "optimization": "performance optimization guidance (tuning strategies, optimization techniques, pipelining, tiling, matrix multiplication patterns)",
-    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls, changelogs)",
+    "rules": "programming model constraints and rules (correctness constraints, tile size rules, memory layout requirements, API usage pitfalls)",
     "examples": "code examples, tutorials, sample kernels, example implementations, framework integration docs",
-    "skip": "not relevant to any of the above (release notes, navigation pages, setup/config, unrelated docs)",
+    "skip": "not relevant to any of the above (release notes, changelogs, navigation pages, setup/config, unrelated docs)",
 }
 
 
@@ -69,10 +70,10 @@ class ComponentSynthesizer:
     DEFAULT_CONTEXT_BUDGET = 150_000
 
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
-                 description: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
+                 agent_scope: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
         self.llm = llm_client
         self.light_llm = light_llm_client or llm_client
-        self._context_prefix = f"Context: {description}\n\n" if description else ""
+        self._context_prefix = f"Agent scope: {agent_scope}\n\n" if agent_scope else ""
         self.context_budget = context_budget
 
     def _chat(self, prompt: str, **kwargs) -> list[str]:
@@ -120,7 +121,7 @@ class ComponentSynthesizer:
 
         logger.info("Pre-filter: checking relevance of %d items", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         filtered: list[tuple[str, str]] = []
@@ -148,10 +149,17 @@ class ComponentSynthesizer:
         buckets: dict[str, list[tuple[str, str]]] = {b: [] for b in _BUCKET_NAMES}
 
         all_items: list[tuple[str, str]] = []
+        seen_keys: set[str] = set()
         for idx in indices:
             for key, text in idx.content.items():
-                if text and text.strip():
+                if text and text.strip() and key not in seen_keys:
+                    seen_keys.add(key)
                     all_items.append((key, text))
+
+        n_total = sum(len(idx.content) for idx in indices)
+        if len(all_items) < n_total:
+            logger.info("LLM routing: deduplicated %d -> %d items across %d sources",
+                        n_total, len(all_items), len(indices))
 
         if not all_items:
             return buckets
@@ -199,7 +207,7 @@ class ComponentSynthesizer:
 
         logger.info("LLM routing: classifying %d items", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         skipped = 0
@@ -247,6 +255,13 @@ class ComponentSynthesizer:
         logger.info("  Optimization menu: %d strategies (%.1fs)", len(opt_menu), time.time() - t_start)
 
         t_start = time.time()
+        translate_menu = self._synthesize_translate_menu(
+            buckets["optimization"], architecture=architecture, isa_docs=isa_docs,
+            code_examples_raw=buckets["examples"],
+        )
+        logger.info("  Translate menu: %d strategies (%.1fs)", len(translate_menu), time.time() - t_start)
+
+        t_start = time.time()
         rules = self._synthesize_rules(buckets["rules"], architecture=architecture, isa_docs=isa_docs)
         n_rules = sum(len(v) for v in rules.values())
         logger.info("  Rules: %d rules across %d categories (%.1fs)", n_rules, len(rules), time.time() - t_start)
@@ -261,6 +276,7 @@ class ComponentSynthesizer:
             architecture_summary=architecture,
             isa_docs=isa_docs,
             optimization_menu=opt_menu,
+            translate_menu=translate_menu,
             rules=rules,
             code_examples=code_examples,
         )
@@ -305,7 +321,7 @@ class ComponentSynthesizer:
             f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
     def _arch_map_reduce(self, items: list[tuple[str, str]]) -> str:
@@ -328,7 +344,7 @@ class ComponentSynthesizer:
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
 
@@ -348,7 +364,7 @@ class ComponentSynthesizer:
             f"{self._ARCH_PROMPT}\n\n"
             f"Hardware Architecture Summary:"
         )
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         return responses[0].strip() if responses else "Architecture summary generation failed."
 
     # ------------------------------------------------------------------
@@ -379,7 +395,7 @@ class ComponentSynthesizer:
 
         logger.info("  ISA boundary detection: sending %d files to LLM in parallel", len(prompts))
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         all_entries: list[ISAEntry] = []
@@ -428,6 +444,22 @@ class ComponentSynthesizer:
             logger.info("  ISA merge: %d -> %d entries (%d duplicates merged)",
                          len(all_entries), len(merged), len(all_entries) - len(merged))
         all_entries = merged
+
+        # Content-based dedup: remove entries whose body is a near-duplicate
+        # of an earlier entry (catches same content extracted under different names).
+        deduped: list[ISAEntry] = []
+        seen_bodies: list[str] = []
+        for entry in all_entries:
+            body = entry.markdown.split("\n", 2)[-1].strip() if "\n" in entry.markdown else entry.markdown
+            if any(body in prev or prev in body for prev in seen_bodies):
+                logger.info("  ISA dedup: dropping '%s' (content duplicate)", entry.name)
+                continue
+            seen_bodies.append(body)
+            deduped.append(entry)
+        if len(deduped) < len(all_entries):
+            logger.info("  ISA content dedup: %d -> %d entries",
+                         len(all_entries), len(deduped))
+        all_entries = deduped
 
         categories = self._categorize_isa_entries(all_entries)
         logger.info("  ISA categorization: %d categories", len(categories))
@@ -478,14 +510,14 @@ class ComponentSynthesizer:
 {index_text}
 === END ===
 
-{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
+{self._context_prefix}Keep ONLY entries the agent would require to write optimized code, such as APIs/instructions it will call, conceptual references and explanations, or other closely related documentation. Remove APIs that are outside the agent's scope as described above.
 Do not include standalone tutorials or sample programs, as those belong in the "examples" bucket. Skip release notes, changelogs, and other non-API/instruction documentation.
 
 Return ONLY a JSON array of entry names to keep.
 
 JSON array:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         raw = responses[0].strip() if responses else "[]"
 
         try:
@@ -527,7 +559,7 @@ Return a JSON object mapping category names to lists of entry names. Order categ
 
 Return ONLY a JSON object:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         raw = responses[0].strip() if responses else "{}"
 
         try:
@@ -566,6 +598,7 @@ RULES:
 - KEEP inline code examples/snippets that appear inside an API entry's docstring — these show correct usage patterns and are essential
 - Do NOT overlap line ranges between entries
 - Include entries that are API/library reference: function signatures with documented parameters, descriptions, class definitions, enum definitions, instruction specifications, usage examples
+- Also include conceptual references and explanations that document how APIs behave or interact
 - Closely related documentation can also be included, such as additional information about particular parts of the API/instruction set.
 - If no API reference content is found, return an empty array []
 
@@ -600,6 +633,8 @@ JSON array:"""
                 if start < 1 or end < start:
                     continue
                 content = "\n".join(lines[start - 1:end])
+                if len(content.strip()) < 20:
+                    continue
                 md = f"### {name}\n\n{content}"
                 entries.append(ISAEntry(
                     name=name, description=desc,
@@ -637,6 +672,10 @@ JSON array:"""
                 f"{self._context_prefix}"
                 "Extract the core code examples that demonstrate API usage.\n\n"
                 "RULES:\n"
+                "- Start with a single line: SUMMARY: followed by a 1-2 sentence "
+                "description of what this document covers and what key concepts, "
+                "APIs, or techniques it demonstrates\n"
+                "- Then include the code examples as fenced code blocks\n"
                 "- Keep the full function bodies including decorators and type hints\n"
                 "- Include necessary imports at the top\n"
                 "- REMOVE test harnesses, benchmarking code, main blocks, "
@@ -647,7 +686,7 @@ JSON array:"""
             )
 
         all_responses = self._chat_light_async(
-            prompts, num_candidates=1, temperature=0,
+            prompts, num_samples=1, temperature=0,
         )
 
         parts: list[str] = []
@@ -671,18 +710,22 @@ JSON array:"""
         defaults = [
             "reduce data movement",
             "overlap data movement and compute",
+            "cache reused data in local memory instead of reloading from main memory",
             "loop tiling",
             "loop reordering and restructuring",
+            "loop unrolling",
             "fuse operations",
             "use lower precision",
             "double buffering",
             "software pipelining",
             "hoist redundant operations out of loops",
+            "eliminate redundant computation",
             "simplify or remove unnecessary code",
+            "try new parameter values",
+            "rewrite the algorithm to reduce total work",
         ]
 
         if not items:
-            defaults.append("Other methods not listed here.")
             return defaults
 
         items = _chunk_items(items, self.context_budget)
@@ -696,7 +739,7 @@ JSON array:"""
         """Single-pass optimization menu when content fits in one call."""
         content = _items_to_text(items, max_chars=self.context_budget)
         raw = self._opt_reduce(content, defaults)
-        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw)
 
     def _opt_map_reduce(self, items: list[tuple[str, str]], defaults: list[str]) -> list[str]:
         """Map-reduce optimization menu for large content."""
@@ -711,7 +754,11 @@ JSON array:"""
                 f"=== DOCUMENT ===\n{truncated}\n=== END ===\n\n"
                 f"{self._context_prefix}"
                 f"Extract performance optimization strategies taught or demonstrated "
-                f"in this document. Techniques demonstrated in tutorials and examples have strong potential to be useful optimizations, but make sure to extract the core principle behind the technique.\n\n"
+                f"in this document. Techniques demonstrated in tutorials and examples "
+                f"have strong potential to be useful optimizations.\n\n"
+                f"Most strategies should be general optimization ideas. "
+                f"When a specific API or function is the key enabler of an optimization, "
+                f"it is okay to name it, but focus on the fundamental optimization idea.\n\n"
                 f"These generic strategies are already known (do NOT repeat them):\n"
                 f"{defaults_text}\n\n"
                 f"Return each NEW strategy on its own line, prefixed with \"- \". "
@@ -722,7 +769,7 @@ JSON array:"""
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
 
@@ -738,7 +785,6 @@ JSON array:"""
 
         logger.info("Optimization menu: reduce - merge %d candidates into final list", len(candidates))
         if not candidates:
-            defaults.append("Other methods not listed here.")
             return defaults
 
         candidate_text = chr(10).join(f"- {c}" for c in candidates)
@@ -746,7 +792,7 @@ JSON array:"""
 
         # Reduce: merge, deduplicate, and curate
         raw = self._opt_reduce(candidate_text, defaults, is_reduce=True)
-        return defaults + self._parse_bullet_lines(raw) + ["Other methods not listed here."]
+        return defaults + self._parse_bullet_lines(raw)
 
     def _opt_reduce(self, content: str, defaults: list[str], is_reduce: bool = False) -> str:
         """Run the reduce/synthesis prompt for optimization menu."""
@@ -788,10 +834,12 @@ EXAMPLES of good strategy descriptions:
 - "fuse dependent operations into a single loop to avoid HBM round-trips"
 - "use the streaming softmax with running max and scaling trick"
 - "delay division until after all reductions are complete"
+- "Use `scratch_shapes=[pltpu.VMEM(...)]` as persistent VMEM accumulator to avoid repeated HBM read-modify-write"
 
 {self._context_prefix}RULES:
-- Avoid making the strategies overly specific
-- Each strategy MUST be under 15 words.
+- Most strategies should be general optimization ideas (under 15 words)
+- When a specific API or function is the key enabler of an optimization, it is okay to name it (up to 25 words)
+- Identify both general ideas and API-specific ones, whichever is more important
 - Write as a short action phrase, not a full sentence
 - ONLY optimizations within the agent's scope as described above
 - NOT optimizations outside that scope, even if mentioned in the documentation
@@ -801,7 +849,7 @@ Return each strategy on its own line, prefixed with "- ".
 
 Performance optimization strategies:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         return responses[0].strip() if responses else ""
 
     @staticmethod
@@ -823,6 +871,76 @@ Performance optimization strategies:"""
         return results
 
     # ------------------------------------------------------------------
+    # Translate menu
+    # ------------------------------------------------------------------
+
+    _DEFAULT_TRANSLATE_MENU = [
+        "Convert high-level code to hardware-specific kernel code",
+        "Convert a small amount of high-level code to hardware-specific kernel code",
+    ]
+
+    def _synthesize_translate_menu(
+        self,
+        items: list[tuple[str, str]],
+        architecture: str = "",
+        isa_docs: str = "",
+        code_examples_raw: list[tuple[str, str]] | None = None,
+    ) -> list[str]:
+        """Synthesize code translation strategies from architecture, ISA, and examples.
+
+        Translation strategies guide the LLM in converting standard-library code
+        (e.g. NumPy, PyTorch, vanilla JAX) into hardware-specific kernel code
+        (e.g. CUDA kernels, NKI kernels, Pallas kernels).  They are generic across
+        hardware targets -- the prompt infers the right patterns from the docs.
+        """
+        defaults = list[str](self._DEFAULT_TRANSLATE_MENU)
+        context_parts: list[str] = []
+
+        if architecture:
+            context_parts.append(f"=== ARCHITECTURE ===\n{architecture}\n")
+        if isa_docs:
+            context_parts.append(f"=== ISA / API REFERENCE ===\n{isa_docs}\n")
+        if code_examples_raw:
+            context_parts.append(
+                f"=== CODE EXAMPLES ===\n{_items_to_text(code_examples_raw, max_chars=self.context_budget)}\n"
+            )
+
+        if not context_parts:
+            return defaults
+
+        context = "\n".join(context_parts)
+        defaults_text = chr(10).join("- " + d for d in defaults)
+
+        prompt = f"""{context}
+
+{self._context_prefix}The agent translates standard-library code (e.g. NumPy, PyTorch, JAX, \
+or other high-level frameworks) into optimized hardware-specific kernel code for the target \
+described above.
+
+These generic strategies are already included:
+{defaults_text}
+
+Generate 3-5 ADDITIONAL translation strategies. Each strategy should describe a pattern for converting \
+high-level code into the target hardware's kernel API, referencing approaches specific to the target hardware.
+
+RULES:
+- Each strategy should be a concise action phrase (1 sentence)
+- Focus on HOW to map the computation to the hardware primitives shown in the docs
+- Reference specific API calls, memory spaces, or tiling constructs when they are central
+- Generic strategies are allowed if they add value beyond the generic strategies already included
+
+Return each strategy on its own line, prefixed with "- ".
+
+Translation strategies:"""
+
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
+        raw = responses[0].strip() if responses else ""
+        strategies = self._parse_bullet_lines(raw)
+        if not strategies:
+            logger.warning("Translate menu: LLM returned no strategies")
+        return defaults + strategies
+
+    # ------------------------------------------------------------------
     # Rules
     # ------------------------------------------------------------------
 
@@ -835,8 +953,8 @@ Performance optimization strategies:"""
                 "Keep the same function name and signature as the original program (helper functions can be renamed or deleted).",
             ],
             "planning": [
-                "Limit the scope of the plan to the selected optimization.",
-                "Do not count out any of the optimizations unless they are clearly irrelevant to the code.",
+                "Limit the scope of the plan to the selected strategy.",
+                "Do not count out any of the strategies unless they are clearly irrelevant to the code.",
             ],
             "coding": [
                 "Wrap the generated code with ```python at the beginning and ``` at the end.",
@@ -907,7 +1025,7 @@ Performance optimization strategies:"""
         all_responses = [
             r[0] if r else "" for r in
             self.llm.chat_async(
-                prompts, num_candidates=1, temperature=0,
+                prompts, num_samples=1, temperature=0,
             )
         ]
 
@@ -955,14 +1073,14 @@ Performance optimization strategies:"""
 
 Categorize each rule into one of:
 - "general" -- applies to both planning and coding phases
-- "planning" -- applies only when generating optimization plans
+- "planning" -- applies only when generating plans
 - "coding" -- applies only when generating code
 
 Return as a JSON object with keys "general", "planning", "coding", each mapping to a list of rule strings.
 
 Return ONLY a JSON object:"""
 
-        responses = self._chat(prompt=prompt, num_candidates=1, temperature=0)
+        responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         return responses[0].strip() if responses else "{}"
 
     @staticmethod

@@ -57,13 +57,12 @@ class LLMEnsemble:
     def get_opt_menu_options(self, prob=None):
         return self.llms[0].get_opt_menu_options(prob)
 
-    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str) -> list[str]:
+    def analyze_code(self, candidate: CodeCandidate, num_to_gen: int, save_dir: pathlib.Path, save_str: str, prob: Prob = None) -> list[str]:
         num_to_gen_per_agent = self.divide_work(num_to_gen)
         tasks = []
         for i, llm in enumerate(self.llms):
             if num_to_gen_per_agent[i] > 0:
-                model = _safe_model_suffix(self.llms[i].llm_client.model)
-                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model))
+                tasks.append((llm.analyze_code, candidate, num_to_gen_per_agent[i], save_dir, save_str+"_"+self.llms[i].llm_client.model, prob))
 
         responses = []
         for result in self._run_parallel(tasks):
@@ -113,7 +112,7 @@ class LLMEnsemble:
         # Distribute work across models, similarly to how we divide plans, making a total of BEAM_SIZE calls.
         # In each iteration, each candidate is processed by one LLMAgent in the ensemble.
         # Then, the proposed menu options for that candidate are shared with the other LLMAgents in the ensemble.
-        if getattr(self.llms[0], "menu_strategy", "static") != "static":
+        if self.llms[0].menu_strategy is not None and not translate:
             num_to_handle_per_agent = self.divide_work(len(candidate_lst))
             tasks_new_menus = []
             curr_candidate_idx = 0
@@ -130,49 +129,8 @@ class LLMEnsemble:
 
             for llm in self.llms:
                 llm.update_new_menu_cache(new_menu)
-
-        cands = []
-        for result in self._run_parallel(tasks):
-            cands.extend(result)
-        return cands
-
-    def propose_optimizations(self, candidate: CodeCandidate, num_plans: int, save_dir: pathlib.Path, save_str: str, 
-                                prob: Prob,
-                                force_opt_menu: int = None, 
-                                prompt_end: str = "", 
-                                analysis: str = "", 
-                                shuffle_opts: bool = False, 
-                                give_score_feedback: float = 1,
-                                give_util_feedback: float = 0,
-                                give_hw_feedback: float = 1,
-                                include_ancestors: bool = True,
-                                plan_icl_examples: bool = False,
-                                cur_iter: int = None,
-                                num_iters: int = None,
-                                dropout_menu_options: float = 1,
-                                translate: bool = False,
-                                ) -> list[CodeCandidate]:
-        num_to_gen_per_agent = self.divide_work(num_plans)
-        tasks = []
-        for i, llm in enumerate(self.llms):
-            if num_to_gen_per_agent[i] > 0:
-                model = _safe_model_suffix(self.llms[i].llm_client.model)
-                tasks.append((llm.propose_optimizations, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model,
-                                    prob,
-                                    force_opt_menu, 
-                                    prompt_end, 
-                                    analysis, 
-                                    shuffle_opts, 
-                                    give_score_feedback,
-                                    give_util_feedback,
-                                    give_hw_feedback,
-                                    include_ancestors,
-                                    plan_icl_examples,
-                                    cur_iter,
-                                    num_iters,
-                                    dropout_menu_options,
-                                    translate,
-                                    ))
+            total_new = sum(len(v) for v in new_menu.values())
+            logger.info("Dynamically generated %d new menu options across %d candidates.", total_new, len(new_menu))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -187,19 +145,6 @@ class LLMEnsemble:
                 model = _safe_model_suffix(self.llms[i].llm_client.model)
                 this_model_save_strs = [save_str + "_" + model for save_str in save_strs]
                 tasks.append((llm.implement_code_parallel, candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, code_icl_examples, prob))
-
-        cands = []
-        for result in self._run_parallel(tasks):
-            cands.extend(result)
-        return cands
-
-    def implement_code(self, candidate: CodeCandidate, num_samples: int, save_dir: pathlib.Path, save_str: str="", code_icl_examples: bool = True, prob: Prob = None) -> list[CodeCandidate]:
-        num_to_gen_per_agent = self.divide_work(num_samples)
-        tasks = []
-        for i, llm in enumerate(self.llms):
-            if num_to_gen_per_agent[i] > 0:
-                model = _safe_model_suffix(self.llms[i].llm_client.model)
-                tasks.append((llm.implement_code, candidate, num_to_gen_per_agent[i], save_dir, save_str + "_" + model, code_icl_examples, prob))
 
         cands = []
         for result in self._run_parallel(tasks):
@@ -221,8 +166,7 @@ class LLMEnsemble:
 
     def reimplement_failed_code_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int, save_dir: pathlib.Path, save_strs: list[str]=None, prob: Prob = None) -> list[CodeCandidate]:
         """
-        Reimplement failed code candidates using stdout/stderr from the last attempt.
-        This method is parallelized across multiple LLM agents.
+        Reimplement failed implementations using stdout/stderr from the last attempt.
         """
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -236,3 +180,7 @@ class LLMEnsemble:
         for result in self._run_parallel(tasks):
             cands.extend(result)
         return cands
+
+    def score_translation_completeness(self, original_code: str, candidates: list[CodeCandidate], prob: Prob) -> list[float]:
+        """Score translation completeness using the first agent in the ensemble."""
+        return self.llms[0].score_translation_completeness(original_code, candidates, prob=prob)

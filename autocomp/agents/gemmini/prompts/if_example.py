@@ -55,5 +55,5 @@ def PROMPT():
                   mvin3( &inp[(b)][(krow + orow_ii + 7 * orow_io + 28 * orow_o)][(kcol + 16 * ocol_o)][0], i_s + ((krow + orow_ii + 7 * orow_io) * (3072) + (kcol) * (1024))/16, 16*(4), (16) );
                 }
 ..."""
-    prompt_text = "Here is an example of loading data to different scratchpad locations in a 2D convolution operation to increase data reuse. Original code:\n" + orig_code + "\Optimized code\n" + new_code
+    prompt_text = "Here is an example of loading data to different scratchpad locations in a 2D convolution operation to increase data reuse. Original code:\n" + orig_code + "\nOptimized code\n" + new_code
     return prompt_text

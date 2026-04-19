@@ -12,12 +12,12 @@ def copy_candidate(candidate: 'CodeCandidate') -> 'CodeCandidate':
         plan=candidate.plan,
         code=candidate.code,
         score=candidate.score,
-        spad_acc_stats=candidate.spad_acc_stats[:],  # Copy the spad_acc_stats list
         plan_gen_model=candidate.plan_gen_model,
         code_gen_model=candidate.code_gen_model,
         stdout=candidate.stdout,
         stderr=candidate.stderr
     )
+    new_candidate.translation_score = candidate.translation_score
     return new_candidate
 
 class CodeCandidate:
@@ -29,22 +29,19 @@ class CodeCandidate:
     """
     Represents a single version of the code with an associated optimization plan.
     """
-    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, spad_acc_stats: list[str]=None,
+    def __init__(self, parent: 'CodeCandidate', plan: str, code: str, score: float=None, translation_score: float=None, back: list[str]=None,
                  plan_gen_model=None, code_gen_model=None, stdout: str=None, stderr: str=None):
-        self.parent = parent # Pointer to parent CodeCandidate
+        self.parent = parent # Poisnter to parent CodeCandidate
         self.plan = plan
         self.score = score  # Score based on the evaluation function
+        self.translation_score = translation_score
+        self.back = back or []  # Used by __repr__; keep always defined for cached IO
         if not code:
             self.implemented = False  # Whether the code has been implemented
             self.code = None
         else:
             self.implemented = True
             self.code = code
-
-        if spad_acc_stats is None:
-            self.spad_acc_stats = list()
-        else:
-            self.spad_acc_stats = spad_acc_stats # spad_acc_stats to pass to the next iteration
 
         self.plan_gen_model = plan_gen_model
         self.code_gen_model = code_gen_model
@@ -58,12 +55,10 @@ class CodeCandidate:
         else:
             escaped_plan = self.plan.replace('\'', '\\\'')
             repr_str += f"'''{escaped_plan}'''"
-        escaped_code = self.code.replace('\'', '\\\'')
-        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\nspad_acc_stats={repr(self.spad_acc_stats)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
-        return repr_str
-
-    def update_spad_acc_stats(self, spad_acc_stats: list[str]) -> None:
-        self.spad_acc_stats.extend(spad_acc_stats)
+        code_str = self.code if self.code is not None else ""
+        escaped_code = code_str.replace('\'', '\\\'')
+        repr_str += f",\ncode='''{escaped_code}''',\nscore={self.score},\ntranslation_score={self.translation_score},\nback={repr(self.back)},\nplan_gen_model='{self.plan_gen_model}',\ncode_gen_model='{self.code_gen_model}',\nstdout={repr(self.stdout)},\nstderr={repr(self.stderr)})"
+        return repr_str 
 
 class CodeRepository:
     """
@@ -114,9 +109,20 @@ class CodeRepository:
         candidates = []
         for path in candidate_paths:
             try:
-                cand = eval(path.read_text(encoding="utf-8", errors="replace"))
+                raw = path.read_text(encoding="utf-8", errors="replace")
+                if not raw.strip():
+                    logger.warning("Skipping empty candidate cache file: %s", path)
+                    continue
+                cand = eval(raw)
+                if cand is None:
+                    logger.warning("Skipping candidate cache file loaded as None: %s", path)
+                    continue
                 logger.debug("Loaded candidate from %s", path)
                 candidates.append(cand)
+            except SyntaxError as e:
+                # Likely a partially written/corrupted file.
+                logger.error("Skipping corrupted candidate cache file %s: %s", path, e)
+                continue
             except Exception as e:
                 logger.error("Error loading candidate from %s: %s", path, e)
                 raise e

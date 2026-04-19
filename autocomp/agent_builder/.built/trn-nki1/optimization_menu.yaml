@@ -1,31 +1,41 @@
 optimizations:
 - strategy: reduce data movement
 - strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
 - strategy: loop tiling
 - strategy: loop reordering and restructuring
+- strategy: loop unrolling
 - strategy: fuse operations
 - strategy: use lower precision
 - strategy: double buffering
 - strategy: software pipelining
 - strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
 - strategy: simplify or remove unnecessary code
-- strategy: Accumulate partial sums directly in PSUM across contraction-dimension iterations
-- strategy: Use low-level `nki.isa` APIs for fine-grained hardware instruction control
-- strategy: Tile matmul operands to maximum hardware tile sizes (128×128 stationary, 128×512 moving)
-- strategy: Fuse multiply-add with activation into single scalar engine pipelined instructions
-- strategy: Use `load_transpose2d` to combine load and transpose into one operation
-- strategy: Assign larger free-axis matrix as stationary operand in `nc_matmul`
-- strategy: Use TensorE for data reshaping via multiply with constant matrices when not matmul-bound
-- strategy: Exploit free-dimension broadcasting to avoid explicit broadcast instructions
-- strategy: Use `sequential_range` for accumulation loops to prevent compiler reordering
-- strategy: Coalesce small result tiles into larger contiguous buffers before HBM stores
-- strategy: Apply execution masks for safe partial-tile boundary handling
-- strategy: Use hardware-accelerated specialized intrinsics (rsqrt, bn_stats, activation_reduce)
-- strategy: Hoist tensor declarations into independent loop bodies to avoid false dependencies
-- strategy: Use direct allocation with modulo rotation for explicit multi-buffering control
-- strategy: Maximize partition axis utilization by packing operations across all 128 lanes
-- strategy: Defer normalization divisions until after subsequent matmul contractions
-- strategy: Pre-fetch and cache reused tensors in SBUF across all loop iterations
-- strategy: Choose reduction engine based on data layout to avoid transpositions
-- strategy: Downcast intermediates before transpose to exploit higher transpose throughput
-- strategy: Other methods not listed here.
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Map contraction axis to partition dimension (P-dim) to satisfy Tensor Engine layout constraints without reshuffling
+- strategy: Use `affine_range` instead of `sequential_range` for loops without true loop-carried dependencies to enable compiler
+    parallelization
+- strategy: Exploit free-dimension flexible indexing for transposes, splits, and pooling via access patterns instead of explicit
+    data shuffling
+- strategy: Pad tiles to pmax=128 with masking to handle non-aligned dimensions while maximizing partition utilization
+- strategy: Accumulate partial matmul results in PSUM via read-add-write to avoid extra memory traffic for contraction-dimension
+    tiling
+- strategy: Use `nki.isa.nc_matmul` with pre-transposed inputs to eliminate implicit transpose overhead from high-level matmul
+    API
+- strategy: Combine multiply-add with nonlinear activation into single `nki.isa.activation` instruction to halve ScalarE cycles
+- strategy: Assign large free-axis matrix as stationary operand to exploit fast LoadStationary (up to 4x faster data movement)
+- strategy: Ensure DMA transfers are at least 32KiB by maximizing both partition and free dimension sizes in load/store operations
+- strategy: Replace DMA-based `load_transpose2d` with regular loads plus `nc_transpose` when kernel is memory-bound
+- strategy: Use direct allocation APIs to manually control SBUF/PSUM placement and avoid compiler-inserted spill/refill traffic
+- strategy: Keep reused data resident in SBUF across loop iterations to avoid redundant HBM reloads
+- strategy: Declare buffers inside inner loops to reduce tensor lifetimes and prevent unexpected spilling by the compiler
+- strategy: Use `modulo allocation` (mod_alloc) for systematic multi-buffering of physical tiles across loop iterations
+- strategy: Leverage TensorE for cross-partition reductions and data reshaping using constant matrices when not matmul-bound
+- strategy: Use dedicated `tensor_tensor_scan` instructions instead of explicit sequential loops to avoid per-instruction
+    static overhead
+- strategy: Maximize free dimension to at least 128 elements per partition to amortize ~100-cycle fixed per-instruction overhead
+- strategy: Use hardware `bn_stats`/`bn_aggr` instructions for single-pass mean and variance computation
+- strategy: Prefer `tensor_scalar` broadcast operations over explicit broadcast-then-`tensor_tensor` to save an instruction
+- strategy: Coalesce small result tiles into a single contiguous buffer before DMA store to reduce transfer count

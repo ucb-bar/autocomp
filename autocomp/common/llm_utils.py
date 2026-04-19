@@ -14,7 +14,6 @@ from google.genai import types
 import anthropic
 from anthropic import AsyncAnthropic
 from together import Together, AsyncTogether
-from mistralai_gcp import MistralGoogleCloud
 
 from autocomp.common import logger
 
@@ -43,6 +42,7 @@ aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
 aws_region = _get_key("AWS_REGION", default="us-west-2")
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
 google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
+google_api_key = _get_key("GOOGLE_API_KEY", default=None)
 vllm_api_base = _get_key("VLLM_API_BASE", default="http://localhost:8000/v1")
 
 # Log key availability
@@ -54,6 +54,7 @@ _key_status = {
     "AWS_SECRET_ACCESS_KEY": aws_secret_key is not None,
     "GOOGLE_CLOUD_PROJECT": google_cloud_project is not None,
     "GOOGLE_CLOUD_LOCATION": google_cloud_location is not None,
+    "GOOGLE_API_KEY": google_api_key is not None,
 }
 _available = [k for k, v in _key_status.items() if v]
 _unavailable = [k for k, v in _key_status.items() if not v]
@@ -79,7 +80,7 @@ def completions_with_backoff(client: OpenAI | Together, **kwargs):
         return client.responses.create(**kwargs)
 
 async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | AsyncTogether | genai.Client | AsyncAnthropic, prompt, **kwargs):
-    """Fetches a completion with retries and rate limit handling."""
+    """Fetches a completion with retries and error handling."""
     max_retries = 8
     for attempt in range(max_retries):
         try:
@@ -116,20 +117,21 @@ async def fetch_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | A
         # except (RateLimitError, APITimeoutError, InternalServerError):
         except Exception as e:
             err_str = str(e)
+            model_name = kwargs.get("model", "unknown")
             if "temperature" in err_str and "not supported" in err_str:
-                logger.info(f"Model does not support temperature, retrying without it: {e}")
+                logger.info(f"Model {model_name} does not support temperature, retrying without it: {e}")
                 kwargs.pop("temperature", None)
                 continue
-            logger.info(f"Error: {e}")
+            logger.info(f"Error (model={model_name}): {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
-            logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
+            logger.info(f"Retrying in {wait_time:.2f} seconds (attempt {attempt + 1}/{max_retries})...")
             await asyncio.sleep(wait_time)
     
-    print("Max retries reached, request failed.")
+    logger.warning("Max retries reached for model=%s, request failed.", kwargs.get("model", "unknown"))
     return None
 
 async def fetch_web_search_completion(semaphore: asyncio.Semaphore, client: AsyncOpenAI | AsyncTogether, query: str, **kwargs):
-    """Fetches a web search completion with retries and rate limit handling."""
+    """Fetches a web search completion with retries and error handling."""
     max_retries = 8
     for attempt in range(max_retries):
         try:
@@ -143,12 +145,12 @@ async def fetch_web_search_completion(semaphore: asyncio.Semaphore, client: Asyn
             return response
         
         except Exception as e:
-            logger.info(f"Web search error: {e}")
+            logger.info(f"Web search error (model={kwargs.get('model', 'unknown')}): {e}")
             wait_time = 2 ** attempt + random.uniform(0, 1)  # Exponential backoff
-            logger.info(f"Rate limit hit! Retrying in {wait_time:.2f} seconds...")
+            logger.info(f"Retrying in {wait_time:.2f} seconds (attempt {attempt + 1}/{max_retries})...")
             await asyncio.sleep(wait_time)
     
-    print("Max retries reached, web search request failed.")
+    logger.warning("Max retries reached for web search model=%s, request failed.", kwargs.get("model", "unknown"))
     return None
 
 async def fetch_web_search_completions(client: AsyncOpenAI | AsyncTogether, queries: list[str], **kwargs) -> list[str]:
@@ -543,7 +545,7 @@ async def fetch_tool_completion(
                     return normalized
 
                 else:
-                    raise ValueError(f"Unsupported provider for tool completion: {provider}")
+                    raise ValueError(f"Unsupported provider for tool completion: {provider} for model: {model}")
 
         except Exception as e:
             logger.info(f"fetch_tool_completion error (attempt {attempt+1}): {e}")
@@ -667,9 +669,11 @@ class LLMClient():
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
-            self.async_client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
-        # elif self.provider == "mistralgcp":
-        #     self.client = MistralGoogleCloud(region=google_cloud_region, location=google_cloud_location, project_id=google_cloud_project)
+            if google_api_key and not google_cloud_project:
+                self.client = genai.Client(api_key=google_api_key)
+            else:
+                self.client = genai.Client(vertexai=True, project=google_cloud_project, location=google_cloud_location)
+            self.async_client = self.client
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
         elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
@@ -685,11 +689,13 @@ class LLMClient():
             )
         elif self.provider == "aws":
             # Generic Bedrock models (Llama, Mistral, Nova, etc.) via Converse API
+            from botocore.config import Config as BotoConfig
             self._bedrock_client = boto3.client(
                 "bedrock-runtime",
                 region_name=aws_region,
                 aws_access_key_id=aws_access_key,
                 aws_secret_access_key=aws_secret_key,
+                config=BotoConfig(read_timeout=120),
             )
             self.provider = "aws-bedrock"
         elif self.provider == "together":
@@ -712,14 +718,14 @@ class LLMClient():
                 base_url=openai_api_base,
             )
         else:
-            raise ValueError(f"Invalid provider: {self.provider}")
+            raise ValueError(f"Invalid provider: {self.provider} for model: {self.model}")
 
     def _run_async(self, coro):
         """Run an async coroutine on the persistent event loop.
         Uses a single long-lived loop so async clients can reuse connections."""
         return self._loop.run_until_complete(coro)
 
-    def _bedrock_converse(self, prompt: str, temperature=None, max_tokens=4096) -> str:
+    def _bedrock_converse(self, prompt: str, temperature=None, max_tokens=16384) -> str:
         """Call Bedrock Converse API. Works for any Bedrock model (Llama, Mistral, Nova, etc.)."""
         inference_config = {"maxTokens": max_tokens}
         if temperature is not None:
@@ -729,7 +735,13 @@ class LLMClient():
             messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig=inference_config,
         )
-        return response["output"]["message"]["content"][0]["text"]
+        content_blocks = response["output"]["message"]["content"]
+        for block in content_blocks:
+            if "text" in block:
+                return block["text"]
+        logger.warning("Bedrock response has no 'text' block: block_types=%s, stopReason=%s",
+                       [list(b.keys()) for b in content_blocks], response.get("stopReason"))
+        return ""
 
     def web_search(self, query: str) -> str:
         if can_web_search_openai(self.model):
@@ -784,7 +796,7 @@ class LLMClient():
                     results.append("Web search failed")
             return results
     
-    def chat_async(self, prompts_lst: list[str], num_candidates=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
+    def chat_async(self, prompts_lst: list[str], num_samples=10, temperature=None, reasoning_effort="high") -> list[list[str]]:
         if self.provider == "aws-bedrock":
             # Generic Bedrock models use boto3 Converse API (synchronous),
             # wrapped with asyncio.to_thread for concurrency.
@@ -792,22 +804,26 @@ class LLMClient():
                 semaphore = asyncio.Semaphore(9)
                 async def _call(p):
                     async with semaphore:
-                        return await asyncio.to_thread(self._bedrock_converse, p, temperature)
+                        try:
+                            return await asyncio.to_thread(self._bedrock_converse, p, temperature)
+                        except Exception as e:
+                            logger.warning("Bedrock converse error: %s", e)
+                            return ""
                 tasks = []
                 for prompt in prompts_lst:
-                    for _ in range(num_candidates):
+                    for _ in range(num_samples):
                         tasks.append(_call(prompt))
                 results = await asyncio.gather(*tasks)
                 responses = []
                 for i in range(len(prompts_lst)):
-                    responses.append(list(results[i * num_candidates:(i + 1) * num_candidates]))
+                    responses.append(list(results[i * num_samples:(i + 1) * num_samples]))
                 return responses
             return self._run_async(_run())
         elif self.async_client is not None:
             # Limit concurrent requests (adjust based on your API limits)
             kwargs = {
                 "model":self.model.replace("_", "/"),
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -815,23 +831,24 @@ class LLMClient():
                 kwargs["max_tokens"] = 16384
             if is_openai_reasoning_model(self.model) and reasoning_effort is not None:
                 kwargs["reasoning"] = {"effort": reasoning_effort}
+                kwargs.pop("temperature", None)
             responses = self._run_async(fetch_completions(self.async_client, prompts_lst, **kwargs))
             return responses
         else:
             responses = []
             for prompt in prompts_lst:
-                this_msg_resps = self.chat(prompt, num_candidates, temperature)
+                this_msg_resps = self.chat(prompt, num_samples, temperature)
                 responses.append(this_msg_resps)
             return responses
 
-    def chat(self, prompt: str, num_candidates=10, temperature=None):
+    def chat(self, prompt: str, num_samples=10, temperature=None):
         responses = []
         if isinstance(self.client, Together):
             # Together uses chat completions API with messages format
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "messages":[{"role": "user", "content": prompt}],
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -845,7 +862,7 @@ class LLMClient():
             kwargs = {
                 "model":self.model.replace("_", "/"),
                 "input":prompt,
-                "n":num_candidates,
+                "n":num_samples,
             }
             if temperature is not None:
                 kwargs["temperature"] = temperature
@@ -854,9 +871,10 @@ class LLMClient():
                 kwargs["timeout"] = 1200
             if is_openai_reasoning_model(self.model):
                 kwargs["reasoning"] = {"effort": "high"}
+                kwargs.pop("temperature", None)
                 # Query 8 plans at a time - make multiple calls for responses API
                 single_kwargs = {k: v for k, v in kwargs.items() if k != "n"}
-                while len(responses) < num_candidates:
+                while len(responses) < num_samples:
                     openai_response = completions_with_backoff(self.client, **single_kwargs)
                     if hasattr(openai_response, 'output_text'):
                         responses.append(openai_response.output_text)
@@ -867,8 +885,8 @@ class LLMClient():
                         responses.append(str(openai_response))
             else:
                 # For responses API, make multiple calls if n > 1
-                if num_candidates > 1:
-                    for _ in range(num_candidates):
+                if num_samples > 1:
+                    for _ in range(num_samples):
                         single_kwargs = {k: v for k, v in kwargs.items() if k != "n"}
                         openai_response = completions_with_backoff(self.client, **single_kwargs)
                         if hasattr(openai_response, 'output_text'):
@@ -887,15 +905,6 @@ class LLMClient():
                             responses.append(c.message.content)
                     else:
                         responses.append(str(openai_response))
-        elif isinstance(self.client, MistralGoogleCloud):
-            for _ in range(num_candidates):
-                mistral_response = self.client.chat.complete(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    n=1,
-                    temperature=temperature,
-                )
-                responses.append(mistral_response.choices[0].message.content)
         elif isinstance(self.client, genai.Client):
             # call separately since candidates are limited to 8
             gemini_response = self.client.models.generate_content(
@@ -903,13 +912,13 @@ class LLMClient():
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
-                    candidate_count=num_candidates,
+                    candidate_count=num_samples,
                 ),
             )
             for c in gemini_response.candidates:
                 responses.append(c.content.parts[0].text)
         elif isinstance(self.client, (anthropic.Anthropic, anthropic.AnthropicBedrock)):
-            for _ in range(num_candidates):
+            for _ in range(num_samples):
                 claude_response = self.client.messages.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -922,7 +931,7 @@ class LLMClient():
                 )
                 responses.append(claude_response.content[-1].text)
         elif self.provider == "aws-bedrock":
-            for _ in range(num_candidates):
+            for _ in range(num_samples):
                 responses.append(self._bedrock_converse(prompt, temperature=temperature))
 
         return responses
