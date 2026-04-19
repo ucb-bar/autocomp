@@ -16,7 +16,11 @@ This controls how much slower a translated candidate can be versus its parent an
 
 ## `beam_size`, `num_plan_candidates`, `num_code_candidates`
 
-Each iteration generates `beam_size × num_plan_candidates × num_code_candidates` total candidates for evaluation. The default (`beam_size=4`, `num_plan_candidates=4`, `num_code_candidates=2`) produces 32 candidates per iteration, which balances exploration with evaluation cost. `num_plan_candidates` should be >= the number of `models`, because plans are divided evenly across models — if you have 4 models but only 3 plan candidates, one model gets no work. Similarly, `num_code_candidates` should be >= the number of `code_models` (if set) for the same reason. Increase `beam_size` to `6` if you want broader exploration, but this scales evaluation cost linearly.
+Each iteration generates `beam_size × num_plan_candidates × num_code_candidates` total candidates for evaluation. The default (`beam_size=4`, `num_plan_candidates=4`, `num_code_candidates=2`) produces 32 candidates per iteration, which balances exploration with evaluation cost. `num_plan_candidates` should be >= the number of `models`, because plans are divided evenly across models — if you have 4 models but only 3 plan candidates, one model gets no work. Similarly, `num_code_candidates` should be >= the number of `code_models` (if set) for the same reason.
+
+`beam_size=4` is often a reasonable default. A study across 6 Trainium NKI kernels at beam sizes {1, 2, 4, 6, 8} showed that beam 4 captures most of the improvement available at beam 8 at significantly lower cost. Low beam sizes can still work; even `beam_size=1` produced meaningful improvements over baseline for all tested kernels. However, the ideal beam size (and other search parameters) depends heavily on the characteristics of your specific search space. For example, kernels with multiple fundamentally different algorithmic approaches benefit from larger beam sizes, which enable parallel exploration of diverse paths and help avoid getting stuck in local optima. For very challenging kernels where cost and time are not significant concerns, a beam size of 6–8 can lead to more consistent results.
+
+Beam size can also affect convergence rate: since smaller beam sizes can get caught in local optima, they tend to converge in fewer iterations.
 
 ## `models`
 

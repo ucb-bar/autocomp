@@ -37,6 +37,8 @@ def solution(
     B_F_SIZE=512,
     B_D_SIZE=128,
 ):
+    NEG_INF = -9984.0
+
     num_k_tile_per_large_tile = LARGE_KV_TILE_SIZE // B_F_SIZE
 
     qk_res_buf = nl.ndarray((Q_TILE_SIZE, LARGE_KV_TILE_SIZE), buffer=nl.sbuf, dtype=acc_type)
