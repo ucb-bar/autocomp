@@ -651,31 +651,53 @@ class LLMAgent:
 
         Like direct_implement_code_parallel but outputs structured JSON edits
         instead of full code rewrites.
+
+        When dropout/score/hw-feedback are stochastic, we build ``num_samples``
+        distinct prompts per parent (one per sample) so each sample sees an
+        independent draw of the menu / feedback.  Otherwise we keep a single
+        prompt per parent and request ``num_samples`` completions.
         """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
 
+        stochastic_prompt = (
+            dropout_menu_options < 1
+            or (0 < give_score_feedback < 1)
+            or (0 < give_hw_feedback < 1)
+        )
+        prompts_per_cand = num_samples if stochastic_prompt else 1
+        samples_per_prompt = num_samples // prompts_per_cand
+
         messages_lst = []
+        base_code_lst = []
         templates = []
+        flat_save_strs: list[str] = []
         for c_i, candidate in enumerate(candidate_lst):
-            messages = self._get_direct_implement_edits_messages(
-                candidate, prob,
-                give_score_feedback=give_score_feedback,
-                give_hw_feedback=give_hw_feedback,
-                include_ancestors=include_ancestors,
-                dropout_menu_options=dropout_menu_options,
-                cur_iter=cur_iter, num_iters=num_iters,
-                translate=translate,
-            )
-            messages_lst.append(messages)
-            templates.append(CodeCandidate(
-                candidate, "direct implementation (no plan)", candidate.code,
-                plan_gen_model=self.llm_client.model,
-            ))
+            base_save_str = save_strs[c_i] if save_strs is not None else ""
+            for p in range(prompts_per_cand):
+                messages = self._get_direct_implement_edits_messages(
+                    candidate, prob,
+                    give_score_feedback=give_score_feedback,
+                    give_hw_feedback=give_hw_feedback,
+                    include_ancestors=include_ancestors,
+                    dropout_menu_options=dropout_menu_options,
+                    cur_iter=cur_iter, num_iters=num_iters,
+                    translate=translate,
+                )
+                messages_lst.append(messages)
+                base_code_lst.append(candidate.code)
+                templates.append(CodeCandidate(
+                    candidate, "direct implementation (no plan)", candidate.code,
+                    plan_gen_model=self.llm_client.model,
+                ))
+                if prompts_per_cand == 1:
+                    flat_save_strs.append(base_save_str)
+                else:
+                    flat_save_strs.append(f"{base_save_str}_p{p}" if base_save_str else f"p{p}")
 
         return self._run_edits_pipeline(
-            messages_lst, [c.code for c in candidate_lst], templates,
-            num_samples, save_dir, save_strs,
+            messages_lst, base_code_lst, templates,
+            samples_per_prompt, save_dir, flat_save_strs,
             file_prefix="direct_edit", log_label="direct edit",
         )
 
