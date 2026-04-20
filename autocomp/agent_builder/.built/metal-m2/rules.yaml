@@ -1,0 +1,49 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- Threadgroup memory allocation must not exceed 32768 bytes (32 KB) per threadgroup. Exceeding this limit causes pipeline
+  creation failure, not a runtime error.
+- Threadgroup sizes must always be a multiple of the SIMD width (32 threads). The total number of threads per threadgroup
+  (product of all dimensions) must not exceed 1024.
+- All threads in a threadgroup (or SIMD-group) must encounter a threadgroup_barrier (or simdgroup_barrier) call uniformly.
+  If a barrier is inside a conditional, all threads in the group must enter that conditional and execute the barrier. If inside
+  a loop, all threads must execute the barrier for each iteration where any thread executes it. Violating this is undefined
+  behavior.
+- SIMD-group operations (simd_shuffle, simd_broadcast, simd_sum, etc.) and simdgroup_matrix operations must be executed under
+  uniform control flow within the SIMD-group. If threads diverge such that some active threads skip a SIMD-group operation,
+  behavior is undefined.
+- A thread may only read data from another active thread in a SIMD-group via SIMD-group functions. Reading from an inactive
+  thread (e.g., one that exited due to control flow or is beyond the grid boundary) produces undefined results.
+- Pay attention to comments in the kernel code. Code marked with comments like 'DO NOT CHANGE', 'DO NOT MODIFY',
+  'KEEP AS IS', or similar must be preserved exactly as-is. These comments indicate correctness-critical sections
+  that must not be altered or removed.
+- Do not assume input dimensions are divisible by tile sizes or threadgroup dimensions. Kernels must handle arbitrary
+  input shapes correctly, including boundary tiles where the remaining elements are fewer than the tile size. Never
+  remove boundary-checking code paths (e.g., slow paths for partial tiles at matrix edges) as an optimization.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- simdgroup_matrix types are fixed at 8x8 dimensions (simdgroup_float8x8, simdgroup_half8x8, simdgroup_bfloat8x8). All tiling
+  strategies using simdgroup_matrix must decompose into 8x8 tiles. There is no Metal tensor API on M2.
+- 'When planning threadgroup memory tiling, the total shared memory budget is 32 KB shared across ALL threads in the threadgroup.
+  Per-thread shared allocations scale with threadgroup size: e.g., a 1024-thread threadgroup with 32 bytes per thread exactly
+  exhausts the 32 KB budget.'
+- The number of SIMD-groups per threadgroup is ceil(total_threads_per_threadgroup / 32). Plans must account for this when
+  sizing shared memory buffers indexed by SIMD-group or when coordinating inter-SIMD-group communication via threadgroup memory
+  and barriers.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- Kernel functions declared with [[kernel]] must return void. Arguments that are pointers or references must be explicitly
+  annotated with an address space (device, constant, threadgroup). Omitting the address space attribute is a compile error.
+- The data types for [[thread_position_in_grid]] and [[threads_per_grid]] must match. The data types for [[thread_position_in_threadgroup]],
+  [[threads_per_threadgroup]], and [[dispatch_threads_per_threadgroup]] must match. If [[thread_position_in_threadgroup]]
+  is uint/uint2/uint3, then [[thread_index_in_threadgroup]] must be uint. Mismatches cause compile errors.
+- Matrix constructors consume components in column-major order. You cannot construct a matrix from mixed scalars and vectors
+  (e.g., float2x3(float2, float, float2, float) is illegal). Use either all vectors (one per column) or all scalars.
+- threadgroup_barrier and simdgroup_barrier require a mem_flags argument specifying which memory to fence (mem_none, mem_device,
+  mem_threadgroup, mem_texture, mem_threadgroup_imageblock). Using mem_none means no memory fence — only execution synchronization.
+  To ensure threadgroup memory writes are visible to other threads after a barrier, you must pass mem_flags::mem_threadgroup.
+- simdgroup_load and simdgroup_store for simdgroup_matrix require the source/destination pointer to be in either device or
+  threadgroup address space, an elements_per_row stride parameter (number of elements per row in the backing storage, not
+  bytes), and an optional matrix_origin offset as ulong2. The stride must match the actual memory layout or data will be read/written
+  incorrectly.

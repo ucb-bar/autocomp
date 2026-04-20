@@ -1,0 +1,15 @@
+agent_name: metal-m2
+version: '1.0'
+built_at: '2026-04-18T14:38:11+00:00'
+build:
+  main_model: us.anthropic.claude-opus-4-6-v1
+  light_model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  agent_scope: "Optimizing Metal compute kernels on Apple M2 GPU using Metal Shading Language 4.0. Focus on simdgroup operations\
+    \ and threadgroup memory tiling. M2 does not support the Metal tensor API. Scope\n  is strictly compute kernels — exclude\
+    \ all graphics, rendering, vertex/fragment shaders, render pipelines, rasterization, and any non-compute Metal features."
+  sources:
+  - type: file
+    path: /Users/huijaean/Downloads/Metal-Shading-Language-Specification.pdf
+  - type: file
+    path: /Users/huijaean/Architecture.md
+description: Auto-generated agent config for metal-m2

@@ -65,6 +65,7 @@ Each hardware target requires two things: an **optimization agent** that knows h
 | Google TPU | `built:tpu-v6e` (TPU v6e)<br>`built:tpu-v5e` (TPU v5e / v5litepod) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))<br>`jaxbench` ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
 | NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
+| Apple Metal | `built:metal-m2` (Apple M2) | `metal` ([metal_setup.md](autocomp/backend/metal/metal_setup.md)) |
 | Saturn (RVV) | `built:saturn-rvv` | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md))<br>`xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
 
 Partially supported hardware targets:
@@ -194,10 +195,11 @@ The most important parameters are:
   - `TpuHardwareConfig("v6e-1")`
   - `GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)`
   - `CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")`
+  - `MetalHardwareConfig("M2", "4.0", "apple8", 8)`
   - `SaturnHardwareConfig(vlen=512, dlen=256)`
 
 **Evaluation Backend**
-- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `saturn`, and `xnnpack`.
+- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `metal`, `saturn`, and `xnnpack`.
 - `simulator`: The evaluation method to use, if the backend supports multiple. For all others, put `None`.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Saturn/XNNPACK, `spike` or `firesim`
@@ -210,6 +212,7 @@ The most important parameters are:
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
+  - For Metal, `metal-m2`.
   - For Saturn, `rvv-f32` or `rvv-qs8`.
   - For XNNPACK, `xnnpack-f32`.
 - `prob_id`: The problem ID to use.
@@ -261,8 +264,8 @@ The [Autocomp Trace Visualizer](https://marketplace.visualstudio.com/items?itemN
 - `search/` - Search algorithm (`search.py`) and optimization infrastructure. `run_search.py` is the entry point.
 - `agents/` - LLM agents for planning and code generation. Each hardware target has its own subdirectory (e.g., `gemmini/`, `trn/`, `cuda/`) with agent code and prompts.
 - `agent_builder/` - Agent Builder pipeline for creating new hardware-specific agents from documentation sources. See [Agent Builder documentation](autocomp/agent_builder/README.md) for details.
-- `backend/` - Eval backends for code evaluation. Each eval backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `tpu/`, `kernelbench/`, `gpumode/`) with evaluation code and setup instructions. One hardware target can have multiple eval backends.
-- `hw_config/` - Hardware configuration classes. Each hardware target has a config file (e.g., `cuda_config.py`, `gemmini_config.py`, `trn_config.py`, `tpu_config.py`).
+- `backend/` - Eval backends for code evaluation. Each eval backend has its own subdirectory (e.g., `gemmini/`, `trn/`, `tpu/`, `kernelbench/`, `gpumode/`, `metal/`) with evaluation code and setup instructions. One hardware target can have multiple eval backends.
+- `hw_config/` - Hardware configuration classes. Each hardware target has a config file (e.g., `cuda_config.py`, `gemmini_config.py`, `trn_config.py`, `tpu_config.py`, `metal_config.py`).
 - `common/` - Shared utilities (LLM interface, logging, etc.).
   - `llm_utils.py` - LLM interface. Modify this file if you want to add a new LLM provider.
 
