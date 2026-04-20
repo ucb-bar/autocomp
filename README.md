@@ -16,7 +16,7 @@
 
 **Autocomp** is a portable, extensible framework for LLM-driven kernel optimization across tensor accelerators. Point it at a kernel, pick your hardware target, and Autocomp speeds it up, automatically.
 
-It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **[NVIDIA GPUs](https://charleshong3.github.io/blog/autocomp_update.html)**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, and **[RISC-V Vector Processors](https://saturn-vectors.org/)**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
+It already delivers strong results across **[AWS Trainium](https://aws.amazon.com/ai/machine-learning/trainium/)**, **[Google TPU](https://cloud.google.com/tpu)**, **[NVIDIA GPUs](https://charleshong3.github.io/blog/autocomp_update.html)**, **[Gemmini](https://github.com/ucb-bar/gemmini)**, **[RISC-V Vector Processors](https://saturn-vectors.org/)**, and **[Apple Silicon GPUs](https://developer.apple.com/documentation/apple-silicon)**. Need a new target? The **[Agent Builder](autocomp/agent_builder/README.md)** can spin up a hardware-specific optimization agent from your docs in minutes.
 
 <p align="center">
 <a href="https://arxiv.org/abs/2505.18574"><b>📚 Read the paper</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<b>✏️ Authors:</b> <a href="https://charleshong3.github.io/">Charles Hong</a>, <a href="https://x.com/sahilb17">Sahil Bhatia</a>, <a href="https://people.eecs.berkeley.edu/~akcheung/">Alvin Cheung</a>, <a href="https://people.eecs.berkeley.edu/~ysshao/">Yakun Sophia Shao</a> (UC Berkeley)
@@ -65,8 +65,8 @@ Each hardware target requires two things: an **optimization agent** that knows h
 | Google TPU | `built:tpu-v6e` (TPU v6e)<br>`built:tpu-v5e` (TPU v5e / v5litepod) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))<br>`jaxbench` ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md)) |
 | Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
 | NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
-| Apple Metal | `built:metal-m2` (Apple M2) | `metal` ([metal_setup.md](autocomp/backend/metal/metal_setup.md)) |
 | Saturn (RVV) | `built:saturn-rvv` | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md))<br>`xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
+| Apple Metal | `built:metal-m2` (Apple M2) | `metal` ([metal_setup.md](autocomp/backend/metal/metal_setup.md)) |
 
 Partially supported hardware targets:
 - RISC-V Vector (RVV) on Canaan Kendryte K230. See `k230` branch for code. As the implementation is very hacky, we do not currently recommend using this hardware target.
@@ -195,11 +195,11 @@ The most important parameters are:
   - `TpuHardwareConfig("v6e-1")`
   - `GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)`
   - `CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")`
-  - `MetalHardwareConfig("M2", "4.0", "apple8", 8)`
   - `SaturnHardwareConfig(vlen=512, dlen=256)`
+  - `MetalHardwareConfig("M2", "4.0", "apple8", 8)`
 
 **Evaluation Backend**
-- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `metal`, `saturn`, and `xnnpack`.
+- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `saturn`, `xnnpack`, and `metal`.
 - `simulator`: The evaluation method to use, if the backend supports multiple. For all others, put `None`.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Saturn/XNNPACK, `spike` or `firesim`
@@ -212,9 +212,9 @@ The most important parameters are:
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
-  - For Metal, `metal-m2`.
   - For Saturn, `rvv-f32` or `rvv-qs8`.
   - For XNNPACK, `xnnpack-f32`.
+  - For Metal, `metal-m2`.
 - `prob_id`: The problem ID to use.
 
 **Optimization Agent**
