@@ -1206,7 +1206,9 @@ class BeamSearchStrategy(SearchStrategy):
                 self.code_agent.reset_usage()
 
             if self.skip_planning:
-                # Direct implementation: skip planning, generate code in one shot
+                # Direct implementation: skip planning, generate code in one shot.
+                # With skip_planning, num_plan_candidates = unique prompts per
+                # parent; num_code_candidates = samples per prompt.
                 save_dir = self.output_dir / f"generated-code-iter-{i}"
                 save_dir.mkdir(parents=True, exist_ok=True)
                 save_strs = [f"parent{p_i}" for p_i in range(len(current_candidates))]
@@ -1226,6 +1228,7 @@ class BeamSearchStrategy(SearchStrategy):
                         cur_iter=i,
                         num_iters=iterations,
                         translate=translate,
+                        num_unique_prompts=self.num_plan_candidates,
                     )
                 else:
                     impl_candidates = self.code_agent.direct_implement_code_parallel(
@@ -1241,6 +1244,7 @@ class BeamSearchStrategy(SearchStrategy):
                         cur_iter=i,
                         num_iters=iterations,
                         translate=translate,
+                        num_unique_prompts=self.num_plan_candidates,
                     )
                 code_duration = round(time.perf_counter() - code_t0, 3)
                 iter_metrics["plan_duration_s"] = 0
