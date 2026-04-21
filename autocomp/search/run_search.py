@@ -39,7 +39,7 @@ def main():
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
 
-    prob_type = "metal-m2"               # see README.md or sols/ for available problems
+    prob_type = "metal"               # see README.md or sols/ for available problems
     prob_id = 1
 
     # ------------------------------------------------------------------
