@@ -468,9 +468,18 @@ class SearchStrategy:
                 with open(save_dir / f"code_{i}_result.txt", "r") as f:
                     per_cand_stats.append(json.load(f))
         else:
-            per_cand_stats = self.eval_backend.evaluate_code(
-                self.prob, [candidate.code for candidate in candidates], self.simulator
-            )
+            # Skip eval backend for pre-failed candidates (score=inf set upstream).
+            # Omit stderr/stdout from synthesized stats so the downstream loop
+            # doesn't populate candidate.stderr — which would cause
+            # reimplement_failed to re-LLM against a non-runtime error.
+            to_eval = [c for c in candidates if c.score != float("inf")]
+            eval_stats = iter(self.eval_backend.evaluate_code(
+                self.prob, [c.code for c in to_eval], self.simulator,
+            )) if to_eval else iter(())
+            per_cand_stats = [
+                next(eval_stats) if c.score != float("inf") else {"correct": False}
+                for c in candidates
+            ]
 
             # Save stats
             if save_dir is not None:

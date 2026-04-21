@@ -785,6 +785,7 @@ class LLMAgent:
 
                 edits = parse_edits_response(response_text)
                 edited_code = None
+                failed_edit = False
                 if edits is not None:
                     try:
                         edited_code = apply_edits(base_code, edits)
@@ -798,15 +799,22 @@ class LLMAgent:
                         logger.info("%s: Edit parse failed, fell back to full-code extraction for %s %d implementation %d",
                                     self.llm_client.model, file_prefix, c_i, s_i)
                     else:
-                        logger.warning("%s: Failed to get edits or code for %s %d implementation %d",
+                        logger.warning("%s: Failed to get edits or code for %s %d implementation %d — marking as failed",
                                        self.llm_client.model, file_prefix, c_i, s_i)
+                        # Keep base_code for artifacts; mark score=inf to skip eval.
+                        # Leave stderr unset so reimplement_failed doesn't re-LLM
+                        # against a phantom error.
                         edited_code = base_code
+                        failed_edit = True
 
                 path = save_dir / f"{file_prefix}{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
                 with open(path, "w") as f:
                     f.write(edited_code)
 
-                candidates.append(_build_result(c_i, edited_code))
+                new_cand = _build_result(c_i, edited_code)
+                if failed_edit:
+                    new_cand.score = float("inf")
+                candidates.append(new_cand)
         return candidates
 
     def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,
