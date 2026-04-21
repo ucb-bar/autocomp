@@ -544,12 +544,15 @@ class LLMAgent:
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
         translate: bool = False,
+        num_unique_prompts: int | None = None,
     ) -> list[CodeCandidate]:
         """Generate optimized code directly from parent candidates, bypassing the planning phase.
 
-        Each candidate in candidate_lst is a parent; we generate num_samples code
-        implementations per parent using a single prompt that combines planning and
-        implementation context.
+        Builds ``num_unique_prompts`` distinct prompts per parent (each with an
+        independent dropout/feedback draw) and requests
+        ``num_samples // num_unique_prompts`` completions per prompt.  Defaults
+        to one prompt per sample when stochastic features are active, else one
+        prompt total.
         """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
@@ -582,10 +585,12 @@ class LLMAgent:
             logger.info("%s: loaded %d direct implementations from cache", self.llm_client.model, len(loaded_candidates))
             return loaded_candidates
 
-        if dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1):
-            num_unique_prompts_per_cand = num_samples
+        stochastic = dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1)
+        if num_unique_prompts is None:
+            num_unique_prompts_per_cand = num_samples if stochastic else 1
         else:
-            num_unique_prompts_per_cand = 1
+            num_unique_prompts_per_cand = max(1, min(num_unique_prompts, num_samples))
+        samples_per_prompt = num_samples // num_unique_prompts_per_cand
 
         prompts_lst = []
         for c_i, candidate in enumerate(candidate_lst):
@@ -604,8 +609,6 @@ class LLMAgent:
                 with open(prompt_path, "w") as f:
                     f.write(prompt_text)
                 prompts_lst.append(prompt_text)
-
-        samples_per_prompt = num_samples // num_unique_prompts_per_cand
 
         llm_phase.set("code_generation")
         extended_responses = self.llm_client.chat_async(
@@ -646,36 +649,28 @@ class LLMAgent:
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
         translate: bool = False,
+        num_unique_prompts: int | None = None,
     ) -> list[CodeCandidate]:
         """Direct (plan-free) edit-based code generation.
 
         Like direct_implement_code_parallel but outputs structured JSON edits
         instead of full code rewrites.
-
-        When dropout/score/hw-feedback are stochastic, we build ``num_samples``
-        distinct prompts per parent (one per sample) so each sample sees an
-        independent draw of the menu / feedback.  Otherwise we keep a single
-        prompt per parent and request ``num_samples`` completions.
         """
         if save_strs is not None:
             assert len(candidate_lst) == len(save_strs)
 
-        stochastic_prompt = (
-            dropout_menu_options < 1
-            or (0 < give_score_feedback < 1)
-            or (0 < give_hw_feedback < 1)
-        )
-        prompts_per_cand = num_samples if stochastic_prompt else 1
+        stochastic = dropout_menu_options < 1 or (0 < give_score_feedback < 1) or (0 < give_hw_feedback < 1)
+        if num_unique_prompts is None:
+            prompts_per_cand = num_samples if stochastic else 1
+        else:
+            prompts_per_cand = max(1, min(num_unique_prompts, num_samples))
         samples_per_prompt = num_samples // prompts_per_cand
 
-        messages_lst = []
-        base_code_lst = []
-        templates = []
-        flat_save_strs: list[str] = []
+        messages_lst, base_code_lst, templates, flat_save_strs = [], [], [], []
         for c_i, candidate in enumerate(candidate_lst):
-            base_save_str = save_strs[c_i] if save_strs is not None else ""
+            base = save_strs[c_i] if save_strs is not None else ""
             for p in range(prompts_per_cand):
-                messages = self._get_direct_implement_edits_messages(
+                messages_lst.append(self._get_direct_implement_edits_messages(
                     candidate, prob,
                     give_score_feedback=give_score_feedback,
                     give_hw_feedback=give_hw_feedback,
@@ -683,17 +678,13 @@ class LLMAgent:
                     dropout_menu_options=dropout_menu_options,
                     cur_iter=cur_iter, num_iters=num_iters,
                     translate=translate,
-                )
-                messages_lst.append(messages)
+                ))
                 base_code_lst.append(candidate.code)
                 templates.append(CodeCandidate(
                     candidate, "direct implementation (no plan)", candidate.code,
                     plan_gen_model=self.llm_client.model,
                 ))
-                if prompts_per_cand == 1:
-                    flat_save_strs.append(base_save_str)
-                else:
-                    flat_save_strs.append(f"{base_save_str}_p{p}" if base_save_str else f"p{p}")
+                flat_save_strs.append(f"{base}_p{p}" if prompts_per_cand > 1 else base)
 
         return self._run_edits_pipeline(
             messages_lst, base_code_lst, templates,
@@ -785,6 +776,7 @@ class LLMAgent:
 
                 edits = parse_edits_response(response_text)
                 edited_code = None
+                failed_edit = False
                 if edits is not None:
                     try:
                         edited_code = apply_edits(base_code, edits)
@@ -798,15 +790,22 @@ class LLMAgent:
                         logger.info("%s: Edit parse failed, fell back to full-code extraction for %s %d implementation %d",
                                     self.llm_client.model, file_prefix, c_i, s_i)
                     else:
-                        logger.warning("%s: Failed to get edits or code for %s %d implementation %d",
+                        logger.warning("%s: Failed to get edits or code for %s %d implementation %d — marking as failed",
                                        self.llm_client.model, file_prefix, c_i, s_i)
+                        # Keep base_code for artifacts; mark score=inf to skip eval.
+                        # Leave stderr unset so reimplement_failed doesn't re-LLM
+                        # against a phantom error.
                         edited_code = base_code
+                        failed_edit = True
 
                 path = save_dir / f"{file_prefix}{'' if not save_strs[c_i] else '_' + save_strs[c_i]}_{s_i}.txt"
                 with open(path, "w") as f:
                     f.write(edited_code)
 
-                candidates.append(_build_result(c_i, edited_code))
+                new_cand = _build_result(c_i, edited_code)
+                if failed_edit:
+                    new_cand.score = float("inf")
+                candidates.append(new_cand)
         return candidates
 
     def implement_code_edits_parallel(self, candidate_lst: list[CodeCandidate], num_samples: int,

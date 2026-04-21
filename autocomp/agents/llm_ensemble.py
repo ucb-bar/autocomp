@@ -179,6 +179,7 @@ class LLMEnsemble:
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
         translate: bool = False,
+        num_unique_prompts: int | None = None,
     ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -190,6 +191,7 @@ class LLMEnsemble:
                     candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob,
                     give_score_feedback, give_hw_feedback, include_ancestors,
                     dropout_menu_options, cur_iter, num_iters, translate,
+                    num_unique_prompts,
                 ))
 
         cands = []
@@ -204,6 +206,7 @@ class LLMEnsemble:
         include_ancestors: bool = False, dropout_menu_options: float = 1.0,
         cur_iter: int = None, num_iters: int = None,
         translate: bool = False,
+        num_unique_prompts: int | None = None,
     ) -> list[CodeCandidate]:
         num_to_gen_per_agent = self.divide_work(num_samples)
         tasks = []
@@ -215,6 +218,7 @@ class LLMEnsemble:
                     candidate_lst, num_to_gen_per_agent[i], save_dir, this_model_save_strs, prob,
                     give_score_feedback, give_hw_feedback, include_ancestors,
                     dropout_menu_options, cur_iter, num_iters, translate,
+                    num_unique_prompts,
                 ))
 
         cands = []
