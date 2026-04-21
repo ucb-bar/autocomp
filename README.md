@@ -214,7 +214,7 @@ The most important parameters are:
   - For CUDA/GPU MODE, `gpumode`.
   - For Saturn, `rvv-f32` or `rvv-qs8`.
   - For XNNPACK, `xnnpack-f32`.
-  - For Metal, `metal-m2`.
+  - For Metal, `metal`.
 - `prob_id`: The problem ID to use.
 
 **Optimization Agent**

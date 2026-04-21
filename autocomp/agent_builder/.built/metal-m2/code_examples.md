@@ -1,8 +1,9 @@
-## page_193
+## Extracted from page 193 of Metal Shading Language Specification
 
-SUMMARY: This document covers SIMD-group matrix operations in Metal, demonstrating how to load matrices from device memory, perform multiply-accumulate operations, and store results back to device memory for optimized compute kernels on Apple GPUs.
+SUMMARY: This part of the document covers SIMD-group matrix operations in Metal, demonstrating how to load matrices from device memory, perform multiply-accumulate operations, and store results back to device memory for optimized compute kernels on Apple GPUs.
 
 ```metal
+// Example of using SIMD-group matrices
 kernel void float_matmad(device float *pMatA, device float *pMatB,
                          device float *pMatC, device float *pMatR)
 {

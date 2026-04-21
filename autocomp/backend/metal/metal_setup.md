@@ -41,10 +41,10 @@ Verify the setup:
 
 ```bash
 # Build the Q8 GEMM harness
-make harness PROBLEM=0_gemm_q8_f32 HARNESS_DIR=../../../../harnesses/metal-m2
+make harness PROBLEM=0_gemm_q8_f32 HARNESS_DIR=../../../../harnesses/metal
 
 # Compile the reference solution kernel
-make metallib KERNEL_SRC=../../../../sols/metal-m2/0_gemm_q8_f32.metal
+make metallib KERNEL_SRC=../../../../sols/metal/0_gemm_q8_f32.metal
 
 # Run (candidate_metallib reference_metallib — use same kernel for both to verify)
 ./build/0_gemm_q8_f32 build/0_gemm_q8_f32.metallib build/0_gemm_q8_f32.metallib
@@ -71,11 +71,13 @@ autocomp/backend/metal/
     ├── Makefile          # Build targets: harness, metallib, setup, clean
     └── metal-cpp/        # Apple metal-cpp headers (downloaded via make setup)
 
-harnesses/metal-m2/
-└── 0_gemm_q8_f32.cpp    # Per-problem harness: data gen, dispatch, CPU ref, correctness
+harnesses/metal/
+├── 0_gemm_q8_f32.cpp       # GEMM harness: Q8_0 matmul, M=12288 N=128 K=1536
+└── 1_matvec_q8_f32.cpp     # Matvec harness: Q8_0 matvec, M=12288 K=1536
 
-sols/metal-m2/
-└── 0_gemm_q8_f32.metal  # Reference kernel solution
+sols/metal/
+├── 0_gemm_q8_f32.metal     # Reference GEMM kernel
+└── 1_matvec_q8_f32.metal   # Reference matvec kernel
 ```
 
 ## Configuration Guide
@@ -85,9 +87,9 @@ sols/metal-m2/
 Edit the defaults in the harness `.cpp` file, or pass them as CLI arguments:
 
 ```bash
-# In 0_gemm_q8_f32.cpp, defaults are M=512, N=128, K=1536
+# In 0_gemm_q8_f32.cpp, defaults are M=12288, N=128, K=1536
 # Override via CLI:
-./build/0_gemm_q8_f32 build/kernel.metallib 1024 256 3072
+./build/0_gemm_q8_f32 build/candidate.metallib build/ref.metallib 1024 256 3072
 ```
 
 ### Change benchmark parameters (warmup runs, bench runs)
@@ -106,7 +108,7 @@ Edit the `compareFloat()` call in the harness `.cpp`:
 
 ```cpp
 // atol = absolute tolerance, rtol = relative tolerance
-bool correct = compareFloat(ref.data(), gpuOut.data(), M * N, 1e-2f, 1e-2f);
+bool correct = compareFloat(refOut.data(), candOut.data(), M * N, 1e-2f, 1e-2f);
 ```
 
 ### Change dispatch configuration (threadgroup size, shared memory)
@@ -122,27 +124,30 @@ dp.threadgroupMemBytes = 6144;
 
 ### Add a new kernel problem
 
-1. Create a solution `.metal` file in `sols/metal-m2/` (e.g., `1_conv2d_f32.metal`)
-2. Create a harness `.cpp` in `harnesses/metal-m2/` (e.g., `1_conv2d_f32.cpp`) containing:
-   - `main()` accepting `<metallib_path>` as first arg
+1. Create a reference solution `.metal` file in `sols/metal/` (e.g., `2_conv2d_f32.metal`). This serves as the correctness baseline — candidate kernels are compared against its GPU output.
+2. Create a harness `.cpp` in `harnesses/metal/` (e.g., `2_conv2d_f32.cpp`) containing:
+   - `main()` accepting `<candidate_metallib> <reference_metallib>` plus optional dimension args
    - Deterministic test data generation (seeded RNG)
-   - CPU reference implementation
-   - Buffer layout and dispatch params matching the kernel
+   - A kernel args struct matching the kernel's constant buffer layout
+   - `DispatchParams` with grid size, threadgroup size, shared memory, warmup/bench run counts
    - Hardcoded kernel function name matching the kernel's `[[host_name(...)]]`
-   - Calls to `runKernel()`, `compareFloat()`, and `printResult()`
+   - Runs the reference kernel first (1 run, copy back output), then benchmarks the candidate
+   - Calls `compareFloat()` on the two GPU outputs and `printResult()` with median/stddev
+
+   See the existing harnesses (`0_gemm_q8_f32.cpp`, `1_matvec_q8_f32.cpp`) for examples.
 3. Build and test:
    ```bash
    cd autocomp/backend/metal/runner
-   make harness PROBLEM=1_conv2d_f32 HARNESS_DIR=../../../../harnesses/metal-m2
-   make metallib KERNEL_SRC=../../../../sols/metal-m2/1_conv2d_f32.metal
-   ./build/1_conv2d_f32 build/1_conv2d_f32.metallib build/1_conv2d_f32.metallib
+   make harness PROBLEM=2_conv2d_f32 HARNESS_DIR=../../../../harnesses/metal
+   make metallib KERNEL_SRC=../../../../sols/metal/2_conv2d_f32.metal
+   ./build/2_conv2d_f32 build/2_conv2d_f32.metallib build/2_conv2d_f32.metallib
    ```
 
 ## Metrics
 
 - **Median latency** (primary): Robust to outliers. Measured via Metal GPU timestamps (`GPUEndTime - GPUStartTime`), more accurate than wall-clock timing.
 - **Stddev**: Standard deviation across benchmark runs, for stability assessment.
-- Default: 5 warmup runs + 100 benchmark runs.
+- Configurable warmup and benchmark run counts per harness (e.g., GEMM uses defaults, matvec uses 100 warmup + 500 bench).
 
 ## Kernel Function Name Convention
 
