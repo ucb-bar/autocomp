@@ -11,6 +11,5 @@ build:
   - type: file
     path: /Users/huijaean/Downloads/Metal-Shading-Language-Specification.pdf # Downloaded from: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf
   - type: file
-    path: /Users/huijaean/Architecture.md # Derived from sysctl and Metal API queries, cross-referenced with Apple Metal Documentation: https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
-                                          # Synthesized with Claude Opus 4.6
+    path: /Users/huijaean/Architecture.md # Derived from sysctl and Metal API queries, cross-referenced with Apple Metal Documentation (https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf). Synthesized with Claude Opus 4.6
 description: Auto-generated agent config for metal-m2
