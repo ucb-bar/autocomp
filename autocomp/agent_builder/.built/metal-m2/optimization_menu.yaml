@@ -1,0 +1,34 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Use `simd_shuffle_down` for intra-SIMD reductions to avoid threadgroup memory round-trips
+- strategy: Replace threadgroup reductions with SIMD-group intrinsics to eliminate barrier overhead
+- strategy: Align threadgroup sizes to multiples of 32 matching hardware SIMD width
+- strategy: Use `simd_sum` / `simd_max` / `simd_min` built-ins instead of manual shuffle trees
+- strategy: Coalesce global memory reads so consecutive SIMD lanes access consecutive addresses
+- strategy: Use `MTLResourceStorageModeShared` to avoid redundant CPU-GPU buffer copies on unified memory
+- strategy: Minimize threadgroup barrier calls by replacing shared memory communication with SIMD shuffles
+- strategy: Avoid threadgroup shared memory bank conflicts by striding accesses at 32-bit per lane
+- strategy: Use `simd_ballot` and `simd_active_threads_mask` to skip inactive-lane work in divergent paths
+- strategy: Reduce threadgroup shared memory usage to increase concurrent threadgroup occupancy per core
+- strategy: Prefer 256-thread threadgroups over 1024 to lower register pressure and improve occupancy
+- strategy: Use SIMD-group matrix functions (`simdgroup_matrix`) for small matrix multiply-accumulate in compute
+- strategy: Stage global-to-threadgroup loads in SIMD-width chunks for full memory transaction utilization
+- strategy: Use `simd_prefix_exclusive_sum` for parallel scan to avoid multi-pass shared memory algorithms
+- strategy: Minimize live register count across loop bodies to allow more concurrent threadgroups per core
+- strategy: Use `atomic_fetch_add_explicit` with `memory_order_relaxed` for cross-threadgroup reductions
+- strategy: Tile 2D compute grids as 16×16 or 8×32 threadgroups to maximize SIMD utilization and locality
+- strategy: Use `simd_shuffle` for data exchange between lanes instead of writing and reading shared memory

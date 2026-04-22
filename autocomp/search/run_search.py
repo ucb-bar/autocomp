@@ -19,6 +19,7 @@ from autocomp.search.prob import Prob
 from autocomp.hw_config import (
     CudaHardwareConfig,
     GemminiHardwareConfig,
+    MetalHardwareConfig,
     SaturnHardwareConfig,
     TrnHardwareConfig,
     TpuHardwareConfig,
@@ -29,13 +30,14 @@ def main():
     # ------------------------------------------------------------------
     # Target & environment
     # ------------------------------------------------------------------
-    backend_name = "trn"            # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode", "saturn", "xnnpack"
-    agent_name = "built:trn1-nki1"   # "gemmini", "trn", "cuda", "saturn", "built:<name>", or path
+    backend_name = "trn"           # "gemmini", "trn", "tpu", "jaxbench", "kernelbench", "gpumode", "saturn", "xnnpack", "metal"
+    agent_name = "built:trn1-nki1"    # "gemmini", "trn", "cuda", "saturn", "built:<name>", or path
     simulator = None                # "firesim"/"spike" for gemmini, saturn, and xnnpack; "gpumode-local"/"gpumode-cli" for gpumode
     hw_config = TrnHardwareConfig("trn1.2xlarge")
     # hw_config = GemminiHardwareConfig(pe_dim=16, spad_size_kb=256, acc_size_kb=64)
     # hw_config = CudaHardwareConfig("NVIDIA L40S", "2.5.0", "12.4")
     # hw_config = TpuHardwareConfig("v6e-1")
+    # hw_config = MetalHardwareConfig("M2", "4.0", "apple8", 8)
 
     prob_type = "trn-tutorial-nki1"      # see README.md or sols/ for available problems
     prob_id = 1

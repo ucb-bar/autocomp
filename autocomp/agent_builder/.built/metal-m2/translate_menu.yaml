@@ -1,0 +1,18 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Convert a small amount of high-level code to hardware-specific kernel code
+- strategy: Decompose matrix multiplications into 8×8 tile loops using `simdgroup_float8x8` / `simdgroup_half8x8` with `simdgroup_load`,
+    `simdgroup_multiply_accumulate`, and `simdgroup_store` to leverage cooperative SIMD-group matrix operations instead of
+    scalar arithmetic.
+- strategy: 'Map reduction operations (sum, max, min, argmax) to two-phase schemes: first `simd_sum` / `simd_max` / `simd_min`
+    within each SIMD-group, then write per-SIMD-group partial results to `threadgroup` memory, synchronize with `threadgroup_barrier(mem_flags::mem_threadgroup)`,
+    and reduce across SIMD-groups.'
+- strategy: Tile data-reuse patterns (e.g., convolution windows, shared matrix panels) by cooperatively loading contiguous
+    blocks from `device` memory into `threadgroup` shared arrays (≤32 KB), using coalesced loads where each of the 32 SIMD
+    lanes reads a consecutive element, then reusing the tile across multiple output computations.
+- strategy: Replace element-wise or broadcast operations over large tensors with 1D grid dispatches where each thread processes
+    multiple elements via a stride loop (`for (uint i = gid; i < N; i += threads_per_grid)`), minimizing threadgroup memory
+    usage to maximize occupancy.
+- strategy: Convert prefix-sum (cumulative sum/scan) operations into a hierarchical scheme using `simd_prefix_exclusive_sum`
+    / `simd_prefix_inclusive_sum` within each SIMD-group, propagating per-SIMD-group totals through `threadgroup` memory,
+    and applying carry-in offsets across SIMD-groups within each threadgroup.

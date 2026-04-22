@@ -31,11 +31,13 @@ from autocomp.backend.tpu.tpu_eval import TpuEvalBackend
 from autocomp.backend.jaxbench.jaxbench_eval import JaxBenchEvalBackend
 from autocomp.backend.saturn.saturn_eval import SaturnEvalBackend
 from autocomp.backend.xnnpack.xnnpack_eval import XnnpackEvalBackend
+from autocomp.backend.metal.metal_eval import MetalEvalBackend
 # ... register more eval backends here ...
 # Hardware configs
 from autocomp.hw_config import (
     CudaHardwareConfig,
     GemminiHardwareConfig,
+    MetalHardwareConfig,
     TrnHardwareConfig,
     TpuHardwareConfig,
 )  # noqa: F401 — re-exported for backwards compat
@@ -81,6 +83,8 @@ def create_backend_and_agents(
         eval_backend = SaturnEvalBackend()
     elif backend_name == "xnnpack":
         eval_backend = XnnpackEvalBackend()
+    elif backend_name == "metal":
+        eval_backend = MetalEvalBackend()
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
 
@@ -256,6 +260,14 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
         matches = list(sol_dir.glob(f"{prob_id}_*.c"))
         if not matches:
             raise FileNotFoundError(f"No file matching {prob_id}_*.c in {sol_dir}")
+        with open(matches[0]) as f:
+            return f.read()
+    elif backend_name == "metal":
+        sol_dir = SOLS_DIR / prob_type
+        matches = list(sol_dir.glob(f"{prob_id}_*.metal"))
+        if not matches:
+            raise FileNotFoundError(f"No file matching {prob_id}_*.metal in {sol_dir}")
+        prob.sol_file = matches[0]
         with open(matches[0]) as f:
             return f.read()
     else:
