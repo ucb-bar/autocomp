@@ -306,6 +306,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and 
 
 ## 📝 Changelog
 
+**(4/21/2026)** Added [Apple Silicon GPUs](https://developer.apple.com/documentation/apple-silicon) as a new hardware target.
+
 **(4/9/2026)** Added [Saturn RVV](https://saturn-vectors.org/) as a new hardware target.
 
 **(4/6/2026)** Renamed `tests/` to `harnesses/` and solution entry point from `test()` to `solution()` for clarity. Improved agent builder logging.
