@@ -39,7 +39,7 @@ class ISAEntry:
     markdown: str
 
 
-_ROUTE_PREVIEW_CHARS = 6000
+_ROUTE_PREVIEW_CHARS = 20_000
 
 _BUCKET_NAMES = ["isa", "architecture", "optimization", "rules", "examples"]
 

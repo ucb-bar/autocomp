@@ -119,7 +119,7 @@ class DirectoryLoader(SourceLoader):
                     rel = str(pdf_path.relative_to(root))
                     for key, text in pdf_index.content.items():
                         content[f"{rel}:{key}"] = text
-                    logger.info("DirectoryLoader: extracted %d pages from %s",
+                    logger.info("DirectoryLoader: extracted %d chunks from %s",
                                 len(pdf_index.content), pdf_path.name)
                 except Exception as e:
                     logger.warning("DirectoryLoader: failed to read PDF %s: %s",
@@ -160,46 +160,168 @@ class FileLoader(SourceLoader):
         )
 
 
+_PDF_CHUNK_MAX_CHARS = 20_000     # split a chunk if it grows past this char budget
+                                  # (keep <= synthesizer._ROUTE_PREVIEW_CHARS so the
+                                  # routing LLM sees the full chunk when classifying)
+_PDF_CHUNK_MIN_CHARS = 2_000      # merge tiny adjacent sections up to at least this size
+
+
+def _chunk_markdown(md: str) -> list[tuple[str, str]]:
+    """Chunk a markdown string on heading boundaries.
+
+    Splits on the shallowest heading level present (``#`` or ``##``), merges
+    tiny adjacent sections up to ``_PDF_CHUNK_MIN_CHARS``, and hard-splits
+    any resulting section that exceeds ``_PDF_CHUNK_MAX_CHARS`` (on the
+    next heading level, then on blank-line paragraph boundaries).
+
+    Returns a list of ``(key, text)`` tuples keyed by heading title (or
+    ``section_N`` when no heading precedes the text).
+    """
+
+    def _sections_by_level(text: str, level: int) -> list[tuple[str | None, str]]:
+        """Split ``text`` on ``#{level} `` headings. Returns (title, body) pairs."""
+        pattern = re.compile(rf"(?m)^(#{{{level}}} .+)$")
+        out: list[tuple[str | None, str]] = []
+        matches = list(pattern.finditer(text))
+        if not matches:
+            return [(None, text)]
+        if matches[0].start() > 0:
+            preamble = text[:matches[0].start()].strip()
+            if preamble:
+                out.append((None, preamble))
+        for i, m in enumerate(matches):
+            title = m.group(1).lstrip("#").strip().strip("*").strip()
+            body_start = m.start()
+            body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            body = text[body_start:body_end].rstrip()
+            out.append((title, body))
+        return out
+
+    def _hard_split(text: str, title: str | None) -> list[tuple[str, str]]:
+        """Split ``text`` into chunks <= _PDF_CHUNK_MAX_CHARS on paragraph boundaries."""
+        paragraphs = re.split(r"\n\s*\n", text)
+        chunks: list[tuple[str, str]] = []
+        buf: list[str] = []
+        buf_len = 0
+        part_idx = 1
+        base = title or "section"
+        for p in paragraphs:
+            if buf and buf_len + len(p) > _PDF_CHUNK_MAX_CHARS:
+                chunks.append((f"{base} (part {part_idx})", "\n\n".join(buf)))
+                buf = []
+                buf_len = 0
+                part_idx += 1
+            buf.append(p)
+            buf_len += len(p) + 2
+        if buf:
+            suffix = f" (part {part_idx})" if part_idx > 1 else ""
+            chunks.append((f"{base}{suffix}", "\n\n".join(buf)))
+        return chunks
+
+    # Pick the shallowest heading level actually used in the document.
+    split_level = None
+    for lvl in (1, 2, 3):
+        if re.search(rf"(?m)^#{{{lvl}}} ", md):
+            split_level = lvl
+            break
+
+    if split_level is None:
+        raw_sections: list[tuple[str | None, str]] = [(None, md)]
+    else:
+        raw_sections = _sections_by_level(md, split_level)
+
+    # Merge tiny adjacent sections.
+    merged: list[tuple[str | None, str]] = []
+    for title, body in raw_sections:
+        body = body.strip()
+        if not body:
+            continue
+        if merged and len(body) < _PDF_CHUNK_MIN_CHARS:
+            prev_title, prev_body = merged[-1]
+            merged[-1] = (prev_title, f"{prev_body}\n\n{body}")
+        else:
+            merged.append((title, body))
+
+    # Split oversized sections: try next heading level first, then paragraphs.
+    chunks: list[tuple[str, str]] = []
+    anon_idx = 1
+    for title, body in merged:
+        if len(body) <= _PDF_CHUNK_MAX_CHARS:
+            key = title if title else f"section_{anon_idx}"
+            if not title:
+                anon_idx += 1
+            chunks.append((key, body))
+            continue
+
+        # Try splitting on the next heading level down.
+        sub_level = (split_level or 0) + 1 if split_level else 2
+        subs = _sections_by_level(body, sub_level) if sub_level <= 6 else [(None, body)]
+        if len(subs) > 1:
+            for sub_title, sub_body in subs:
+                sub_body = sub_body.strip()
+                if not sub_body:
+                    continue
+                sub_key = sub_title or title or f"section_{anon_idx}"
+                if not sub_title and not title:
+                    anon_idx += 1
+                if len(sub_body) <= _PDF_CHUNK_MAX_CHARS:
+                    chunks.append((sub_key, sub_body))
+                else:
+                    chunks.extend(_hard_split(sub_body, sub_key))
+        else:
+            chunks.extend(_hard_split(body, title))
+
+    # De-duplicate keys by appending a counter when needed.
+    seen: dict[str, int] = {}
+    deduped: list[tuple[str, str]] = []
+    for key, text in chunks:
+        if key in seen:
+            seen[key] += 1
+            deduped.append((f"{key} ({seen[key]})", text))
+        else:
+            seen[key] = 1
+            deduped.append((key, text))
+    return deduped
+
+
 class PDFLoader(SourceLoader):
-    """Extracts text from PDFs, preserving page numbers and TOC structure."""
+    """Extracts PDFs as markdown via pymupdf4llm, then chunks on heading boundaries.
+
+    pymupdf4llm reconstructs document structure (headings, paragraphs, tables)
+    from the PDF, which lets us chunk along true semantic boundaries rather
+    than page breaks. Content that spans pages is no longer fragmented.
+    """
 
     def load(self, *, path: str, **kwargs) -> SourceIndex:
         try:
-            import pymupdf  # PyMuPDF
+            import pymupdf4llm
         except ImportError:
-            raise ImportError("pymupdf is required for PDF loading: pip install pymupdf")
+            raise ImportError(
+                "pymupdf4llm is required for PDF loading: pip install pymupdf4llm"
+            )
 
         pdf_path = Path(path).expanduser().resolve()
         if not pdf_path.is_file():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
         logger.info("PDFLoader: reading %s", pdf_path)
-        with pymupdf.open(str(pdf_path)) as doc:
-            # Try to extract TOC
-            toc = doc.get_toc()
-            toc_lines = []
-            if toc:
-                for level, title, page_num in toc:
-                    indent = "  " * (level - 1)
-                    toc_lines.append(f"{indent}{title} (p.{page_num})")
+        # use_ocr=False skips the layout/OCR pipeline (which requires tesseract)
+        # and uses pymupdf4llm's text-based markdown conversion instead.
+        md = pymupdf4llm.to_markdown(str(pdf_path), show_progress=False, use_ocr=False)
 
-            # Extract text per page
-            content: dict[str, str] = {}
-            page_summaries: list[str] = []
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                text = page.get_text()
-                if text.strip():
-                    key = f"page_{page_num + 1}"
-                    content[key] = text
-                    first_line = text.strip().split("\n")[0][:100]
-                    page_summaries.append(f"  Page {page_num + 1}: {first_line}")
+        chunks = _chunk_markdown(md)
+        content: dict[str, str] = dict(chunks)
 
-        metadata_parts = [f"PDF: {pdf_path.name} ({len(content)} pages with text)"]
+        toc_lines = [
+            key for key, _ in chunks if not key.startswith("section_")
+        ]
+        metadata_parts = [
+            f"PDF: {pdf_path.name} ({len(md):,} chars, {len(content)} chunks)"
+        ]
         if toc_lines:
-            metadata_parts.append("\nTable of Contents:\n" + "\n".join(toc_lines))
-        else:
-            metadata_parts.append("\nPage summaries:\n" + "\n".join(page_summaries[:50]))
+            metadata_parts.append(
+                "\nSections:\n" + "\n".join(f"  {t}" for t in toc_lines[:100])
+            )
 
         return SourceIndex(
             source_type="pdf",
