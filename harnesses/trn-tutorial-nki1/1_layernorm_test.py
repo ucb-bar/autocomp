@@ -10,7 +10,6 @@ import math
 @nki.jit
 def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
   """Computes LayerNorm.
-    Used nki.isa APIs to calculate mean/variance and perform shift/scale.
   """
   output_tensor = nl.ndarray(input_tensor.shape, dtype=input_tensor.dtype,
                              buffer=nl.shared_hbm)
@@ -40,33 +39,14 @@ def nki_layernorm_kernel_v2(input_tensor, epsilon, gamma_vector, beta_vector):
     input_sb = nl.load(input_tensor[i * nl.tile_size.pmax + i_p_io, i_f_io],
                        mask=(i * nl.tile_size.pmax + i_p_io < num_rows))
 
-    # Tile free dimension of the input tensor by nl.tile_size.bn_stats_fmax, 
-    # as bn_stats has a free dimension size limit
-    i_f_bn = nl.arange(nl.tile_size.bn_stats_fmax)[None, :]
-    i_f_stats = nl.arange(6)[None, :]
-    num_bn_stats = math.ceil(input_tensor.shape[1]/nl.tile_size.bn_stats_fmax)
-    stats_results = nl.ndarray((nl.tile_size.pmax, 6*num_bn_stats), dtype=np.float32)
-    for j in nl.affine_range(num_bn_stats):
-      stats_results[i_p_io, j * 6 + i_f_stats] = nisa.bn_stats(
-              input_sb[i_p_io, j * nl.tile_size.bn_stats_fmax + i_f_bn],
-              mask=(j * nl.tile_size.bn_stats_fmax + i_f_bn < input_tensor.shape[1]),
-              dtype=np.float32)
-      
-    # Aggregate bn_stats results to compute mean and var
-    i_f_aggr = nl.arange(6*num_bn_stats)[None, :]
-    mean_var = nisa.bn_aggr(stats_results[i_p_io, i_f_aggr])
-    mean = mean_var[i_p_io, 0]
-    var = mean_var[i_p_io, 1]
+    # Compute mean and variance
+    mean = nl.mean(input_sb, axis=1)
+    # Trick to calculate var with mean: mean(x^2) - mean(x)^2
+    var = nl.mean(nl.square(input_sb), axis=1) - mean * mean
 
-    # Get reciprocal of sqrt(var + epsilon)
-    scale_var = nl.rsqrt(var + epsilon)
-
-    # Putting the shift and scale together in one line to trigger two alu_op tensor_vector instruction
-    # shift_scale_tensor = (input_sb - mean_var[i_p_stats, i_f_mean]) * scale_var
-    shift_scale_tensor = nisa.tensor_scalar(data=input_sb, op0=np.subtract,
-                                            operand0=mean,
-                                            op1=np.multiply,
-                                            operand1=scale_var)
+    # Normalize the input by shifting with the mean 
+    # and scaling with rsqrt of variance and epsilon
+    shift_scale_tensor = (input_sb - mean) * nl.rsqrt(var + epsilon)
     
     # Scale the normalized tile using gamma and add beta
     output_sb = shift_scale_tensor * gamma_sb_bcast + beta_sb_bcast

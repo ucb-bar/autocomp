@@ -386,8 +386,14 @@ class SearchStrategy:
             orig_code_candidate = CodeCandidate(None, None, orig_code)
             eval_save_dir = self.output_dir / "eval-results-iter-0"
             eval_save_dir.mkdir(parents=True, exist_ok=True)
+            # Force re-evaluation: if a prior run failed at iter 0, cached
+            # result files exist without any corresponding candidate_*.txt
+            # (the failure path raises before saving candidates). That cache
+            # is orphaned -- not tied to any particular input code -- so we
+            # must re-evaluate the user's (possibly updated) orig_code.
             self.evaluate_candidates(
-                [orig_code_candidate], self.metric, save_dir=eval_save_dir
+                [orig_code_candidate], self.metric,
+                save_dir=eval_save_dir, use_cache=False,
             )  # Evaluate the initial code
             if orig_code_candidate.score == float("inf"):
                 if orig_code_candidate.stderr:
@@ -458,6 +464,7 @@ class SearchStrategy:
         metric: str,
         cur_iter: int = None,
         save_dir: pathlib.Path = None,
+        use_cache: bool = True,
     ) -> list[CodeCandidate]:
         """
         Evaluate the candidates based on the provided optimization metric
@@ -465,7 +472,8 @@ class SearchStrategy:
         """
         # Load stats if they already exist in the save_dir
         if (
-            save_dir is not None
+            use_cache
+            and save_dir is not None
             and save_dir.exists()
             and all(
                 (save_dir / f"code_{i}_result.txt").exists()
