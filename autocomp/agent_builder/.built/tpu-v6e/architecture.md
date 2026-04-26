@@ -60,7 +60,7 @@ The TensorCore contains several units that operate **asynchronously** with respe
 
 **Transpositions**: Arbitrary permutations of all but last two dimensions are free (with ≥4 dims). Last-two-dim transposes can be fused into matmul.
 
-**Control flow**: `cond`, `fori_loop`, `for_loop` are supported but **loops are fully unrolled** at compile time — keep trip counts small.
+**Control flow**: `cond`, `fori_loop`, `for_loop`, and `while_loop` are supported. Loops with **statically known (Python-int) bounds** are fully unrolled at compile time — each iteration contributes to code size and register pressure. Loops with **data-dependent bounds** (e.g. `fori_loop(0, traced_value, body)`) are lowered as real loops and do not unroll. Python `for`/`range` over traced values will fail to compile — use `jax.lax.fori_loop` / `jax.lax.while_loop` instead.
 
 ### Pipelining Model
 

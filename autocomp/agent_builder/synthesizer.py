@@ -69,6 +69,8 @@ class ComponentSynthesizer:
     # instructions within a 200K-token context window.
     DEFAULT_CONTEXT_BUDGET = 150_000
 
+    MAX_RULES_PER_CATEGORY = 4
+
     def __init__(self, llm_client: LLMClient, light_llm_client: LLMClient | None = None,
                  agent_scope: str = "", context_budget: int = DEFAULT_CONTEXT_BUDGET):
         self.llm = llm_client
@@ -1025,13 +1027,19 @@ Translation strategies:"""
         return "\n".join(context_parts)
 
     _RULES_INSTRUCTION = (
-        "Extract critical rules that the agent MUST follow when generating optimized kernel code. Focus on:\n"
+        "Extract rules that the agent MUST follow to generate CORRECT code. "
+        "A rule qualifies ONLY if violating it causes:\n"
+        "  (a) a compile/trace/lowering error,\n"
+        "  (b) a runtime error, or\n"
+        "  (c) silently incorrect results (wrong outputs, corrupted memory, undefined behavior), or\n"
+        "  (d) any similarly severe correctness failure.\n\n"
+        "Examples of rules to include:\n"
         "- Programming model constraints (e.g., \"the partition dimension is always 128\")\n"
-        "- Memory layout rules (e.g., \"tiles in scratchpad must not exceed X KB\")\n"
-        "- Correctness constraints (e.g., \"loop variables cannot be used for indexing in this context\")\n"
-        "- Known/common API usage pitfalls (e.g., \"reduction output must be stored before reuse\")\n"
-        "Only include rules that are critical to generating CORRECT code. Do NOT include optimization tips, "
-        "performance advice, or general best practices -- those belong in the optimization menu."
+        "- Memory layout/size requirements that cause errors if violated\n"
+        "- API calling conventions or usage pitfalls that produce wrong results or errors\n\n"
+        "Do NOT include performance tips, \"keep X small\" / \"prefer Y\" / \"avoid Z for performance\" "
+        "heuristics, descriptive hardware facts without a correctness consequence, or stylistic "
+        "preferences. Each rule must state the forbidden action and its correctness consequence."
     )
 
     def _rules_single_pass(self, items: list[tuple[str, str]],
@@ -1089,12 +1097,14 @@ Translation strategies:"""
             header = ("Below are candidate correctness rules extracted from "
                       "multiple documents about the hardware target's programming model.")
             content_label = "CANDIDATE RULES"
-            task = ("Merge, deduplicate, and curate these into a final list of critical "
-                    "correctness rules. Return AT MOST 5 rules per category -- pick the most critical ones only.")
+            task = (f"Merge, deduplicate, and curate these into a final list of critical "
+                    f"correctness rules. Return AT MOST {self.MAX_RULES_PER_CATEGORY} rules per category -- "
+                    f"pick the most critical ones only.")
         else:
             header = "Below is documentation about the hardware target's programming model."
             content_label = "DOCUMENTATION"
-            task = ("Return AT MOST 5 rules per category -- pick the most critical ones only.")
+            task = (f"Return AT MOST {self.MAX_RULES_PER_CATEGORY} rules per category -- "
+                    f"pick the most critical ones only.")
 
         prompt = f"""{header}
 

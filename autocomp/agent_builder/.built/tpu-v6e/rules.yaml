@@ -8,11 +8,11 @@ general:
   array dimension or be divisible by 8 (second-to-last) and 128 (last) respectively. Violating this causes compiler errors.
 - Elementwise operations on TPU only support 32-bit types natively; narrower-precision operands (bf16, int8, etc.) must be
   upcast to a 32-bit type before elementwise computation. Matrix multiplication always accumulates in float32, and f32 inputs
-  are silently rounded to bf16 unless explicit precision is requested. Accumulate attention scores, softmax, and reductions
-  in float32; cast back to bf16 only when writing to the output Ref.
+  are silently rounded to bf16 unless explicit precision is requested.
 - Integer reductions (sum, max, min) are not supported on TPU; these reductions work only on floating-point values. Boolean
-  reductions (any/all) work only on booleans. Loop primitives (fori_loop, for_loop) are fully unrolled at compile time, so
-  trip counts must be small.
+  reductions (any/all) work only on booleans.
+- Python `for` / `range` loops over traced values will fail to compile. Use `jax.lax.fori_loop` / `jax.lax.while_loop` when
+  the bound depends on a traced value.
 - The `index_map` in `BlockSpec` must accept exactly as many arguments as `grid` dimensions and return exactly as many block
   indices as the rank of the corresponding array (excluding `None`/squeezed dims). In blocked indexing mode, `index_map` returns
   block indices (not element indices); the element start is computed as `block_index * block_size`.
@@ -20,8 +20,7 @@ planning:
 - Limit the scope of the plan to the selected strategy.
 - Do not count out any of the strategies unless they are clearly irrelevant to the code.
 - All live tiles (input buffers, output buffers, scratch/accumulators, plus compiler-spilled registers) must fit simultaneously
-  in VMEM (~16 MB). A single f32[2048,2048] array is 16 MiB and can exhaust VMEM alone. Singleton trailing dimensions waste
-  entire tile dimensions (8×128×1×1 pads to 8×128×8×128).
+  in VMEM (~16 MB). Exceeding VMEM causes compilation to fail.
 - Grid dimensions and block sizes must evenly divide the corresponding array dimensions. When blocks don't evenly divide,
   out-of-bounds elements are padded with garbage on input and discarded on output. For reductions across grid iterations,
   the reduction axis must be the innermost (last) grid dimension so the accumulator persists in VMEM across consecutive writes
@@ -36,7 +35,7 @@ planning:
   dim, or (2) restoring a dim removed by reduction. Transpositions of non-trailing axes require ≥4 dimensions. All other reshape/transpose
   patterns on the last two dims cause compiler errors.'
 - 'Inside kernels, `jnp.max`/`jnp.sum` along the last axis can trigger "Unsupported implicit dim change" if tile
-  dims are not multiples of 8×128. Keep reductions outside Pallas kernels unless tile layout is verified.'
+  dims are not multiples of 8×128.'
 - 'Inside kernels, `jnp.arange` only supports int32. Use int32 dtype and cast to float afterward.'
 - 'Stride indexing (`x[:, ::2]`) is unsupported inside kernels. Use reshape + slice instead:
   `x.reshape(*x.shape[:-1], x.shape[-1]//2, 2)[..., 0]`.'
