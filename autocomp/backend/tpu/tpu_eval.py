@@ -73,8 +73,8 @@ class TpuHardwareBackend(EvalBackend):
 		ssh_identity_file: str | None = None,
 		ssh_extra_args: list[str] | None = None,
 	):
-		self.tpu_name = tpu_name or "tpu-node"
-		self.tpu_zone = tpu_zone or "us-east5-a"
+		self.tpu_name = tpu_name or os.getenv("AUTOCOMP_TPU_NAME") or "tpu-node"
+		self.tpu_zone = tpu_zone or os.getenv("AUTOCOMP_TPU_ZONE") or "us-east5-a"
 		# Ensure gcloud commands target the same project the TPU was created in.
 		# Default matches the create command in _ensure_tpu_vm_running().
 		self.tpu_project = tpu_project or os.getenv("AUTOCOMP_TPU_PROJECT") or "ch-llm"
@@ -643,11 +643,7 @@ if __name__ == "__main__":
 		print(" python -m autocomp.backend.tpu.tpu_eval --ssh")
 		sys.exit(1)
 
-	backend = TpuEvalBackend(
-		tpu_name="tpu-node",
-		tpu_zone="us-east5-a",
-		tpu_project="ch-llm",
-	)
+	backend = TpuEvalBackend()
 
 	if sys.argv[1] == "--ssh":
 		raise SystemExit(backend.open_tpu_shell())
