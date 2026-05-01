@@ -1,0 +1,13 @@
+agent_name: saturn
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing RISC-V Vector (RVV) code targeting the Saturn vector unit. The agent rewrites C source code using RVV intrinsics for better cycle counts on Saturn's short-vector SIMD microarchitecture. Targets configurations with variable VLEN/DLEN/MLEN; supports LMUL grouping, configurable element widths (SEW), and chaining-aware scheduling.
+  notes: |
+    Hand-migrated from autocomp/agents/saturn/saturn_agent.py and
+    autocomp/agents/saturn/saturn_isa_generator.py. This agent uses static ISA
+    documentation (does not replicate the LLM-driven ISA selection mode from
+    the legacy agent, as BuiltLLMAgent handles its own L1/L2 selection).
+    Coexists with the auto-generated built:saturn-rvv for direct comparison.
+description: Hand-migrated Saturn RVV agent for optimizing vector kernels on Saturn.

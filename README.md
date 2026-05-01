@@ -61,11 +61,11 @@ Each hardware target requires two things: an **optimization agent** that knows h
 
 | Hardware target | Optimization agent(s) | Evaluation backend(s) |
 |---|---|---|
-| AWS Trainium | `built:trn1-nki1` (Trainium 1, NKI v1)<br>`built:trn2-nki1` (Trainium 2, NKI v1)<br>`built:trn2-nki2` (Trainium 2, NKI v2) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
+| AWS Trainium | `built:trn1-nki1` (Trainium 1, NKI v1)<br>`built:trn2-nki1` (Trainium 2, NKI v1)<br>`built:trn2-nki2` (Trainium 2, NKI v2)<br>`built:trn-nki1` (hand-migrated NKI v1)<br>`built:trn-nki2` (hand-migrated NKI v2)<br>`trn-nki1`, `trn-nki2` (legacy hand-crafted) | `trn` ([trn_setup.md](autocomp/backend/trn/trn_setup.md)) |
 | Google TPU | `built:tpu-v6e` (TPU v6e)<br>`built:tpu-v5e` (TPU v5e / v5litepod) | `tpu` ([tpu_setup.md](autocomp/backend/tpu/tpu_setup.md))<br>`jaxbench` ([jaxbench_setup.md](autocomp/backend/jaxbench/jaxbench_setup.md)) |
-| Gemmini | `gemmini` | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
-| NVIDIA GPU | `cuda` | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
-| Saturn (RVV) | `built:saturn-rvv` | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md))<br>`xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
+| Gemmini | `built:gemmini` (gemm and conv)<br>`built:gemmini-admm` (admm-multifunction, pe_dim=4)<br>`gemmini` (legacy hand-crafted) | `gemmini` ([gemmini_setup.md](autocomp/backend/gemmini/gemmini_setup.md)) |
+| NVIDIA GPU | `built:cuda` (hand-migrated)<br>`cuda` (legacy hand-crafted) | `kernelbench` ([kb_setup.md](autocomp/backend/kernelbench/kb_setup.md))<br>`gpumode` ([gpumode_setup.md](autocomp/backend/gpumode/gpumode_setup.md)) |
+| Saturn (RVV) | `built:saturn-rvv` (Agent Builder)<br>`built:saturn` (hand-migrated)<br>`saturn` (legacy hand-crafted) | `saturn` ([saturn_setup.md](autocomp/backend/saturn/saturn_setup.md))<br>`xnnpack` ([xnnpack_setup.md](autocomp/backend/xnnpack/xnnpack_setup.md)) |
 | Apple Metal | `built:metal-m2` (Apple M2) | `metal` ([metal_setup.md](autocomp/backend/metal/metal_setup.md)) |
 
 Partially supported hardware targets:
@@ -305,6 +305,8 @@ WANDB_MODE=disabled pytest
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details on how to add tests and the CI workflow.
 
 ## 📝 Changelog
+
+**(4/30/2026)** Migrated the legacy hand-crafted agents (`gemmini`, `cuda`, `trn-nki1`, `trn-nki2`, `saturn`) to the BuiltLLMAgent `.md`/`.yaml` config format. The new variants are available as `built:gemmini`, `built:gemmini-admm`, `built:cuda`, `built:trn-nki1`, `built:trn-nki2`, and `built:saturn`. The legacy `LLMAgent` subclasses are still wired up so existing experiments continue to work; the new built versions unify the architecture and make the prompts editable as plain config files.
 
 **(4/21/2026)** Added [Apple Silicon GPUs](https://developer.apple.com/documentation/apple-silicon) as a new hardware target.
 

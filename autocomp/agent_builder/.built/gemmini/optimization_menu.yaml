@@ -1,0 +1,17 @@
+optimizations:
+- strategy: modify loop tiling
+- strategy: loop reordering
+- strategy: split loops
+- strategy: fuse loops
+- strategy: simplify arithmetic and propagate constants to simplify expressions
+- strategy: reorder computations or blocks of computations
+- strategy: loop unrolling
+- strategy: double buffering
+- strategy: move more data to the scratchpad in a more outer loop to increase data reuse
+- strategy: spread data throughout the scratchpad rather than loading to the same location repeatedly
+- strategy: load data to the scratchpad across outer loop iterations and use if statements to prevent redundant loads on loops inner to those
+- strategy: hoist redundant operations out of loops
+- strategy: substitute operations with equivalent operations that are faster
+- strategy: pipeline operations to better overlap computation and data movement
+- strategy: minimize data movement
+- strategy: minimize loop overhead

@@ -1,0 +1,18 @@
+agent_name: cuda
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing PyTorch and CUDA kernel code on NVIDIA GPUs.
+    The agent rewrites a single solution module (typically a PyTorch nn.Module
+    or CUDA C++ kernel) to reduce execution time on a specific GPU SKU.
+    Supports both pure-PyTorch optimization and conversion of PyTorch
+    operations into custom CUDA C++ or Triton kernels. Model-level concerns
+    like serving and distributed training are out of scope.
+  notes: |
+    Hand-migrated from autocomp/agents/cuda/cuda_agent.py and
+    autocomp/agents/cuda/prompts/tensor_examples.py. Most CUDA programming
+    references (cuBLAS, cuDNN, CUDA C++, Triton, PyTorch APIs) are assumed
+    to be in the LLM's training data, so the ISA section is intentionally
+    short. The optimization menu and rules carry the bulk of the prompt.
+description: Hand-migrated CUDA agent for NVIDIA GPU kernel optimization.

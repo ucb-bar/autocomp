@@ -1,0 +1,15 @@
+agent_name: gemmini
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing Gemmini accelerator code for GEMM and convolution problems.
+    The agent rewrites C source code that uses Gemmini's preload/compute/mvin/mvout
+    intrinsics for better cycle counts on the systolic array. Targets non-4x4
+    PE configurations (typically 16x16). Model-level concerns are out of scope.
+  notes: |
+    Hand-migrated from autocomp/agents/gemmini/gemmini_agent.py and the prompt
+    modules under autocomp/agents/gemmini/prompts/. This agent uses the conv/gemm
+    ISA prompt (isa_prompt_conv.py). For pe_dim=4 admm-multifunction problems,
+    use built:gemmini-admm instead.
+description: Hand-migrated Gemmini agent for gemm and conv problems (pe_dim != 4).

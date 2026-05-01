@@ -131,6 +131,15 @@ A reference example is available at `.built/trn1-nki1/` (auto-generated with Age
 - `.built/tpu-v6e/` — Google TPU v6e with JAX Pallas (from [JAX Pallas docs](https://docs.jax.dev/en/latest/pallas/index.html) and [Cloud TPU docs](https://docs.cloud.google.com/tpu/docs/))
 - `.built/tpu-v5e/` — Google TPU v5e (v5litepod) with JAX Pallas (from [JAX Pallas docs](https://docs.jax.dev/en/latest/pallas/index.html) and [Cloud TPU docs](https://docs.cloud.google.com/tpu/docs/))
 
+The following agents are hand-migrated from the legacy `LLMAgent` subclasses in `autocomp/agents/`. They are intentionally not the output of the Agent Builder pipeline — they're the original prompts repackaged in the new format so that the same prompts can run through `BuiltLLMAgent`, and so that they can be compared against the Agent-Builder-generated equivalents:
+
+- `.built/gemmini/` — Gemmini gemm/conv (from `autocomp/agents/gemmini/`, non-`pe_dim=4` configs)
+- `.built/gemmini-admm/` — Gemmini admm-multifunction (from `autocomp/agents/gemmini/`, `pe_dim=4`)
+- `.built/cuda/` — NVIDIA GPUs (from `autocomp/agents/cuda/`)
+- `.built/trn-nki1/` — Trainium NKI v1 (from `autocomp/agents/trn_nki1/`); compare against `.built/trn1-nki1/`
+- `.built/trn-nki2/` — Trainium NKI v2 (from `autocomp/agents/trn_nki2/`); compare against `.built/trn2-nki2/`
+- `.built/saturn/` — Saturn RVV (from `autocomp/agents/saturn/`); compare against `.built/saturn-rvv/`
+
 ## How It Works
 
 <p align="center">

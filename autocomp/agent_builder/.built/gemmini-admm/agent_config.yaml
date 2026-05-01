@@ -1,0 +1,14 @@
+agent_name: gemmini-admm
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing Gemmini accelerator code for the admm-multifunction
+    workload, which uses a 4x4 PE configuration. The agent rewrites C source
+    code that uses Gemmini's preload/compute/mvin/mvout intrinsics for better
+    cycle counts on small-PE-dim systolic-array configurations.
+  notes: |
+    Hand-migrated from autocomp/agents/gemmini/gemmini_agent.py using the
+    isa_prompt_admm.py prompt module. Selected automatically by the legacy
+    GemminiLLMAgent when pe_dim == 4. For gemm/conv problems use built:gemmini.
+description: Hand-migrated Gemmini agent for admm-multifunction (pe_dim == 4).

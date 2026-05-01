@@ -1,0 +1,5 @@
+strategies:
+- strategy: convert non-NKI code into NKI code
+- strategy: move non-NKI code into a NKI kernel
+- strategy: move a non-NKI transpose into a NKI kernel
+- strategy: fuse multiple NKI kernels into a single kernel

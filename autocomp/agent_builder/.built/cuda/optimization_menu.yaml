@@ -1,0 +1,66 @@
+optimizations:
+- strategy: Convert an operation to optimized CUDA C++ code
+- strategy: Convert an operation to CUDA C++ code
+- strategy: Convert an operation to optimized Triton code
+- strategy: Reduce PyTorch launch overhead
+- strategy: Use compilation flags like -O3 and --use_fast_math when compiling CUDA code
+- strategy: Minimize global memory accesses
+- strategy: Use shared memory to reduce global memory bandwidth usage
+- strategy: Cache redundantly computed data in shared memory
+- strategy: Use pointers to global memory rather than copying to shared memory
+- strategy: Coalesce global memory accesses
+- strategy: Avoid bank conflicts in shared memory
+- strategy: Use registers efficiently; avoid register spilling
+- strategy: Minimize divergent branches within warps
+- strategy: Use CUDA warp-level primitives for synchronization
+- strategy: Fuse kernels when possible to reduce kernel launch overhead
+- strategy: Minimize number of synchronization points
+- strategy: Store more data and reduce at the end rather than using atomic operations
+- strategy: Use grid-stride loops
+- strategy: Tile operations for optimal cache utilization
+- strategy: Use L2 persisting cache window to keep frequently reused tensors resident in L2
+- strategy: Use multiple CUDA streams to overlap computation and data movement
+- strategy: Overlap host-to-device transfers with the CUDA-Graph replay
+- strategy: Maximize occupancy without excessive register usage
+- strategy: Choose optimal block sizes (typically multiples of 32 threads)
+- strategy: Use __restrict__ to help compiler with pointer aliasing
+- strategy: Loop unrolling (#pragma unroll)
+- strategy: Use cuBLASLt for Tensor Core GEMM operations
+- strategy: Use cuBLASLt, cuBLAS, or cuDNN for GEMM and convolution operations instead of custom kernels
+- strategy: Use Tensor Cores (e.g. wmma APIs) for mixed precision acceleration (FP16, TF32, INT8)
+- strategy: Use PyTorch's tensor core APIs (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32, torch.amp) to enable Tensor Cores
+- strategy: Use lower precision (e.g. bfloat16, float16, float8_e4m3fn) for computations
+- strategy: Quantize weights or activations where accuracy permits (e.g. bfloat16)
+- strategy: Leverage fused operations in cuDNN (e.g. convolution + bias + ReLU)
+- strategy: Overlap computation and data transfer using CUDA streams and asynchronous copies
+- strategy: Use pinned (page-locked) host memory for faster host-device transfers
+- strategy: Minimize host-device transfer frequency
+- strategy: Choose optimal convolution algorithms (FFT, Winograd, implicit GEMM) based on kernel size
+- strategy: Prune unneeded weights for sparse computation
+- strategy: Batch inputs to maximize GPU utilization
+- strategy: Reuse intermediate results where possible (e.g. shared activations)
+- strategy: Vectorize operations by using wider data types
+- strategy: Use Tensor core GEMMs for GEMM-like operations
+- strategy: Convert convolution operations to Tensor core GEMMs
+- strategy: Skip computation when data-dependent execution encounters zero values or a branch that will never be taken
+- strategy: Ensure data is stored in contiguous memory blocks
+- strategy: Arrange data access patterns to maximize memory bandwidth and minimize latency through techniques like shared memory usage, coalesced global memory access, and memory padding
+- strategy: 'Memory Coalescing: optimize CUDA kernel performance by ensuring threads in the same warp access contiguous memory locations'
+- strategy: Pre-allocate input and output tensors during graph initialization and reuse them
+- strategy: Merge low-level operations
+- strategy: Merge high-level operations
+- strategy: Reorder operations or blocks of operations
+- strategy: Hoist redundant operations out of loops
+- strategy: Substitute operations with equivalent operations that are faster
+- strategy: Double buffering
+- strategy: Pipeline operations to better overlap computation and data movement
+- strategy: Minimize data movement
+- strategy: Use built-in CUDA primitive functions
+- strategy: Call torch:: functions from C++ rather than from Python
+- strategy: Use ATen at:: functions rather than PyTorch functions
+- strategy: Use CUDA graph capture
+- strategy: Use dedicated CUDA streams
+- strategy: Profile the code and capture CUDA graphs in the __init__ function
+- strategy: Simplify operations where possible
+- strategy: Classical compiler optimizations
+- strategy: Any other optimizations that you think are relevant

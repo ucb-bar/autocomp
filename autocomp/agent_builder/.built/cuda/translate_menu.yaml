@@ -1,0 +1,2 @@
+strategies:
+- Convert a PyTorch operation to inline CUDA C++ code
