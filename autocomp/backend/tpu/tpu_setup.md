@@ -14,7 +14,7 @@ gcloud alpha compute tpus tpu-vm create <tpu_name> \
     --project=<project>
 ```
 
-With **gcloud** transport (default), the backend auto-creates the VM using `AUTOCOMP_TPU_PROJECT`, `AUTOCOMP_TPU_ACCELERATOR_TYPE`, and `AUTOCOMP_TPU_RUNTIME_VERSION`. For **direct SSH**:
+With **gcloud** transport (default), the backend auto-creates the VM using `AUTOCOMP_TPU_NAME`, `AUTOCOMP_TPU_ZONE`, `AUTOCOMP_TPU_PROJECT`, `AUTOCOMP_TPU_ACCELERATOR_TYPE`, and `AUTOCOMP_TPU_RUNTIME_VERSION`. For **direct SSH**:
 
 ```sh
 export AUTOCOMP_TPU_TRANSPORT=ssh
