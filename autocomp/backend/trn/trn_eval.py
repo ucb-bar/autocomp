@@ -965,8 +965,11 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                 logger.error(f"Code {i} failed correctness")
 
         if passing:
-            num_cores = self._detect_num_cores()
-
+            # Phase 3 runs sequentially: LNC=2 kernels can occupy both logical
+            # NCs and neuron-profile's core-pinning via NEURON_RT_VISIBLE_CORES
+            # has been racy in practice (lnc allocation conflicts between
+            # concurrently-running profiles). The speedup from parallel
+            # profiling is small anyway — each call is O(hundreds of ms).
             def _profile_one(idx, neff_path, core_id):
                 lat = self._benchmark_via_neuron_profile(
                     neff_path, temp_dir, f"{idx}_combined", core_id=core_id
@@ -978,18 +981,8 @@ print("{COMBINED_RESULTS_MARKER}" + json.dumps(_all_results))
                 else:
                     logger.warning(f"Code {idx}: neuron-profile failed")
 
-            if len(passing) <= 1 or num_cores <= 1:
-                for idx, neff_path in passing:
-                    _profile_one(idx, neff_path, core_id=0)
-            else:
-                with ThreadPoolExecutor(max_workers=min(num_cores, len(passing))) as ex:
-                    futs = []
-                    for j, (idx, neff_path) in enumerate(passing):
-                        futs.append(ex.submit(
-                            _profile_one, idx, neff_path, core_id=j % num_cores
-                        ))
-                    for f in futs:
-                        f.result()
+            for idx, neff_path in passing:
+                _profile_one(idx, neff_path, core_id=0)
 
         return results
 
