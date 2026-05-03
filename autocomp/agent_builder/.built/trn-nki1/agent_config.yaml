@@ -1,0 +1,13 @@
+agent_name: trn-nki1
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing NKI v1 kernel code on AWS Trainium 1.
+  notes: |
+    Hand-migrated from autocomp/agents/trn_nki1/trn_nki1_agent.py and supporting
+    modules (nki_isa_generator.py, prompts/fusion_example.py). This agent assists
+    with rewriting NKI (Neuron Kernel Interface) kernels to improve performance on
+    AWS Trainium accelerators by applying targeted optimization strategies. Coexists
+    with the auto-generated built:trn1-nki1 for direct comparison.
+description: Hand-migrated Trainium NKI v1 agent for optimizing kernels on AWS Trainium 1 accelerators.

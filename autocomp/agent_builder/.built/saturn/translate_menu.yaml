@@ -1,0 +1,5 @@
+strategies:
+- strategy: convert scalar code into vectorized RVV code
+- strategy: convert SIMD intrinsics (e.g., AVX, NEON) to RVV intrinsics
+- strategy: vectorize a loop using RVV stripmine pattern
+- strategy: convert explicit loop unrolling to LMUL-based vector grouping

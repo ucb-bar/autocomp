@@ -1,0 +1,13 @@
+general:
+- The rewritten program should be semantically equivalent to the original program.
+- Use proper RVV intrinsic syntax (__riscv_* functions).
+- Maintain correct vector length handling with vsetvl stripmining pattern.
+- Ensure proper element width and LMUL settings match data types.
+- Ensure vector operations respect the current vl (vector length).
+planning:
+- Limit the scope of the plan to the selected optimization.
+- Do not count out any of the optimizations unless they are clearly irrelevant to the code.
+coding:
+- Optimize the solution() function and do not change its name.
+- Wrap the generated code with ```c at the beginning and ``` at the end.
+- Include necessary headers: #include <riscv_vector.h>

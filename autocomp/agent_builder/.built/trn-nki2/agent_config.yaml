@@ -1,0 +1,11 @@
+agent_name: trn-nki2
+version: '1.0'
+built_at: '2026-04-30'
+build:
+  source: hand-migrated
+  agent_scope: Optimizing NKI v2 kernel code on AWS Trainium.
+  notes: |
+    Hand-migrated from autocomp/agents/trn_nki2/. This agent uses the NKI v2
+    API (nki.isa namespace) for Trainium NeuronCore programming. Coexists with
+    the auto-generated built:trn2-nki2 for direct comparison.
+description: Hand-migrated Trainium NKI v2 agent. Optimizes high-performance kernels using NKI ISA v2 on AWS Trainium via the BuiltLLMAgent format.

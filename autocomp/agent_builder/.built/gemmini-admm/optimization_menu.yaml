@@ -1,0 +1,14 @@
+optimizations:
+- strategy: remove unnecessary code
+- strategy: simplify arithmetic and propagate constants to simplify expressions
+- strategy: merge instructions
+- strategy: merge high-level operations
+- strategy: reorder operations or blocks of operations
+- strategy: move CPU-based computation to the accelerator
+- strategy: add or subtract a matrix using the bias
+- strategy: hoist redundant operations out of loops
+- strategy: substitute operations with equivalent operations that are faster
+- strategy: pipeline operations to better overlap computation and data movement
+- strategy: eliminate data dependencies and fence operations
+- strategy: minimize data movement
+- strategy: minimize loop overhead

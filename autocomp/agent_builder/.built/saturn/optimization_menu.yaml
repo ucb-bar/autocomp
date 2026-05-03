@@ -1,0 +1,29 @@
+optimizations:
+- strategy: adjust LMUL
+- strategy: register blocking
+- strategy: modify loop tiling
+- strategy: loop reordering
+- strategy: split loops
+- strategy: fuse loops
+- strategy: loop unrolling
+- strategy: hoisting
+- strategy: minimize loop overhead
+- strategy: use unit-stride memory access
+- strategy: use segmented loads/stores for array-of-structs
+- strategy: prefetching
+- strategy: double buffering
+- strategy: minimize data movement
+- strategy: interleave loads and arithmetic for chaining
+- strategy: reorder operations for better scheduling
+- strategy: software pipelining
+- strategy: use fused operations (e.g., vfmacc)
+- strategy: use widening operations
+- strategy: use scalar broadcast for outer products
+- strategy: simplify arithmetic
+- strategy: strength reduction (e.g., replace division with multiply)
+- strategy: accumulate in vector registers, reduce at end
+- strategy: use multiple accumulators
+- strategy: use vslidedown and/or vslideup for regular access patterns
+- strategy: use predicated operations
+- strategy: substitute operations with equivalent operations that are faster
+- strategy: eliminate redundant computation

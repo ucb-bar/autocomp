@@ -1,0 +1,49 @@
+optimizations:
+- strategy: eliminate loads and stores as much as possible, keeping data in SBUF/PSUM instead
+- strategy: minimize data movement
+- strategy: overlap data movement and compute
+- strategy: improve data layout and access patterns
+- strategy: loop reordering and restructuring
+- strategy: Load larger blocks of data to increase SBUF data reuse and reduce memory traffic
+- strategy: Add additional loop levels so larger blocks of data can be loaded
+- strategy: avoid rematerializing
+- strategy: skip computation when it is not needed (e.g. it is completely masked out)
+- strategy: fuse loops (reordering if necessary)
+- strategy: increase reuse by keeping data in SBUF across outer loop iterations
+- strategy: hoist redundant operations out of loops
+- strategy: delay softmax division until after all reductions are complete
+- strategy: do operations in lower precision such as nl.bfloat16
+- strategy: double buffering
+- strategy: loop unrolling
+- strategy: Multi-tile grouping
+- strategy: Supertile fuse-and-reuse for loads
+- strategy: fuse multiple instructions into one, for example by doing reduction inside nisa.activation()
+- strategy: software pipelining
+- strategy: keep data in SBUF/PSUM instead of storing to and loading from HBM
+- strategy: stronger tiling for contraction / moving-free split
+- strategy: reorder operations to improve locality
+- strategy: fuse dependent operations
+- strategy: fuse operations into a single loop so intermediate data does not need to be stored to and loaded from HBM
+- strategy: fuse loops that iterate over the same dimension to improve intermediate data reuse
+- strategy: allocate a larger tile in SBUF so we can keep data in it rather than storing to and loading from HBM
+- strategy: allocate buffers in lower precision such as nl.bfloat16
+- strategy: downcast to lower precision during operations that take dtype as an argument
+- strategy: keep data in the same layout to avoid transpose operations
+- strategy: eliminate intermediate tensor materialization by using in-place operations (storing the output in the same buffer as the input)
+- strategy: use the streaming softmax with running max and scaling trick
+- strategy: optimize accumulation patterns in PSUM
+- strategy: optimize reduction by fusing tile-wise reductions with transformation passes
+- strategy: Combine adjacent tiles into contiguous blocks before nl.store() to maximize memory throughput.
+- strategy: Scan carry-over to parallelize the scan operation
+- strategy: Hoist nl.load() operations for reused data (e.g., LHS tiles) outside inner loops to reduce redundant HBM→SBUF transfers.
+- strategy: Kernel Fusion via SBUF residency
+- strategy: Add a small fixed-size inner loop as a compiler hint
+- strategy: Modify one particular parameter
+- strategy: Target the specific data shapes and shapes of the input and output tensors
+- strategy: Tile Vector Engine instructions in loops of size 128 to coalesce them
+- strategy: Use a different engine for an operation
+- strategy: inline a function so it can be more easily optimized and fused
+- strategy: Overlap execution across compute engines through pipelining
+- strategy: Swap stationary and moving tensors in nc_matmul
+- strategy: Use conditional execution instead of masking, or vice versa
+- strategy: Simplify or eliminate any unnecessary code
