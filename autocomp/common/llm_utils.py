@@ -482,6 +482,38 @@ def _attach_usage(normalized: dict, provider: str, resp, t0: float, model: str) 
         })
 
 
+# Per-process cache of (provider, model) -> set of kwargs we've learned the
+# API rejects. Populated by the retry handler in fetch_tool_completion when a
+# call fails with "<param> not supported" / "unsupported parameter: <param>" /
+# "<param> is deprecated". Consulted at the top of each provider branch to
+# skip the offending kwarg on subsequent calls.
+_LEARNED_UNSUPPORTED_PARAMS: dict[tuple[str, str], set[str]] = {}
+
+# Kwargs the retry path is allowed to strip. Must match the argument names
+# `fetch_tool_completion` forwards to providers; unknown params in an error
+# message are ignored (we'd rather surface the error than silently drop
+# something structural like `messages` or `model`).
+_STRIPPABLE_PARAMS: tuple[str, ...] = (
+    "temperature", "top_p", "top_k", "reasoning", "response_format",
+)
+
+# Matches the param name in common provider error phrasings. Providers
+# disagree on wording ("`temperature` is not supported", "unsupported
+# parameter: 'temperature'", "`temperature` is deprecated for this model"),
+# so we just look for a marker phrase alongside a known strippable name.
+def _parse_unsupported_param(err_str: str) -> str | None:
+    low = err_str.lower()
+    if not any(
+        marker in low
+        for marker in ("not supported", "unsupported", "deprecated")
+    ):
+        return None
+    for p in _STRIPPABLE_PARAMS:
+        if p in low:
+            return p
+    return None
+
+
 async def fetch_tool_completion(
     semaphore: asyncio.Semaphore,
     client,
@@ -498,9 +530,23 @@ async def fetch_tool_completion(
     """Provider-dispatching async helper for chat-completions with tool calling.
 
     Returns a normalized dict: {"role": "assistant", "content": ..., "tool_calls": [...], "usage": {...}}.
+
+    Note on `temperature`: for the `openai` and `anthropic`/`aws` providers,
+    temperature is intentionally ignored (see call sites). Newer models in
+    both families reject non-default sampling params outright; callers that
+    want stylistic control should use prompting instead.
+
+    Note on unknown-parameter errors: if a provider returns something like
+    `"<param> is not supported"` or `"unsupported parameter: <param>"`, the
+    retry loop parses the offending param name, records it in a per-process
+    cache keyed by (provider, model), strips it from kwargs on the next
+    attempt, and skips the backoff sleep. This means the *first* time a new
+    model rejects some parameter we pay one round-trip; every subsequent
+    call skips that param from the start.
     """
     max_retries = 8
     for attempt in range(max_retries):
+        skip = _LEARNED_UNSUPPORTED_PARAMS.get((provider, model), set())
         try:
             t0 = time.perf_counter()
             async with semaphore:
@@ -526,11 +572,9 @@ async def fetch_tool_completion(
                             }
 
                         kwargs["tools"] = [_conv(t) for t in tools]
-                    if temperature is not None:
-                        kwargs["temperature"] = temperature
-                    if reasoning:
+                    if reasoning and "reasoning" not in skip:
                         kwargs["reasoning"] = reasoning
-                    if response_format:
+                    if response_format and "response_format" not in skip:
                         inner = response_format.get("json_schema", {})
                         kwargs["text"] = {
                             "format": {
@@ -551,9 +595,9 @@ async def fetch_tool_completion(
                         kwargs["max_tokens"] = max_tokens
                     if tools:
                         kwargs["tools"] = _openai_tools_from_schema(tools)
-                    if temperature is not None:
+                    if temperature is not None and "temperature" not in skip:
                         kwargs["temperature"] = temperature
-                    if response_format:
+                    if response_format and "response_format" not in skip:
                         kwargs["response_format"] = response_format
                     resp = await client.chat.completions.create(**kwargs)
                     normalized = _normalize_openai_response(resp.choices[0].message)
@@ -571,9 +615,7 @@ async def fetch_tool_completion(
                         kwargs["system"] = system
                     if tools:
                         kwargs["tools"] = _anthropic_tools_from_schema(tools)
-                    if temperature is not None:
-                        kwargs["temperature"] = temperature
-                    if response_format:
+                    if response_format and "response_format" not in skip:
                         schema_body = response_format.get("json_schema", {}).get(
                             "schema", {}
                         )
@@ -607,13 +649,13 @@ async def fetch_tool_completion(
                     config = types.GenerateContentConfig()
                     if max_tokens is not None:
                         config.max_output_tokens = max_tokens
-                    if temperature is not None:
+                    if temperature is not None and "temperature" not in skip:
                         config.temperature = temperature
                     if system:
                         config.system_instruction = system
                     if tools:
                         config.tools = _gemini_tools_from_schema(tools)
-                    if response_format:
+                    if response_format and "response_format" not in skip:
                         config.response_mime_type = "application/json"
                         schema_body = response_format.get("json_schema", {}).get(
                             "schema"
@@ -640,11 +682,11 @@ async def fetch_tool_completion(
                         kwargs["inferenceConfig"]["maxTokens"] = max_tokens
                     if system:
                         kwargs["system"] = system
-                    if temperature is not None:
+                    if temperature is not None and "temperature" not in skip:
                         kwargs["inferenceConfig"]["temperature"] = temperature
                     if tools:
                         kwargs["toolConfig"] = _bedrock_tools_from_schema(tools)
-                    if response_format:
+                    if response_format and "response_format" not in skip:
                         schema_body = response_format.get("json_schema", {}).get(
                             "schema", {}
                         )
@@ -683,12 +725,21 @@ async def fetch_tool_completion(
 
         except Exception as e:
             err_str = str(e)
-            if "temperature" in err_str and "not supported" in err_str:
-                logger.info(
-                    f"fetch_tool_completion: model {model} does not support temperature, retrying without it"
+            bad_param = _parse_unsupported_param(err_str)
+            if bad_param is not None:
+                learned = _LEARNED_UNSUPPORTED_PARAMS.setdefault(
+                    (provider, model), set()
                 )
-                temperature = None
-                continue
+                if bad_param not in learned:
+                    learned.add(bad_param)
+                    logger.info(
+                        f"fetch_tool_completion: learned that "
+                        f"{provider}::{model} rejects `{bad_param}`; "
+                        f"will omit it for subsequent calls"
+                    )
+                    continue
+                # Already stripped this param but still failing; fall through
+                # to exponential backoff.
             logger.info(f"fetch_tool_completion error (attempt {attempt + 1}): {e}")
             wait_time = 2**attempt + random.uniform(0, 1)
             logger.info(f"Retrying in {wait_time:.2f}s...")
