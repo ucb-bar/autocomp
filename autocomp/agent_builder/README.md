@@ -128,6 +128,7 @@ A reference example is available at `.built/trn1-nki1/` (auto-generated with Age
 
 - `.built/trn2-nki1/` — Trainium 2 with NKI v1 APIs (from [v2.26.1 docs](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.1/general/nki/index.html))
 - `.built/trn2-nki2/` — Trainium 2 with NKI v2 APIs (from [latest docs](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/index.html))
+- `.built/trn3-nki2/` — Trainium 3 with NKI v2 APIs (from [latest docs](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/index.html))
 - `.built/tpu-v6e/` — Google TPU v6e with JAX Pallas (from [JAX Pallas docs](https://docs.jax.dev/en/latest/pallas/index.html) and [Cloud TPU docs](https://docs.cloud.google.com/tpu/docs/))
 - `.built/tpu-v5e/` — Google TPU v5e (v5litepod) with JAX Pallas (from [JAX Pallas docs](https://docs.jax.dev/en/latest/pallas/index.html) and [Cloud TPU docs](https://docs.cloud.google.com/tpu/docs/))
 

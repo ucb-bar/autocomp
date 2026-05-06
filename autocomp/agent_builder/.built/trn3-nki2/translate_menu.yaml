@@ -1,0 +1,15 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Convert a small amount of high-level code to hardware-specific kernel code
+- strategy: Fuse element-wise scale, bias, and activation operations into a single `nisa.activation` call with `scale` and
+    `bias` parameters to exploit Scalar Engine's pipelined multiply-add-activate at no extra cost.
+- strategy: Replace reduction loops over the free dimension with single `nisa.tensor_reduce` or `nisa.tensor_scalar_reduce`
+    calls, and use `nisa.tensor_tensor_scan` for sequential scan patterns to avoid per-element instruction overhead.
+- strategy: Tile matrix multiplications so the contraction axis maps to the partition dimension (≤128), the stationary free
+    axis ≤128, and the moving free axis ≤512, loading tiles into SBUF and accumulating in PSUM via `nisa.nc_matmul` with `affine_range`
+    loops for automatic pipelining.
+- strategy: Map broadcast operations along the free dimension to `nisa.tensor_scalar` with vector operands (shape `[P,1]`)
+    instead of materializing full broadcast tensors, and use TensorE-based partition-dimension broadcast only when unavoidable.
+- strategy: Structure outer loops with `nl.affine_range` and data loads via `nisa.dma_copy` to pipeline DMA transfers with
+    TensorE/VectorE/ScalarE compute, ensuring ≥4 KiB per partition per transfer and keeping live SBUF tiles within the 32
+    MiB budget to avoid compiler spilling.

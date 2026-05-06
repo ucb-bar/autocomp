@@ -1,0 +1,51 @@
+general:
+- The rewritten program must produce bit-exact identical output to the original program. No numerical tolerance is allowed -- every output element must match exactly.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- The partition dimension (first dimension) of any SBUF/PSUM tile must never exceed 128 (`nl.tile_size.pmax`); tensors exceeding
+  this must be explicitly tiled/looped over.
+- SBUF and PSUM are software-managed with no hardware caches; data must be explicitly moved HBM→SBUF via `nisa.dma_copy` before
+  compute, and SBUF→HBM via `nisa.dma_copy` after compute. PSUM cannot be copied directly to HBM — it must first go PSUM→SBUF
+  via `nisa.tensor_copy`, then SBUF→HBM.
+- For `nisa.nc_matmul`, the contraction axis K must be in the partition dimension of both `stationary` and `moving` tiles;
+  stationary max shape is [128, 128], moving max shape is [128, 512] (float32 dst) or larger on v4; output is always written
+  to PSUM.
+- Output tensors returned from a kernel must be allocated with `buffer=nl.shared_hbm`; intermediate compute tensors must use
+  `buffer=nl.sbuf` or `buffer=nl.psum`; kernel input/output parameters always reside in HBM.
+- All `nki.isa.*` instructions require an explicit `dst` parameter as the first argument and do not return a result; write
+  `nisa.reciprocal(dst=result, src=...)` not `result = nisa.reciprocal(src=...)`.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- SBUF capacity is 32 MiB (128 partitions × 256 KiB each) and PSUM capacity is 2 MiB (128 partitions × 8 banks × 512 FP32
+  values); all live tiles must fit within these budgets or the compiler will insert spills to HBM.
+- PSUM free dimension max is 512 for float32 (1024 for bfloat16 on v4); matmul results in PSUM must be evicted to SBUF promptly
+  to free PSUM capacity for subsequent operations.
+- When blocking the K (contraction) dimension across multiple matmul calls, partial sums from each K-block must be explicitly
+  accumulated into SBUF temporary arrays (e.g., via `nisa.tensor_tensor` with `op=nl.add`) since PSUM only accumulates within
+  a single inner-loop invocation.
+- Tensors allocated inside a `dynamic_range` loop body are allocated once and reused across iterations; all live tensors must
+  fit in on-chip memory for the entire loop duration. Declaring a tensor outside a loop and indexing with the loop variable
+  creates a loop-carried dependency that serializes execution.
+- For MX matmul (`nc_matmul_mx`), inputs must use x4-packed types (`float8_e5m2_x4`, `float8_e4m3fn_x4`, `float4_e2m1fn_x4`)
+  with uint8 scale tensors; K=512 must be split into partition dim 128 × free dim 4; stationary max [128,128] in x4 types,
+  moving max [128,512] in x4 types.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- '`nl.ndarray` does not initialize memory; contents are undefined until explicitly written via `nisa.dma_copy`, `nisa.memset`,
+  or a compute instruction. Reading before writing is undefined behavior. For accumulation buffers, explicitly initialize
+  with `nisa.memset` to zero.'
+- The `dynamic_range` loop variable is a device register (`VirtualRegister`), not a Python `int`; it cannot be used in host-side
+  Python expressions like `if i == 0:`. Static loops (`static_range`, `affine_range`, `sequential_range`) require compile-time
+  constant bounds and are fully unrolled.
+- Access patterns on SBUF/PSUM partition dimension must be contiguous (no striding/skipping partitions); flexible strided/gather/scatter
+  indexing is only supported along the free dimension. The `.ap()` method's first tuple must describe the partition dimension
+  with step equal to the total free-dimension element count.
+- Sub-kernels (functions called from a top-level `@nki.jit` kernel) must NOT have the `@nki.jit` decorator; only the top-level
+  entry kernel should be decorated. `print()` inside kernels executes at compile time, not runtime; use `device_print` for
+  runtime output.
+- '`dynamic_range` loops inside `nl.no_reorder()` blocks are not supported — place `no_reorder` inside the loop body instead.
+  `nisa.memset` value type must exactly match the destination tensor''s dtype. `nisa.dma_copy` `dst`/`src` parameter names
+  control copy direction — reversing them silently produces incorrect data movement.'
+- 'When using `tensor_scalar` on Scalar Engine, only these op combinations are supported: op0=nl.multiply with op1=nl.add,
+  op0=nl.multiply with op1=None, or op0=nl.add with op1=None. Both op0 and op1 must be the same type (both arithmetic or
+  both bitvec). tensor_tensor: the two input tiles cannot both reside in PSUM; at least one must be in SBUF.'

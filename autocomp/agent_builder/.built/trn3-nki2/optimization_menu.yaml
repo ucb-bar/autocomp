@@ -1,0 +1,48 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: Map contraction axis to partition dimension and parallel axis to free dimension to match hardware layout constraints
+- strategy: Use `nl.affine_range` for tile loops to enable NKI compiler loop optimizations
+- strategy: Use `sequential_range` for K-dimension accumulation loops to prevent compiler reordering of partial-sum semantics
+- strategy: Accumulate partial sums in SBUF with explicit addition across K-blocks, reserving PSUM for matmul accumulation
+    only
+- strategy: Coalesce small result tiles into larger packed buffers before DMA store to HBM
+- strategy: Ensure DMA transfers move ≥4 KiB per partition with all 128 partitions active to saturate DMA bandwidth
+- strategy: Combine datatype casting with DMA transfers instead of separate cast operations
+- strategy: Fuse multiply-add with nonlinear activation into single `nki.isa.activation` instruction
+- strategy: Use `tensor_tensor_scan` for prefix-sum/recurrence instead of explicit sequential loops
+- strategy: Assign larger free-axis matrix as stationary operand to exploit fast LoadStationary throughput
+- strategy: Multi-buffer PSUM banks across loop iterations to pipeline TensorE writes with VectorE/ScalarE consumption
+- strategy: Block M, N, and K dimensions simultaneously to maximize on-chip data reuse and arithmetic intensity
+- strategy: Use strided access patterns (`.ap()` views) for implicit im2col or windowed reductions without data copies
+- strategy: Downcast FP32 inputs to BF16/FP16/TF32 before matmul for up to 4x TensorE throughput
+- strategy: Use `activation_reduce` to fuse elementwise operation with reduction in a single instruction
+- strategy: Declare buffers inside inner loops to reduce compiler-generated spill/reload traffic
+- strategy: Tile free dimensions of tensors to prevent SBUF fragmentation even when partition dimension fits
+- strategy: Online streaming reduction with running statistics for numerically stable large-dimension softmax/log-sum-exp
+- strategy: Load block-sized multi-tile DMA transfers instead of single-tile to reduce DMA instruction count
+- strategy: Propagate last element of each tile as initial state for next tile to maintain correctness in tiled sequential
+    dependencies
+- strategy: Tile partition dimension to exactly 128 elements to maximize parallel utilization of all memory partitions
+- strategy: Schedule VectorE on SBUF and ScalarE on PSUM concurrently; distribute work across Tensor/Vector/Scalar engines
+    for pipeline parallelism
+- strategy: Use implicit offset-based loading (implicit im2col) instead of materializing expanded data matrices
+- strategy: Use `nisa.nc_transpose` on-chip instead of `nl.load_transpose2d` when kernel is memory-bound to maintain high
+    DMA bandwidth
+- strategy: Initialize SBUF accumulation buffers with zero (`nisa.memset`) for cross-K-block partial sum accumulation outside
+    PSUM
+- strategy: Enable FP8 `double_row` mode for 2x matmul throughput when MXFP is not available; downcast FP32 inputs to BF16/FP16/TF32/cFP8
+    before matmul

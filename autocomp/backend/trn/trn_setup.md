@@ -4,12 +4,12 @@
 
 We use UC Berkeley CS 152's [Lab 6 Setup Instructions](https://github.com/ucb-152/lab6?tab=readme-ov-file) as a reference for how to set up a Trainium instance.
 
-Begin by launching a `trn1.2xlarge` instance by following steps 1-3 [here](https://github.com/ucb-152/lab6/blob/main/AWS_SETUP.md).
+Begin by launching a Trainium instance (e.g., `trn1.2xlarge` for Trn1, `trn2.3xlarge` for Trn2, `trn3pd98.3xlarge` for Trn3) by following steps 1-3 [here](https://github.com/ucb-152/lab6/blob/main/AWS_SETUP.md).
 
 After `ssh`ing into the instance, add the following line to your `~/.bashrc` file to make sure your environment is always activated:
 
 ```sh
-source /opt/aws_neuronx_venv_pytorch_2_8/bin/activate
+source /opt/aws_neuronx_venv_pytorch_2_9/bin/activate
 ```
 
 Also run the command inside your current shell.
@@ -33,7 +33,7 @@ NKI (Neuron Kernel Interface) has two API versions. The evaluation backend auto-
 | **Import** | `import neuronxcc.nki as nki` | `import nki` |
 | **Package** | Bundled in `neuronxcc` (Neuron SDK) | Standalone `nki` package |
 | **Execution** | Baremetal / numpy arrays | PyTorch/XLA tensors (`torch_xla`) |
-| **Agents** | `built:trn1-nki1` (Trn1)<br>`built:trn2-nki1` (Trn2) | `built:trn2-nki2` (Trn2) |
+| **Agents** | `built:trn1-nki1` (Trn1)<br>`built:trn2-nki1` (Trn2) | `built:trn2-nki2` (Trn2)<br>`built:trn3-nki2` (Trn3) |
 | **Problem suffixes** | `trn-tutorial-nki1`, `trn-advanced-nki1` | `trn-tutorial-nki2`, `trn-advanced-nki2`, `trn-internal` |
 
 The key difference for Autocomp evaluation is that NKI v1 (baremetal) supports decoupled compile-then-execute: compilation runs in parallel on CPU, then candidates execute sequentially on-device. NKI v2 runs through PyTorch/XLA, where compilation and execution are coupled — candidates run in parallel across NeuronCores but each includes both compilation and execution overhead.

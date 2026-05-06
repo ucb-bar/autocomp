@@ -1,0 +1,19 @@
+agent_name: trn3-nki2
+version: '1.0'
+built_at: '2026-04-14T02:49:32+00:00'
+build:
+  main_model: us.anthropic.claude-opus-4-6-v1
+  light_model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  agent_scope: Optimizing NKI kernel code on AWS Trainium 3. The agent rewrites kernel source code for better performance.
+    Do NOT consider model-level concerns like sharding, tensor parallelism, serving, distributed training, and deployment,
+    these are out of scope.
+  sources:
+  - type: webpage
+    url: https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/arch/index.html
+    max_depth: 3
+    max_pages: 250
+  - type: webpage
+    url: https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/index.html
+    max_depth: 3
+    max_pages: 250
+description: Auto-generated agent config for trn3-nki2
