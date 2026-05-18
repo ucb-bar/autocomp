@@ -598,10 +598,6 @@ class BuiltLLMAgent(LLMAgent):
         if translate:
             rules.append("Do not add fallback paths.")
 
-        # Include problem-specific context if available
-        if prob and hasattr(prob, "context") and prob.context:
-            rules.append(prob.context)
-
         prompt_text = ""
         for i, rule in enumerate(rules):
             prompt_text += f"{i + 1}. {rule}\n"
@@ -615,6 +611,11 @@ class BuiltLLMAgent(LLMAgent):
         include_score_feedback = random.random() < give_score_feedback
         include_hw_feedback_flag = random.random() < give_hw_feedback
 
+        prob_context = getattr(prob, "context", "") or ""
+        context_block = (
+            f"\nProblem context:\n{prob_context.strip()}\n" if prob_context.strip() else ""
+        )
+
         parents_prompt = ""
         cur_cand = candidate
         while cur_cand is not None:
@@ -623,7 +624,11 @@ class BuiltLLMAgent(LLMAgent):
             if include_hw_feedback_flag and hasattr(cur_cand, "hw_feedback") and cur_cand.hw_feedback:
                 parents_prompt = "\n".join(cur_cand.hw_feedback) + "\n" + parents_prompt
             if not include_ancestors:
-                parents_prompt = "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+                parents_prompt = (
+                    context_block
+                    + "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n"
+                    + parents_prompt
+                )
                 break
             elif cur_cand.plan is not None:
                 parents_prompt = (
@@ -631,7 +636,11 @@ class BuiltLLMAgent(LLMAgent):
                     + "\nThe generated code was:\n" + cur_cand.code + "\n" + parents_prompt
                 )
             else:
-                parents_prompt = "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n" + parents_prompt
+                parents_prompt = (
+                    context_block
+                    + "\nThe original code was:\n```\n" + cur_cand.code + "\n```\n"
+                    + parents_prompt
+                )
             cur_cand = cur_cand.parent
 
         if analysis:
