@@ -1,5 +1,5 @@
 general:
-- The rewritten program must produce bit-exact identical output to the original program. No numerical tolerance is allowed -- every output element must match exactly.
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
 - Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
 - The partition dimension (first dimension) of any SBUF/PSUM tile must never exceed 128 (`nl.tile_size.pmax`); tensors exceeding
   this must be explicitly tiled/looped over.
