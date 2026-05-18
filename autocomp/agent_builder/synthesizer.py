@@ -25,7 +25,7 @@ class SynthesizedComponents:
     architecture_summary: str
     isa_docs: str
     optimization_menu: list[str]
-    translate_menu: list[str]
+    translation_menu: list[str]
     rules: dict[str, list[str]]  # keys: "general", "planning", "coding"
     code_examples: str = ""
 
@@ -270,11 +270,10 @@ class ComponentSynthesizer:
         logger.info("  Optimization menu: %d strategies (%.1fs)", len(opt_menu), time.time() - t_start)
 
         t_start = time.time()
-        translate_menu = self._synthesize_translate_menu(
-            buckets["optimization"], architecture=architecture, isa_docs=isa_docs,
-            code_examples_raw=buckets["examples"],
+        translation_menu = self._synthesize_translation_menu(
+            architecture=architecture, isa_docs=isa_docs,
         )
-        logger.info("  Translate menu: %d strategies (%.1fs)", len(translate_menu), time.time() - t_start)
+        logger.info("  Translation menu: %d strategies (%.1fs)", len(translation_menu), time.time() - t_start)
 
         t_start = time.time()
         rules = self._synthesize_rules(buckets["rules"], architecture=architecture, isa_docs=isa_docs)
@@ -291,7 +290,7 @@ class ComponentSynthesizer:
             architecture_summary=architecture,
             isa_docs=isa_docs,
             optimization_menu=opt_menu,
-            translate_menu=translate_menu,
+            translation_menu=translation_menu,
             rules=rules,
             code_examples=code_examples,
         )
@@ -905,63 +904,78 @@ Performance optimization strategies:"""
         return results
 
     # ------------------------------------------------------------------
-    # Translate menu
+    # Translation menu
     # ------------------------------------------------------------------
 
     _DEFAULT_TRANSLATE_MENU = [
         "Convert high-level code to hardware-specific kernel code",
-        "Convert a small amount of high-level code to hardware-specific kernel code",
+        "Translate the remaining high-level code to hardware-specific kernel code",
     ]
 
-    def _synthesize_translate_menu(
+    def _synthesize_translation_menu(
         self,
-        items: list[tuple[str, str]],
         architecture: str = "",
         isa_docs: str = "",
-        code_examples_raw: list[tuple[str, str]] | None = None,
     ) -> list[str]:
-        """Synthesize code translation strategies from architecture, ISA, and examples.
+        """Synthesize code translation strategies from architecture and ISA docs.
 
-        Translation strategies guide the LLM in converting standard-library code
-        (e.g. NumPy, PyTorch, vanilla JAX) into hardware-specific kernel code
-        (e.g. CUDA kernels, NKI kernels, Pallas kernels).  They are generic across
-        hardware targets -- the prompt infers the right patterns from the docs.
+        Translation strategies guide the agent in converting standard-library code
+        (NumPy, PyTorch, vanilla JAX, ...) into hardware-specific kernel code. They
+        are deliberately *not* optimization strategies -- fusion, tiling, DMA
+        pipelining etc. belong in the optimization menu and only run after a
+        baseline translation exists.
+
+        Inputs are limited to architecture and ISA docs on purpose. We do NOT feed
+        in the optimization-bucket documents or code examples: those bias the
+        model toward performance tactics rather than translation patterns.
         """
-        defaults = list[str](self._DEFAULT_TRANSLATE_MENU)
-        context_parts: list[str] = []
+        defaults = list(self._DEFAULT_TRANSLATE_MENU)
 
+        if not (architecture or isa_docs):
+            return defaults
+
+        context_parts: list[str] = []
         if architecture:
             context_parts.append(f"=== ARCHITECTURE ===\n{architecture}\n")
         if isa_docs:
             context_parts.append(f"=== ISA / API REFERENCE ===\n{isa_docs}\n")
-        if code_examples_raw:
-            context_parts.append(
-                f"=== CODE EXAMPLES ===\n{_items_to_text(code_examples_raw, max_chars=self.context_budget)}\n"
-            )
-
-        if not context_parts:
-            return defaults
-
         context = "\n".join(context_parts)
         defaults_text = chr(10).join("- " + d for d in defaults)
 
         prompt = f"""{context}
 
-{self._context_prefix}The agent translates standard-library code (e.g. NumPy, PyTorch, JAX, \
-or other high-level frameworks) into optimized hardware-specific kernel code for the target \
-described above.
+{self._context_prefix}The agent translates standard-library code (NumPy, PyTorch, JAX, \
+or other high-level frameworks) into hardware-specific kernel code for the target \
+described above. This is the TRANSLATION pass: the goal is to produce a working kernel \
+in the target API, NOT to optimize it. Performance optimizations (fusion, tiling, \
+double-buffering, software pipelining, etc.) belong in a separate optimization menu and \
+must NOT appear here.
 
 These generic strategies are already included:
 {defaults_text}
 
-Generate 3-5 ADDITIONAL translation strategies. Each strategy should describe a pattern for converting \
-high-level code into the target hardware's kernel API, referencing approaches specific to the target hardware.
+Generate 0-3 ADDITIONAL translation strategies that are specific to mapping high-level \
+operations onto this target's kernel API. Each strategy should describe a translation \
+pattern -- naming the target's kernel decorator, memory spaces, or primitive ops where \
+that helps -- not a performance technique.
+
+EXAMPLES of good translation strategies (for various targets):
+- "wrap the function with the target's kernel decorator and place outputs in shared device memory"
+- "replace framework matmul/conv calls with the target's matrix-engine primitives"
+- "translate reductions and elementwise ops using the target's vector/scalar primitives"
+
+EXAMPLES of strategies to AVOID (these are optimizations, not translations):
+- "fuse activation into matmul"
+- "tile the inner loop to fit in scratch memory"
+- "double-buffer DMA transfers"
+- "use lower precision"
 
 RULES:
-- Each strategy should be a concise action phrase (1 sentence)
-- Focus on HOW to map the computation to the hardware primitives shown in the docs
-- Reference specific API calls, memory spaces, or tiling constructs when they are central
-- Generic strategies are allowed if they add value beyond the generic strategies already included
+- Each strategy should be a short action phrase (under 20 words)
+- Focus on HOW to map operations to the target's kernel API surface
+- Do NOT repeat the generic strategies above
+- Do NOT include any performance optimization
+- If the architecture doc gives nothing meaningful to add beyond the defaults, return "- none"
 
 Return each strategy on its own line, prefixed with "- ".
 
@@ -970,8 +984,6 @@ Translation strategies:"""
         responses = self._chat(prompt=prompt, num_samples=1, temperature=0)
         raw = responses[0].strip() if responses else ""
         strategies = self._parse_bullet_lines(raw)
-        if not strategies:
-            logger.warning("Translate menu: LLM returned no strategies")
         return defaults + strategies
 
     # ------------------------------------------------------------------

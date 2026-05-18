@@ -46,7 +46,7 @@ class BuiltLLMAgent(LLMAgent):
         self._isa_sections = self._parse_isa_sections(self._isa_docs_raw)
         self._isa_subsections = self._parse_isa_subsections(self._isa_sections)
         self._optimization_menu = self._load_optimization_menu()
-        self._translate_menu = self._load_translate_menu()
+        self._translation_menu = self._load_translation_menu()
         self._rules = self._load_rules()
         self._code_example_sections = self._load_code_example_sections()
 
@@ -58,7 +58,7 @@ class BuiltLLMAgent(LLMAgent):
 
         # Cache for new menu options per candidate
         self._new_menu_cache: dict[str, list[str]] = {}
-        self._translate_menu_warned = False
+        self._translation_menu_warned = False
 
         self._cache_dir: Path | None = Path(cache_dir) if cache_dir is not None else None
 
@@ -67,7 +67,7 @@ class BuiltLLMAgent(LLMAgent):
             "%d translate strategies, %d code examples, fine_grained_isa=%s, "
             "example_rate=%.2f",
             self.config_dir, len(self._isa_sections), len(self._optimization_menu),
-            len(self._translate_menu), len(self._code_example_sections),
+            len(self._translation_menu), len(self._code_example_sections),
             self.fine_grained_isa, self.example_rate,
         )
 
@@ -132,10 +132,15 @@ class BuiltLLMAgent(LLMAgent):
         items = data.get("optimizations", [])
         return [item["strategy"] if isinstance(item, dict) else str(item) for item in items]
 
-    def _load_translate_menu(self) -> list[str]:
-        path = self.config_dir / "translate_menu.yaml"
+    def _load_translation_menu(self) -> list[str]:
+        path = self.config_dir / "translation_menu.yaml"
         if not path.exists():
-            return []
+            # Backwards compat: older built agents shipped this file as
+            # `translate_menu.yaml`. Prefer the new name when both exist.
+            legacy = self.config_dir / "translate_menu.yaml"
+            if not legacy.exists():
+                return []
+            path = legacy
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         items = data.get("strategies", [])
@@ -711,17 +716,17 @@ class BuiltLLMAgent(LLMAgent):
         give_score_feedback, give_hw_feedback, include_ancestors,
     ) -> str:
         """Prompt for translation iterations: convert code to the target representation."""
-        if self._translate_menu:
-            opt_lst = list(self._translate_menu)
+        if self._translation_menu:
+            opt_lst = list(self._translation_menu)
         else:
-            if not self._translate_menu_warned:
+            if not self._translation_menu_warned:
                 logger.warning(
-                    "translate_iters > 0 but no translate_menu.yaml found in %s. "
-                    "Using generic default. Create a translate_menu.yaml with "
+                    "translate_iters > 0 but no translation_menu.yaml found in %s. "
+                    "Using generic default. Create a translation_menu.yaml with "
                     "target-specific strategies for better results.",
                     self.config_dir,
                 )
-                self._translate_menu_warned = True
+                self._translation_menu_warned = True
             opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
         if shuffle_opts:
             random.shuffle(opt_lst)
@@ -812,17 +817,17 @@ class BuiltLLMAgent(LLMAgent):
                                      num_iters: int = None,
                                      translate: bool = False) -> str:
         if translate:
-            if self._translate_menu:
-                opt_lst = list(self._translate_menu)
+            if self._translation_menu:
+                opt_lst = list(self._translation_menu)
             else:
-                if not self._translate_menu_warned:
+                if not self._translation_menu_warned:
                     logger.warning(
-                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
-                        "Using generic default. Create a translate_menu.yaml with "
+                        "translate_iters > 0 but no translation_menu.yaml found in %s. "
+                        "Using generic default. Create a translation_menu.yaml with "
                         "target-specific strategies for better results.",
                         self.config_dir,
                     )
-                    self._translate_menu_warned = True
+                    self._translation_menu_warned = True
                 opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
         else:
             opt_lst = self.get_opt_menu_options(prob, candidate)
@@ -925,16 +930,16 @@ class BuiltLLMAgent(LLMAgent):
         )
 
         if translate:
-            if self._translate_menu:
-                opt_lst = list(self._translate_menu)
+            if self._translation_menu:
+                opt_lst = list(self._translation_menu)
             else:
-                if not self._translate_menu_warned:
+                if not self._translation_menu_warned:
                     logger.warning(
-                        "translate_iters > 0 but no translate_menu.yaml found in %s. "
+                        "translate_iters > 0 but no translation_menu.yaml found in %s. "
                         "Using generic default.",
                         self.config_dir,
                     )
-                    self._translate_menu_warned = True
+                    self._translation_menu_warned = True
                 opt_lst = list(self._DEFAULT_TRANSLATE_MENU)
         else:
             opt_lst = self.get_opt_menu_options(prob, candidate)

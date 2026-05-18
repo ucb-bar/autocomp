@@ -122,7 +122,7 @@ class AgentBuilder:
             "  - isa_docs.md (%d chars)\n"
             "  - code_examples.md (%d chars)\n"
             "  - optimization_menu.yaml (%d strategies)\n"
-            "  - translate_menu.yaml (%d strategies)\n"
+            "  - translation_menu.yaml (%d strategies)\n"
             "  - rules.yaml\n"
             "Review and edit these files before using the agent.",
             config_dir,
@@ -130,7 +130,7 @@ class AgentBuilder:
             len(components.isa_docs),
             len(components.code_examples),
             len(components.optimization_menu),
-            len(components.translate_menu),
+            len(components.translation_menu),
         )
 
         return config_dir

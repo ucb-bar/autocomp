@@ -66,13 +66,13 @@ class AgentAssembler:
         self._write_yaml(out / "optimization_menu.yaml", {"optimizations": menu_items})
         logger.info("Wrote optimization_menu.yaml (%d strategies)", len(menu_items))
 
-        # translate_menu.yaml
-        if components.translate_menu:
-            translate_items = [{"strategy": s} for s in components.translate_menu]
-            self._write_yaml(out / "translate_menu.yaml", {"strategies": translate_items})
-            logger.info("Wrote translate_menu.yaml (%d strategies)", len(translate_items))
+        # translation_menu.yaml
+        if components.translation_menu:
+            translate_items = [{"strategy": s} for s in components.translation_menu]
+            self._write_yaml(out / "translation_menu.yaml", {"strategies": translate_items})
+            logger.info("Wrote translation_menu.yaml (%d strategies)", len(translate_items))
         else:
-            logger.info("Skipping translate_menu.yaml -- no translate strategies generated")
+            logger.info("Skipping translation_menu.yaml -- no translate strategies generated")
 
         # rules.yaml
         self._write_yaml(out / "rules.yaml", components.rules)

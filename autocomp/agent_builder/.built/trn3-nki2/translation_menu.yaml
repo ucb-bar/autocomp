@@ -1,0 +1,3 @@
+strategies:
+- strategy: Convert the entire torch reference to a working `@nki.jit` NKI kernel
+- strategy: Translate some remaining torch operations to NKI

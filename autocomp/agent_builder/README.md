@@ -106,7 +106,7 @@ python -m autocomp.agent_builder.run_agent_builder \
     --rerun rules optimization_menu --source-dir path/to/docs
 ```
 
-Valid components: `rules`, `optimization_menu`, `translate_menu`, `isa`, `architecture`, `examples`.
+Valid components: `rules`, `optimization_menu`, `translation_menu`, `isa`, `architecture`, `examples`.
 
 ## Output
 
@@ -120,7 +120,7 @@ A built agent produces the following files in `.built/<agent_name>/`:
 | `optimization_menu.yaml` | List of optimization strategies |
 | `rules.yaml` | Programming constraints (general, planning, coding) |
 | `code_examples.md` | Annotated code examples, stochastically included during planning as reference patterns |
-| `translate_menu.yaml` | *(optional, user-created)* Translation strategies for `translate_iters` — see [Translation support](#translation-support) |
+| `translation_menu.yaml` | *(optional, user-created)* Translation strategies for `translate_iters` — see [Translation support](#translation-support) |
 
 All output files are human-editable. After a build, you can manually refine any component and it will be used as-is by the runtime agent.
 
@@ -185,7 +185,7 @@ Translation lets the agent convert code from one representation to another (e.g.
 To configure:
 
 1. Set `translate_iters` to a positive value in `run_search.py` (e.g., `translate_iters = 2`).
-2. Optionally create `translate_menu.yaml` in the agent's config directory:
+2. Optionally create `translation_menu.yaml` in the agent's config directory:
 
 ```yaml
 strategies:
@@ -194,7 +194,7 @@ strategies:
   - "fuse multiple TargetISA kernels into a single kernel"
 ```
 
-If `translate_menu.yaml` is absent, a generic default (`"convert high-level code to target kernel code"`) is used.
+If `translation_menu.yaml` is absent, a generic default (`"convert high-level code to target kernel code"`) is used.
 
 ## Python API
 
