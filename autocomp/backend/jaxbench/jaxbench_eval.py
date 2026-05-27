@@ -25,7 +25,15 @@ _THIS_DIR = pathlib.Path(__file__).resolve().parent
 RUNNER_SCRIPT = _THIS_DIR / "jaxbench_runner.py"
 
 _jaxbench_env = os.getenv("JAXBENCH_DIR", "")
-JAXBENCH_DIR = pathlib.Path(_jaxbench_env) if _jaxbench_env else _THIS_DIR.parent.parent.parent.parent / "JAXBench"
+if _jaxbench_env:
+    JAXBENCH_DIR = pathlib.Path(_jaxbench_env)
+else:
+    _siblings_root = _THIS_DIR.parent.parent.parent.parent
+    _candidates = [
+        _siblings_root / "accelerator-agents" / "JAXBench",
+        _siblings_root / "JAXBench",
+    ]
+    JAXBENCH_DIR = next((p for p in _candidates if p.is_dir()), _candidates[0])
 BENCHMARK_DIR = JAXBENCH_DIR / "benchmark"
 
 # Maps prob_type to which file to use as the workload (baseline or optimized)

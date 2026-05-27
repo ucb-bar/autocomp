@@ -2,10 +2,12 @@
 
 ## JAXBench
 
-[JAXBench](https://github.com/aryatschand/JAXBench) is a benchmark suite for JAX and TPU kernel optimization. It contains 50 operator-level workloads from LLM architectures, with both JAX baseline and Pallas-optimized variants.
+[JAXBench](https://github.com/AI-Hypercomputer/accelerator-agents) is a benchmark suite for JAX and TPU kernel optimization. It contains 50 operator-level workloads from LLM architectures, with both JAX baseline and Pallas-optimized variants.
+
+JAXBench lives under the `JAXBench/` subdirectory of the `accelerator-agents` repo:
 
 ```sh
-git clone https://github.com/aryatschand/JAXBench
+git clone https://github.com/AI-Hypercomputer/accelerator-agents
 ```
 
 ## Autocomp
@@ -16,10 +18,10 @@ cd autocomp
 pip install -e .
 ```
 
-By default, the backend looks for `JAXBench/` as a sibling directory to the Autocomp repo root. To override:
+By default, the backend looks for `accelerator-agents/JAXBench/` (and falls back to `JAXBench/`) as a sibling of the Autocomp repo root. To override:
 
 ```sh
-export JAXBENCH_DIR=/path/to/JAXBench
+export JAXBENCH_DIR=/path/to/accelerator-agents/JAXBench
 ```
 
 ## Workload Structure
