@@ -96,6 +96,7 @@ class TpuHardwareBackend(EvalBackend):
 		)
 		self._tpu_vm_checked = False
 		self._python_bin = os.getenv("AUTOCOMP_TPU_PYTHON", "python3.11")
+		self._venv_name = os.getenv("AUTOCOMP_TPU_VENV", ".autocomp_venv")
 
 
 	def _transport_mode(self) -> Literal["gcloud", "ssh"]:
@@ -307,28 +308,33 @@ class TpuEvalBackend(TpuHardwareBackend):
 		exit_code = f"{remote_dir}/program_exit_code.txt"
 		setup_log = f"{remote_dir}/setup_log.txt"
 		setup_exit_code = f"{remote_dir}/setup_exit_code.txt"
+		venv_python = f"{self._venv_name}/bin/python"
+		# Create the venv if it does not already exist (idempotent).
+		ensure_venv = f"[ -x {venv_python} ] || {self._python_bin} -m venv {self._venv_name}"
 
 		if skip_setup:
 			return (
 				f"mkdir -p {remote_dir}; "
 				f": > {prog_stdout}; : > {prog_stderr}; "
-				f"{self._python_bin} {remote_filename} > {prog_stdout} 2> {prog_stderr}; prog_rc=$?; "
+				f"{ensure_venv}; "
+				f"{venv_python} {remote_filename} > {prog_stdout} 2> {prog_stderr}; prog_rc=$?; "
 				f"echo $prog_rc > {exit_code}; "
 				f"true"
 			)
 
-		check_jax = f"{self._python_bin} -c 'import jax; assert jax.__version__==\"0.9.2\", jax.__version__' >/dev/null 2>&1"
-		uninstall = f"{self._python_bin} -m pip uninstall -y jax jaxlib -q >/dev/null 2>&1 || true"
-		install = f"{self._python_bin} -m pip install -U 'jax[tpu]==0.9.2' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
+		check_jax = f"{venv_python} -c 'import jax, absl; assert jax.__version__==\"0.9.2\", jax.__version__' >/dev/null 2>&1"
+		uninstall = f"{venv_python} -m pip uninstall -y jax jaxlib -q >/dev/null 2>&1 || true"
+		install = f"{venv_python} -m pip install -U 'jax[tpu]==0.9.2' absl-py -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
 		setup = f"if [ \"${{AUTOCOMP_TPU_FORCE_PIP:-0}}\" = \"1\" ]; then {uninstall}; ({install}); else ({check_jax}) || ({install}); fi"
 
 		return (
 			f"mkdir -p {remote_dir}; "
 			f": > {prog_stdout}; : > {prog_stderr}; "
+			f"{ensure_venv}; "
 			f"({setup}) >> {setup_log} 2>&1; setup_rc=$?; echo $setup_rc > {setup_exit_code}; "
 			f"prog_rc=1; "
 			f"if [ $setup_rc -eq 0 ]; then "
-			f"  {self._python_bin} {remote_filename} > {prog_stdout} 2> {prog_stderr}; prog_rc=$?; "
+			f"  {venv_python} {remote_filename} > {prog_stdout} 2> {prog_stderr}; prog_rc=$?; "
 			f"else "
 			f"  echo \"pip install failed (exit $setup_rc)\" >> {prog_stderr}; "
 			f"fi; "
