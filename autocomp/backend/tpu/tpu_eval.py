@@ -19,6 +19,10 @@ def _gcloud_bin() -> str:
 	return "gcloud"
 
 
+def _env_bool(name: str) -> bool:
+	return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _tpu_vm_exists(tpu_name: str, zone: str, project: str) -> bool:
 	gcloud = _gcloud_bin()
 	if shutil.which(gcloud) is None:
@@ -35,6 +39,10 @@ def _ensure_tpu_vm_running(
 	accelerator_type: str = "v6e-1",
 	version: str = "v2-alpha-tpuv6e",
 	project: str = "ch-llm",
+	*,
+	internal_ips: bool = False,
+	network: str | None = None,
+	subnetwork: str | None = None,
 ) -> None:
 	"creates tpu vm if not exists"
 	if _tpu_vm_exists(tpu_name, zone, project):
@@ -52,6 +60,13 @@ def _ensure_tpu_vm_running(
 		f"--version={version}",
 		f"--project={project}",
 	]
+	# Create the VM without external IPs (reachable via IAP / internal IP).
+	if internal_ips:
+		cmd += ["--internal-ips"]
+	if network:
+		cmd += [f"--network={network}"]
+	if subnetwork:
+		cmd += [f"--subnetwork={subnetwork}"]
 	logger.info("Creating TPU VM since none exists. Running: %s", " ".join(cmd))
 	proc = subprocess.run(cmd, text=True)
 	if proc.returncode != 0:
@@ -72,6 +87,8 @@ class TpuHardwareBackend(EvalBackend):
 		ssh_port: int | None = None,
 		ssh_identity_file: str | None = None,
 		ssh_extra_args: list[str] | None = None,
+		tunnel_through_iap: bool | None = None,
+		internal_ip: bool | None = None,
 	):
 		self.tpu_name = tpu_name or os.getenv("AUTOCOMP_TPU_NAME") or "tpu-node"
 		self.tpu_zone = tpu_zone or os.getenv("AUTOCOMP_TPU_ZONE") or "us-east5-a"
@@ -94,6 +111,21 @@ class TpuHardwareBackend(EvalBackend):
 		self.ssh_strict_host_key_checking = os.getenv(
 			"AUTOCOMP_TPU_SSH_STRICT_HOST_KEY_CHECKING", "accept-new"
 		)
+		# IAP tunneling / internal-ip for gcloud transport (mutually exclusive).
+		self.tunnel_through_iap = (
+			tunnel_through_iap if tunnel_through_iap is not None else _env_bool("AUTOCOMP_TPU_IAP")
+		)
+		self.internal_ip = (
+			internal_ip if internal_ip is not None else _env_bool("AUTOCOMP_TPU_INTERNAL_IP")
+		)
+		if self.tunnel_through_iap and self.internal_ip:
+			raise ValueError(
+				"tunnel_through_iap and internal_ip are mutually exclusive; set only one "
+				"(AUTOCOMP_TPU_IAP / AUTOCOMP_TPU_INTERNAL_IP)."
+			)
+		# Network config used when creating a TPU VM without external IPs.
+		self.network = os.getenv("AUTOCOMP_TPU_NETWORK")
+		self.subnetwork = os.getenv("AUTOCOMP_TPU_SUBNETWORK")
 		self._tpu_vm_checked = False
 		self._python_bin = os.getenv("AUTOCOMP_TPU_PYTHON", "python3.11")
 		self._venv_name = os.getenv("AUTOCOMP_TPU_VENV", ".autocomp_venv")
@@ -127,17 +159,37 @@ class TpuHardwareBackend(EvalBackend):
 			opts += ["-i", self.ssh_identity_file]
 		return opts
 
+	def _gcloud_tpu_prefix(self, subcommand: str) -> list[str]:
+		"""gcloud command prefix for a TPU VM ssh/scp subcommand.
+
+		`--tunnel-through-iap` is only available on the alpha track, so switch
+		tracks when IAP is requested. `--internal-ip` works on the GA track.
+		"""
+		gcloud = _gcloud_bin()
+		cmd = [gcloud]
+		if self.tunnel_through_iap:
+			cmd += ["alpha"]
+		cmd += ["compute", "tpus", "tpu-vm", subcommand]
+		return cmd
+
+	def _gcloud_network_flags(self) -> list[str]:
+		if self.tunnel_through_iap:
+			return ["--tunnel-through-iap"]
+		if self.internal_ip:
+			return ["--internal-ip"]
+		return []
+
 	def _build_ssh_cmd(self, *, remote_command: str | None, allocate_tty: bool, batch_mode: bool) -> list[str]:
 		if self._transport_mode() == "gcloud":
 			self.ensure_tpu_vm()
-			gcloud = _gcloud_bin()
-			cmd = [
-				gcloud, "compute", "tpus", "tpu-vm", "ssh",
+			cmd = self._gcloud_tpu_prefix("ssh")
+			cmd += [
 				self.tpu_name,
 				"--quiet",
 				"--zone", self.tpu_zone,
 				"--project", self.tpu_project,
 			]
+			cmd += self._gcloud_network_flags()
 			if remote_command is not None:
 				cmd += ["--command", remote_command]
 			# Forward non-interactive/tty preference to underlying SSH.
@@ -161,13 +213,8 @@ class TpuHardwareBackend(EvalBackend):
 	def _build_scp_cmd(self, *, source: str, dest: str) -> list[str]:
 		if self._transport_mode() == "gcloud":
 			self.ensure_tpu_vm()
-			gcloud = _gcloud_bin()
-			return [
-				gcloud,
-				"compute",
-				"tpus",
-				"tpu-vm",
-				"scp",
+			cmd = self._gcloud_tpu_prefix("scp")
+			cmd += [
 				source,
 				dest,
 				"--quiet",
@@ -176,6 +223,8 @@ class TpuHardwareBackend(EvalBackend):
 				"--project",
 				self.tpu_project,
 			]
+			cmd += self._gcloud_network_flags()
+			return cmd
 
 		# Direct SCP.
 		cmd = ["scp", "-q"]
@@ -213,6 +262,9 @@ class TpuEvalBackend(TpuHardwareBackend):
 			accelerator_type=os.getenv("AUTOCOMP_TPU_ACCELERATOR_TYPE") or "v6e-1",
 			version=os.getenv("AUTOCOMP_TPU_RUNTIME_VERSION") or "v2-alpha-tpuv6e",
 			project=self.tpu_project,
+			internal_ips=(self.tunnel_through_iap or self.internal_ip),
+			network=self.network,
+			subnetwork=self.subnetwork,
 		)
 		self._tpu_vm_checked = True
 

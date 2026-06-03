@@ -22,7 +22,31 @@ export AUTOCOMP_TPU_SSH_HOST=10.0.0.42
 export AUTOCOMP_TPU_SSH_USER=myuser
 ```
 
-The backend uses Python 3.11 (override with `AUTOCOMP_TPU_PYTHON`) and automatically installs `jax[tpu]==0.9.2` on the first run if the correct version is not present. Force reinstall with `AUTOCOMP_TPU_FORCE_PIP=1`.
+The backend uses Python 3.11 (override with `AUTOCOMP_TPU_PYTHON`) and, on the first run, creates a virtual environment on the TPU VM and installs `jax[tpu]==0.9.2` (plus `absl-py`) into it if the correct version is not present. The venv keeps the eval dependencies isolated from the system Python; its name defaults to `.autocomp_venv` (override with `AUTOCOMP_TPU_VENV`). Force reinstall with `AUTOCOMP_TPU_FORCE_PIP=1`.
+
+## Connecting to TPU VMs Without External IPs
+
+For security, you can run TPU VMs without external IP addresses (e.g. under a `constraints/compute.vmExternalIpAccess` org policy) and reach them over Identity-Aware Proxy (IAP) or their internal IP. Both are opt-in and off by default:
+
+```sh
+export AUTOCOMP_TPU_IAP=1           # tunnel ssh/scp through Cloud IAP
+# or, for same-VPC / peered access:
+export AUTOCOMP_TPU_INTERNAL_IP=1   # connect via the VM's internal IP
+```
+
+These are mutually exclusive. When either is set, the backend also creates new VMs with `--internal-ips`. `--tunnel-through-iap` is only available on the `gcloud alpha` track, so the backend switches tracks automatically when IAP is enabled. Optionally pin the network/subnetwork used at creation time with `AUTOCOMP_TPU_NETWORK` and `AUTOCOMP_TPU_SUBNETWORK`.
+
+This requires one-time GCP setup on the project/subnet:
+
+1. **Private Google Access** on the subnet, so the no-external-IP VM can reach Google APIs (including the JAX wheels at `storage.googleapis.com`):
+   ```sh
+   gcloud compute networks subnets update <subnet> \
+       --region=<region> --enable-private-ip-google-access
+   ```
+2. **Firewall** allowing ingress on `tcp:22` from the IAP range `35.235.240.0/20`.
+3. **IAM**: grant connecting users `roles/iap.tunnelResourceAccessor` (and `roles/tpu.admin`).
+
+See [Connect to a TPU VM without a public IP address](https://cloud.google.com/tpu/docs/tpu-iap) for details.
 
 ## How Evaluation Works
 
