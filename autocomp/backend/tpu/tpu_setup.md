@@ -48,6 +48,26 @@ This requires one-time GCP setup on the project/subnet:
 
 See [Connect to a TPU VM without a public IP address](https://cloud.google.com/tpu/docs/tpu-iap) for details.
 
+## Running Autocomp on the TPU VM Itself
+
+By default the orchestrator runs on your workstation and ships each evaluation to the TPU VM over scp + ssh. If you instead run Autocomp *on the TPU VM*, set the **local** transport so evaluations run as local subprocesses with no network roundtrip:
+
+```sh
+export AUTOCOMP_TPU_TRANSPORT=local
+```
+
+With `local` transport the backend copies scripts with a plain file copy, executes them via the local shell, and reads results directly from disk. VM creation (`ensure_tpu_vm`) is a no-op, and the IAP / internal-IP / SSH settings are ignored. Everything else is unchanged: it still creates the `.autocomp_venv` (override with `AUTOCOMP_TPU_VENV`) and installs `jax[tpu]==0.9.2` + `absl-py` into it on first use.
+
+To set this up on the VM, install Autocomp into that same venv so both the orchestrator and the eval subprocess share it:
+
+```sh
+# on the TPU VM, from the repo root
+~/.autocomp_venv/bin/python -m pip install -e .   # creates the venv first if needed
+AUTOCOMP_TPU_TRANSPORT=local ~/.autocomp_venv/bin/python -m autocomp.backend.tpu.tpu_eval --bench sols/tpu/0_matmul_baseline.py
+```
+
+This avoids per-eval scp/ssh overhead, which is the main win during a long search. Note that the orchestrator's LLM API calls still need outbound internet on the VM — on a no-external-IP VM (the IAP scenario above) you would need Cloud NAT, since Private Google Access only covers Google APIs.
+
 ## How Evaluation Works
 
 The evaluator builds a single batch script that:
@@ -75,3 +95,5 @@ python -m autocomp.backend.tpu.tpu_eval <file_path>           # run a single fil
 python -m autocomp.backend.tpu.tpu_eval --ssh                  # interactive SSH shell
 python -m autocomp.backend.tpu.tpu_eval --bench <file1.py> ... # batch-evaluate
 ```
+
+Set `AUTOCOMP_TPU_TRANSPORT=local` to run these directly on the TPU VM with no scp/ssh.

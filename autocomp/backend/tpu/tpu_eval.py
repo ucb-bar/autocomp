@@ -81,7 +81,7 @@ class TpuHardwareBackend(EvalBackend):
 		tpu_zone: str | None = None,
 		tpu_project: str | None = None,
 		*,
-		transport: Literal["auto", "gcloud", "ssh"] | None = None,
+		transport: Literal["auto", "gcloud", "ssh", "local"] | None = None,
 		ssh_host: str | None = None,
 		ssh_user: str | None = None,
 		ssh_port: int | None = None,
@@ -131,12 +131,24 @@ class TpuHardwareBackend(EvalBackend):
 		self._venv_name = os.getenv("AUTOCOMP_TPU_VENV", ".autocomp_venv")
 
 
-	def _transport_mode(self) -> Literal["gcloud", "ssh"]:
-		if self.transport in ("gcloud", "ssh"):
+	def _transport_mode(self) -> Literal["gcloud", "ssh", "local"]:
+		if self.transport in ("gcloud", "ssh", "local"):
 			return self.transport
 		if self.transport not in ("auto", None):
 			logger.warning("Unknown AUTOCOMP_TPU_TRANSPORT=%r; falling back to auto.", self.transport)
 		return "ssh" if self.ssh_host else "gcloud"
+
+	def _local_path(self, remote_path: str) -> pathlib.Path:
+		"""Resolve a 'remote' path for local transport.
+
+		Remote commands use paths relative to the login directory (resolved
+		against $HOME over ssh); mirror that here so absolute paths like
+		/tmp/autocomp_eval/... stay absolute and relative uploads land in $HOME.
+		"""
+		p = pathlib.Path(remote_path)
+		if p.is_absolute():
+			return p
+		return pathlib.Path.home() / p
 
 	def _ssh_target(self) -> str:
 		if not self.ssh_host:
@@ -236,6 +248,8 @@ class TpuHardwareBackend(EvalBackend):
 		return cmd
 
 	def open_tpu_shell(self) -> int:
+		if self._transport_mode() == "local":
+			return subprocess.call(["bash", "-l"], cwd=pathlib.Path.home())
 		cmd = self._build_ssh_cmd(remote_command=None, allocate_tty=True, batch_mode=False)
 		logger.debug("Opening TPU shell: %s", " ".join(cmd))
 		return subprocess.call(cmd)
@@ -319,10 +333,15 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return stdout_text + block, util
 
 	def _run_scp(self, local_path: pathlib.Path, remote_path: str) -> subprocess.CompletedProcess:
-		"""Upload a local file to the TPU VM via SCP."""
+		"""Upload a local file to the TPU VM via SCP (or copy locally for local transport)."""
 		if not local_path.exists():
 			raise FileNotFoundError(f"Local file to scp not found: {local_path}")
 		local_arg = local_path.resolve().as_posix()
+		if self._transport_mode() == "local":
+			dest = self._local_path(remote_path)
+			dest.parent.mkdir(parents=True, exist_ok=True)
+			shutil.copyfile(local_path.resolve(), dest)
+			return subprocess.CompletedProcess(args=["cp", local_arg, dest.as_posix()], returncode=0, stdout="", stderr="")
 		destination = (
 			f"{self.tpu_name}:{remote_path}"
 			if self._transport_mode() == "gcloud"
@@ -342,7 +361,14 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return proc
 
 	def _run_ssh(self, remote_command: str) -> subprocess.CompletedProcess:
-		"""Execute a command on the TPU VM via SSH."""
+		"""Execute a command on the TPU VM via SSH (or in the local shell for local transport)."""
+		if self._transport_mode() == "local":
+			logger.debug("Running local command: %s", remote_command)
+			return subprocess.run(
+				["bash", "-lc", remote_command],
+				capture_output=True, text=True, timeout=600,
+				stdin=subprocess.DEVNULL, cwd=pathlib.Path.home(),
+			)
 		cmd = self._build_ssh_cmd(remote_command=remote_command, allocate_tty=False, batch_mode=True)
 		logger.debug("Running command %s", " ".join(cmd))
 		return subprocess.run(cmd, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
@@ -485,7 +511,12 @@ class TpuEvalBackend(TpuHardwareBackend):
 		return result_dict
 
 	def _read_remote_file(self, remote_path: str) -> str:
-		"""Read a remote file via SSH cat (avoids a separate SCP roundtrip)."""
+		"""Read a remote file via SSH cat (or read locally for local transport)."""
+		if self._transport_mode() == "local":
+			try:
+				return self._local_path(remote_path).read_text(encoding="utf-8", errors="replace")
+			except (FileNotFoundError, IsADirectoryError):
+				return ""
 		cmd = self._build_ssh_cmd(
 			remote_command=f"cat {remote_path} 2>/dev/null || true",
 			allocate_tty=False, batch_mode=True,
@@ -699,6 +730,9 @@ if __name__ == "__main__":
 		print("Direct SSH mode (no gcloud) example:")
 		print("  AUTOCOMP_TPU_TRANSPORT=ssh AUTOCOMP_TPU_SSH_HOST=<HOST> AUTOCOMP_TPU_SSH_USER=<USER> \\")
 		print(" python -m autocomp.backend.tpu.tpu_eval --ssh")
+		print("")
+		print("Local mode (run on the TPU VM itself, no scp/ssh):")
+		print("  AUTOCOMP_TPU_TRANSPORT=local python -m autocomp.backend.tpu.tpu_eval --bench <file1> [file2 ...]")
 		sys.exit(1)
 
 	backend = TpuEvalBackend()
