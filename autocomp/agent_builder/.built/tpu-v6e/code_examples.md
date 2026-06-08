@@ -945,3 +945,78 @@ def scatter(x, indices):
 
   return kernel(x, indices)
 ```
+
+## paged_attention_kernel.py (jax.experimental.pallas.ops.tpu.paged_attention)
+
+SUMMARY: This document covers the canonical idiom for paged / ragged attention KV-cache access on TPU: gathering data-dependent pages out of an HBM page pool *inside* the kernel using `pltpu.make_async_copy`, rather than indexing a page table from a `BlockSpec.index_map`. An `index_map` must return static (grid-derived) block indices — it cannot return a value read from a prefetched table, which is why doing the page lookup there fails with errors like "index_map returned a mutable array reference" or "must return integer scalars". The correct pattern: scalar-prefetch the page-index table into SMEM, keep the page pool in `pl.ANY` (HBM), and issue one async DMA per page from `hbm_ref.at[page_id]` into a VMEM scratch buffer, then `.start()` all copies and `.wait()` before computing. Distilled and verified on TPU v6e from `jax.experimental.pallas.ops.tpu.paged_attention.paged_attention_kernel` (the `MultiPageAsyncCopyDescriptor` helper).
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+
+def _gather_kernel(
+    page_indices_ref,   # SMEM, scalar-prefetched: int32[num_seqs, pages_per_seq]
+    kv_pages_hbm_ref,   # HBM (pl.ANY): the full page pool, indexed dynamically
+    out_ref,            # VMEM output block for this sequence
+    kv_vmem_scratch,    # VMEM scratch to receive gathered pages
+    sem,                # DMA semaphore
+):
+    seq = pl.program_id(0)
+    pages_per_seq = page_indices_ref.shape[1]
+
+    # Dynamic gather: for each page slot, read its page id from the prefetched
+    # table (a scalar in SMEM) and async-copy that HBM page into VMEM scratch.
+    # NOTE: this read is data-dependent, so it must happen HERE in the kernel
+    # body, not in a BlockSpec.index_map (index_map indices must be static).
+    def start_copy(i):
+        page_id = page_indices_ref[seq, i]          # data-dependent scalar
+        return pltpu.make_async_copy(
+            kv_pages_hbm_ref.at[page_id],           # .at[scalar] indexes HBM
+            kv_vmem_scratch.at[i],
+            sem,
+        )
+
+    copies = [start_copy(i) for i in range(pages_per_seq)]
+    for c in copies:
+        c.start()
+    for c in copies:
+        c.wait()
+
+    # kv_vmem_scratch now holds this sequence's pages contiguously in VMEM.
+    out_ref[...] = kv_vmem_scratch[...].reshape(out_ref.shape).astype(out_ref.dtype)
+
+
+def gather_pages(kv_pages, page_indices):
+    """kv_pages: [total_pages, page_size, head_dim] in HBM.
+       page_indices: [num_seqs, pages_per_seq] int32.
+       Returns [num_seqs, pages_per_seq * page_size, head_dim]."""
+    num_seqs, pages_per_seq = page_indices.shape
+    total_pages, page_size, head_dim = kv_pages.shape
+    out_shape = jax.ShapeDtypeStruct(
+        (num_seqs, pages_per_seq * page_size, head_dim), kv_pages.dtype
+    )
+    return pl.pallas_call(
+        _gather_kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,                  # page_indices -> SMEM
+            grid=(num_seqs,),
+            in_specs=[
+                # KV pool stays in HBM; we DMA pages out by dynamic index.
+                pl.BlockSpec(memory_space=pl.ANY),
+            ],
+            out_specs=pl.BlockSpec(
+                (None, pages_per_seq * page_size, head_dim),
+                lambda seq, page_indices: (seq, 0, 0),
+            ),
+            scratch_shapes=[
+                pltpu.VMEM((pages_per_seq, page_size, head_dim), kv_pages.dtype),
+                pltpu.SemaphoreType.DMA,
+            ],
+        ),
+        out_shape=out_shape,
+    )(page_indices, kv_pages)
+```
+```
