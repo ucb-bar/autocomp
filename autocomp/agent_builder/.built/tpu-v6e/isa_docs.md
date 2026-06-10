@@ -3301,3 +3301,119 @@ Parameters:
     
 
 core_axis_name (str)
+
+---
+
+## jax.lax position/index and broadcast ops (for building masks inside kernels)
+
+Source: https://docs.jax.dev/en/latest/jax.lax.html
+
+### jax.lax.broadcasted_iota
+
+jax.lax.broadcasted_iota(dtype, shape, dimension)
+
+Returns an array of the given `shape` and `dtype` whose values count up (0, 1,
+2, ...) along `dimension` and are constant along all other axes. This is the
+primary way to materialize per-element position indices INSIDE a kernel (Python
+`range`/`arange` over traced bounds will not work). Use it to build causal and
+ragged/variable-length masks by comparing position indices against each other or
+against a runtime length, then feed the boolean to `jnp.where` / `lax.select`:
+
+    # causal mask: query position >= key position
+    q_pos = lax.broadcasted_iota(jnp.int32, (q_len, kv_len), 0)
+    k_pos = lax.broadcasted_iota(jnp.int32, (q_len, kv_len), 1)
+    causal = q_pos >= k_pos
+
+    # ragged: keep only keys within this sequence's runtime length kv_len_i
+    valid = lax.broadcasted_iota(jnp.int32, (q_len, kv_len), 1) < kv_len_i
+    logits = jnp.where(causal & valid, logits, -1e30)
+
+Only int32 is supported for iota inside TPU kernels; cast to float afterward if
+needed.
+
+### jax.lax.broadcast_in_dim
+
+jax.lax.broadcast_in_dim(operand, shape, broadcast_dimensions)
+
+General broadcast: dimension `i` of `operand` becomes dimension
+`broadcast_dimensions[i]` of the result (shape `shape`). More flexible than NumPy
+broadcasting — it can broadcast into non-trailing axes and implicitly transpose,
+which `jnp.broadcast_to` cannot. Use it to align a low-rank tensor (e.g. a
+per-key bias or a [seq] length vector) against a higher-rank logits tensor
+without manual `None`-indexing:
+
+    # operand dim 0 -> result dim 1 (place a length-N vector along axis 1 of (M, N))
+    b = lax.broadcast_in_dim(vec_n, (M, N), (1,))
+
+For simple trailing-axis broadcasts, `jnp.broadcast_to` or `None`-indexing is fine;
+reach for `broadcast_in_dim` when you need to target a specific non-trailing axis.
+
+---
+
+## jax.lax control flow (for data-dependent branching inside kernels)
+
+Source: https://docs.jax.dev/en/latest/jax.lax.html (Control flow operators).
+
+Inside a JIT-traced kernel you CANNOT use a Python `if`/`while` whose condition
+depends on a traced value (a runtime array such as a length, count, or index) —
+doing so raises `TracerBoolConversionError` ("Attempted boolean conversion of
+traced array"). Replace such Python control flow with one of the operators below.
+
+Key distinction:
+
+  * `lax.cond` / `lax.switch` execute ONLY the chosen branch — use these to
+    conditionally SKIP work (e.g. skip a padding sequence, an out-of-range block).
+  * `lax.select` / `lax.select_n` / `jnp.where` are elementwise value selectors
+    that evaluate ALL inputs and pick between already-computed values — use these
+    to MASK results, not to avoid computation.
+
+### jax.lax.cond
+
+jax.lax.cond(pred, true_fun, false_fun, *operands)
+
+Conditionally apply `true_fun` or `false_fun`. `pred` is a scalar boolean
+(may be a traced value). Only the selected branch runs. Both branches must
+take `*operands` and return outputs of the same shape/dtype/pytree structure.
+Use to guard data-dependent work, e.g.:
+
+    o_val = lax.cond(seq_idx < num_seqs,
+                     lambda acc: acc / l,     # valid sequence
+                     lambda acc: acc * 0.0,   # padding sequence -> zeros
+                     o_accum)
+
+### jax.lax.switch
+
+jax.lax.switch(index, branches, *operands)
+
+Apply exactly one of `branches` (a sequence of callables) selected by the
+integer `index` (clamped to the valid range). Generalizes `cond` to N cases.
+
+### jax.lax.select
+
+jax.lax.select(pred, on_true, on_false)
+
+Elementwise: select `on_true` where `pred` is True, else `on_false`. `pred`,
+`on_true`, `on_false` are arrays broadcast to a common shape. Both inputs are
+evaluated (no work is skipped). Equivalent in effect to `jnp.where(pred, a, b)`.
+Prefer this for computing the next loop state from a traced condition without
+Python branching, e.g.:
+
+    next_buf_idx = lax.select(cur_buf_idx == 0, 1, 0)
+    next_kv_blk  = lax.select(is_last_kv_blk, 0, kv_blk_idx + 1)
+
+### jax.lax.select_n
+
+jax.lax.select_n(which, *cases)
+
+Select array values from multiple `cases` using integer `which` (0..N-1).
+Like `select` but for more than two cases; all cases are evaluated.
+
+### jax.lax.while_loop / jax.lax.fori_loop
+
+jax.lax.while_loop(cond_fun, body_fun, init_val)
+jax.lax.fori_loop(lower, upper, body_fun, init_val)
+
+Data-dependent iteration. Use when the loop bound or continuation condition
+depends on a traced value (e.g. iterating over a runtime number of kv blocks).
+`body_fun` threads a carry whose pytree structure/shape/dtype must be identical
+on input and output.
