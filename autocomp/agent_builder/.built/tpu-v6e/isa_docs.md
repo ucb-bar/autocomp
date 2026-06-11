@@ -3417,3 +3417,20 @@ Data-dependent iteration. Use when the loop bound or continuation condition
 depends on a traced value (e.g. iterating over a runtime number of kv blocks).
 `body_fun` threads a carry whose pytree structure/shape/dtype must be identical
 on input and output.
+
+---
+
+## Current Pallas API surface (THIS environment = JAX 0.9.x)
+
+The Pallas `BlockSpec` API changed across JAX versions; some older idioms in
+training data are REMOVED and fail here. Two corrections that matter most:
+
+  * `pl.BlockSpec` has NO `indexing_mode` argument. Signature is
+    `pl.BlockSpec(block_shape, index_map, *, memory_space=None)`. Express dynamic
+    / data-dependent tiling in the `index_map` function (it may read a
+    scalar-prefetched SMEM ref and return computed block indices) — not via any
+    `indexing_mode=` kwarg, which raises "unexpected keyword argument".
+  * `pl.load` and `pl.store` DO NOT EXIST. Read a ref by indexing it
+    (`x = x_ref[...]`), write by indexed assignment (`o_ref[...] = val`). A `Ref`
+    is not an array — read it first, then do arithmetic on the result. For a
+    masked store use `pltpu.store(ref, val, mask=...)` (32-bit only).
