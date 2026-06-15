@@ -27,6 +27,10 @@ from autocomp.hw_config import (
 
 
 def main():
+    # Choosing values for the parameters below? See PARAMETER_GUIDE.md (repo root)
+    # for practical guidance on models, beam_size, skip_planning, use_edits,
+    # dropout_menu_options, and troubleshooting low correctness rates.
+
     # ------------------------------------------------------------------
     # Target & environment
     # ------------------------------------------------------------------
