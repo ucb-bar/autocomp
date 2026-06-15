@@ -24,24 +24,39 @@ Beam size can also affect convergence rate: since smaller beam sizes can get cau
 
 ## `models`
 
-Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated April 13, 2026):
+Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated June 14, 2026):
 
 | Provider | Model string | Notes |
 |----------|-------------|-------|
-| OpenAI | `"openai::gpt-5.4"` | Flagship model, strong at complex reasoning and coding. 1M context. |
+| OpenAI | `"openai::gpt-5.5"` | Flagship model, strong at complex reasoning and coding. 1M context. |
 | OpenAI | `"openai::gpt-5.4-mini"` | Strongest mini model for coding and high-volume workloads. 400k context. |
-| Anthropic (direct) | `"anthropic::claude-opus-4-6"` | Strongest Anthropic model (4.5 is similar). 1M context. |
+| Anthropic (direct) | `"anthropic::claude-opus-4-8"` | Strongest Anthropic model (4.7 is similar). 1M context. |
 | Anthropic (direct) | `"anthropic::claude-sonnet-4-6"` | Good balance of speed and intelligence. 1M context. |
-| AWS Bedrock (Claude) | `"aws::us.anthropic.claude-opus-4-6-v1"` | Opus 4.6 on Bedrock; uses Anthropic SDK adapter. |
-| AWS Bedrock (Claude) | `"aws::us.anthropic.claude-opus-4-5-20251101-v1:0"` | Opus 4.5 on Bedrock (still available, similar to 4.6). |
+| AWS Bedrock (Claude) | `"aws::anthropic.claude-opus-4-8"` | Opus 4.8 on Bedrock; uses Anthropic SDK adapter. |
+| AWS Bedrock (Claude) | `"aws::anthropic.claude-opus-4-7"` | Opus 4.7 on Bedrock (similar to 4.8); uses Anthropic SDK adapter. |
 | AWS Bedrock (open) | `"aws::zai.glm-5"` | GLM-5; strong at code, available via Converse API. |
 | AWS Bedrock (open) | `"aws::moonshotai.kimi-k2.5"` | Kimi K2.5; adds diversity. |
 | AWS Bedrock (open) | `"aws::deepseek.v3.2"` | DeepSeek V3.2; adds diversity. |
 | AWS Bedrock (open) | `"aws::minimax.minimax-m2.5"` | MiniMax M2.5; adds diversity. |
+| Google | `"gcp::gemini-3.5-flash"` | Fast, capable Gemini; strong cost/quality. 1M context. |
 | Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. |
 | Google | `"gcp::gemini-3-flash-preview"` | Cheaper model adds diversity. 1M context. |
 
-An example 4-model mix: `"openai::gpt-5.4"`, `"aws::us.anthropic.claude-opus-4-6-v1"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
+An example 4-model mix: `"openai::gpt-5.5"`, `"aws::anthropic.claude-opus-4-8"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
+
+## `skip_planning`
+
+When `False` (default), each iteration plans first (the LLM proposes optimization strategies) and implements second, as two separate LLM calls. When `True`, it generates code directly in one call (still reasoning first, just without a separate plan). The strategy menu is shown either way, so skipping planning doesn't lose it. The candidate count is unchanged — with `skip_planning`, `num_plan_candidates` becomes distinct prompts per parent and `num_code_candidates` samples per prompt.
+
+`skip_planning=True` saves one LLM call per candidate; its effect on final performance isn't entirely clear, but it works well with strong reasoning models that plan adequately on their own. Keep planning on (default) when you want an explicit, separate strategy step.
+
+## `menu_strategy`, `fine_grained_isa`, `example_rate` (built agents)
+
+These three apply only to **built agents** (`agent_name="built:<name>"`); they have no effect on hand-written agents.
+
+- **`menu_strategy`** — `"one-shot"` (recommended for built agents) makes an extra LLM call per candidate to generate fresh, candidate-specific strategies on top of the static `optimization_menu.yaml`; `None` uses only the static menu, saving that call but anchoring the search to the curated list.
+- **`fine_grained_isa`** — when `True`, injects only the ISA docs relevant to the current code (filtered by section then subsection) rather than the whole ISA. Keep it on for large ISA docs; turn it off only for debugging or a small ISA that always fits.
+- **`example_rate`** — per-example probability of including an LLM-selected code example in the planning prompt. Higher gives more worked examples (helpful early or for unfamiliar targets) at the cost of prompt length and bias toward the example; `0.25` is a reasonable default.
 
 ## `dropout_menu_options`
 
