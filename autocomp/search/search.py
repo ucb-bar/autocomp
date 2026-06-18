@@ -427,14 +427,27 @@ class SearchStrategy:
             logger.warning("Failed to save run metadata: %s", e)
 
     def _get_best_candidate(self):
-        """Find the global best candidate across all iterations."""
-        best = None
+        """Find the global best (lowest-score) candidate across all iterations.
+
+        In a translate phase the untranslated original (parent is None) is
+        excluded, mirroring translate_drop_original's beam-level drop: XLA
+        usually beats a freshly-translated Pallas kernel, so it would otherwise
+        be returned as "best" and defeat the translate phase. Falls back to the
+        original if nothing else is correct (translation produced no kernel).
+        """
+        exclude_original = self.translate_drop_original and self.translate_iters > 0
+        best = best_incl_original = None
         for candidates in self.repository.candidates_per_iteration:
             for c in candidates:
-                if c.score is not None and c.score != float("inf"):
-                    if best is None or c.score < best.score:
-                        best = c
-        return best
+                if c.score is None or c.score == float("inf"):
+                    continue
+                if best_incl_original is None or c.score < best_incl_original.score:
+                    best_incl_original = c
+                if exclude_original and c.parent is None:
+                    continue
+                if best is None or c.score < best.score:
+                    best = c
+        return best if best is not None else best_incl_original
 
     def _save_best_candidate(self):
         """Find the global best candidate and write its source code to disk."""
