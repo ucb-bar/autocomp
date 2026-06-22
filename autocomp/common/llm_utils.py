@@ -709,7 +709,17 @@ async def fetch_tool_completion(
                         }
                         tc = kwargs.get("toolConfig", {"tools": []})
                         tc["tools"].append(so_spec)
-                        tc["toolChoice"] = {"tool": {"name": schema_name}}
+                        # NOTE: do NOT force toolChoice to the schema tool.
+                        # Forcing {"tool": {"name": ...}} makes Claude/Opus emit
+                        # the tool-call *template* (literal "$FUNCTION_NAME" /
+                        # "$ARGUMENT_NAME" placeholders) ~80% of the time on
+                        # large prompts, which fails to parse and silently
+                        # reverts the candidate to the seed. Leaving toolChoice
+                        # unset (auto) takes Opus from ~20% -> 100% valid on the
+                        # real 118KB edit prompt and is harmless to GLM-5 (100%
+                        # either way). The model then answers either as a proper
+                        # toolUse block or as plain JSON text; both land in
+                        # `content` below and parse identically.
                         kwargs["toolConfig"] = tc
                     resp = await asyncio.to_thread(bedrock_client.converse, **kwargs)
                     normalized = _normalize_bedrock_response(resp)
