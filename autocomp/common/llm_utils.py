@@ -241,7 +241,14 @@ def _normalize_gemini_response(response) -> dict:
     """Normalize a Gemini generateContent response to common dict."""
     content_text = ""
     tool_calls = []
-    for part in response.candidates[0].content.parts:
+    # Gemini can return no candidates, a candidate with no content, or content
+    # with parts=None (blocked/empty/finish-without-parts). Iterating None raised
+    # "'NoneType' object is not iterable", which the retry loop misread as a
+    # transient hang (8 backoff retries looked like a timeout). Guard each level.
+    candidates = response.candidates or []
+    content = candidates[0].content if candidates else None
+    parts = (content.parts if content else None) or []
+    for part in parts:
         if part.text:
             content_text += part.text
         if part.function_call:
@@ -808,13 +815,20 @@ class LLMClient:
             self.client = OpenAI(api_key=openai_key_str)
             self.async_client = AsyncOpenAI(api_key=openai_key_str)
         elif self.provider == "gcp":
+            # Per-request HTTP timeout (ms). Without this, a hung Vertex/Gemini
+            # request blocks the await forever (futex_wait) and stalls the whole
+            # beam search. With a timeout the request fails fast and the
+            # max_retries loop re-issues it.
+            _gcp_http_opts = types.HttpOptions(timeout=120_000)
             if google_api_key and not google_cloud_project:
-                self.client = genai.Client(api_key=google_api_key)
+                self.client = genai.Client(api_key=google_api_key,
+                                           http_options=_gcp_http_opts)
             else:
                 self.client = genai.Client(
                     vertexai=True,
                     project=google_cloud_project,
                     location=google_cloud_location,
+                    http_options=_gcp_http_opts,
                 )
             self.async_client = self.client
         elif self.provider == "anthropic":
