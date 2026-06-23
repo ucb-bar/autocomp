@@ -101,12 +101,62 @@ def parse_edits_response(response_text: str) -> list[dict] | None:
         else:
             return None
 
-    if isinstance(data, dict) and "edits" in data:
-        edits = data["edits"]
-        if isinstance(edits, list) and all(
-            isinstance(e, dict) and "old_str" in e and "new_str" in e for e in edits
-        ):
-            return edits
+    return _edits_from_obj(data)
+
+
+def _strip_dollar_keys(obj):
+    """Recursively drop a leading '$' from dict keys.
+
+    Some models (notably Opus via Bedrock) leak tool-call template
+    placeholders as literal keys: ``{"$plan": ..., "$edits": [...]}`` or
+    ``{"$old_str": ..., "$new_str": ...}``. Normalising ``$key`` -> ``key``
+    recovers these without changing well-formed responses.
+    """
+    if isinstance(obj, dict):
+        return {
+            (k[1:] if isinstance(k, str) and k.startswith("$") else k): _strip_dollar_keys(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_strip_dollar_keys(v) for v in obj]
+    return obj
+
+
+def _valid_edits(edits) -> bool:
+    return isinstance(edits, list) and len(edits) > 0 and all(
+        isinstance(e, dict) and "old_str" in e and "new_str" in e for e in edits
+    )
+
+
+def _edits_from_obj(data) -> list[dict] | None:
+    """Extract a valid edits list from a parsed response object.
+
+    Accepts, in order of preference:
+    1. ``{"edits": [{old_str, new_str}, ...]}`` (the intended shape).
+    2. A single inline edit flattened to the top level,
+       ``{"plan": ..., "old_str": ..., "new_str": ...}`` -> ``[that edit]``.
+       (Opus frequently emits a single edit this way when toolChoice is auto.)
+    3. A single-key envelope whose value contains the edits,
+       ``{"$ARGUMENT_NAME": {"edits": [...]}}`` -> descend one level.
+    ``$``-prefixed placeholder keys are stripped first at every level.
+    """
+    if not isinstance(data, dict):
+        return None
+    data = _strip_dollar_keys(data)
+
+    # 1. canonical shape
+    if "edits" in data and _valid_edits(data["edits"]):
+        return data["edits"]
+
+    # 2. single inline edit at top level
+    if "old_str" in data and "new_str" in data:
+        return [{"old_str": data["old_str"], "new_str": data["new_str"]}]
+
+    # 3. single-key envelope -> descend
+    if len(data) == 1:
+        inner = next(iter(data.values()))
+        return _edits_from_obj(inner)
+
     return None
 
 _FENCED_CODE_RE = re.compile(r"```\w*\n(.*?)```", re.DOTALL)
