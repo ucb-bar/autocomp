@@ -400,9 +400,10 @@ class TpuEvalBackend(TpuHardwareBackend):
 				f"true"
 			)
 
-		check_jax = f"{venv_python} -c 'import jax, absl; assert jax.__version__==\"0.9.2\", jax.__version__' >/dev/null 2>&1"
+		jax_ver = os.getenv("AUTOCOMP_JAX_VERSION", "0.10.0")
+		check_jax = f"{venv_python} -c 'import jax, absl; assert jax.__version__==\"{jax_ver}\", jax.__version__' >/dev/null 2>&1"
 		uninstall = f"{venv_python} -m pip uninstall -y jax jaxlib -q >/dev/null 2>&1 || true"
-		install = f"{venv_python} -m pip install -U 'jax[tpu]==0.9.2' absl-py -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
+		install = f"{venv_python} -m pip install -U 'jax[tpu]=={jax_ver}' absl-py -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
 		setup = f"if [ \"${{AUTOCOMP_TPU_FORCE_PIP:-0}}\" = \"1\" ]; then {uninstall}; ({install}); else ({check_jax}) || ({install}); fi"
 
 		return (

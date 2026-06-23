@@ -370,8 +370,11 @@ class JaxBenchEvalBackend(TpuHardwareBackend):
     # ── SSH/SCP helpers (thin wrappers around TpuHardwareBackend) ─────────
 
     def _jax_setup_command(self) -> str:
-        check = f"{self._python_bin} -c 'import jax; assert jax.__version__==\"0.9.2\", jax.__version__' >/dev/null 2>&1"
-        install = f"{self._python_bin} -m pip install -U 'jax[tpu]==0.9.2' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
+        # Standardize on JAX 0.10.x (the version vllm-tpu / serving runs and the
+        # kernels are validated under). Override with AUTOCOMP_JAX_VERSION.
+        ver = os.getenv("AUTOCOMP_JAX_VERSION", "0.10.0")
+        check = f"{self._python_bin} -c 'import jax; assert jax.__version__==\"{ver}\", jax.__version__' >/dev/null 2>&1"
+        install = f"{self._python_bin} -m pip install -U 'jax[tpu]=={ver}' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html -q"
         return f"({check}) || ({install}) 2>&1; "
 
     def _scp(self, local_path: pathlib.Path, remote_path: str) -> int:
