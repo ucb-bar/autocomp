@@ -123,7 +123,10 @@ def _strip_dollar_keys(obj):
 
 
 def _valid_edits(edits) -> bool:
-    return isinstance(edits, list) and len(edits) > 0 and all(
+    # An empty list is valid (a no-op edit set); the previous parser returned
+    # it as-is and downstream code relies on that. Only require that any
+    # present elements are well-formed.
+    return isinstance(edits, list) and all(
         isinstance(e, dict) and "old_str" in e and "new_str" in e for e in edits
     )
 
