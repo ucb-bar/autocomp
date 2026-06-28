@@ -115,6 +115,7 @@ Eval backends generally need to clean LLM-generated code. There is some simple e
 ### Other Considerations
 
 - **Test Integration**: Some backends place initial code in `sols/{prob_type}/` and corresponding test harnesses in `harnesses/{prob_type}/`. You can consider following this pattern, or you can implement your own method for separating the code to optimize from the test harness.
+- **Realistic input distributions**: Match the real input value distributions, dtypes, and shapes the kernel will see in production. The search optimizes against whatever the harness measures, so unrepresentative inputs (all-zero/constant tensors that trigger fast paths, wrong dtype or range, missing mask/sparsity structure, degenerate seeds) yield misleading speedups and correctness checks that pass in the harness but fail in deployment.
 - **Error Handling**: You can consider reading in `stdout` and `stderr` from the code execution to provide feedback to the LLM, to try to fix errors automatically (like we do with Trainium), or for manual inspection later.
 
 ## Step 3: Create an LLM Agent Class
@@ -268,7 +269,7 @@ To add a new problem for your backend:
 
 1. **Provide initial (unoptimized) code.** Add loading logic in `load_initial_code()` in `search.py`. Some backends store baseline code in `sols/{prob_type}/` (e.g., Trainium, GPU MODE), while others load from external sources (e.g., KernelBench loads from its own benchmark directory).
 
-2. **Provide correctness tests and evaluation.** This is handled entirely by your `evaluate_code()` method in the eval backend. Some backends use test files in `harnesses/{prob_type}/` (e.g., Gemmini), while others bundle tests into the evaluation itself (e.g., KernelBench, Trainium).
+2. **Provide correctness tests and evaluation.** This is handled entirely by your `evaluate_code()` method in the eval backend. Some backends use test files in `harnesses/{prob_type}/` (e.g., Gemmini, Trainium), while others bundle tests into the evaluation itself (e.g., KernelBench).
 
 3. **Optionally provide problem context.** You can add a `context{prob_id}.md` or `context{prob_id}.txt` file in `harnesses/{prob_type}/` to give the LLM additional context about the problem. This is automatically loaded by the `Prob` class.
 

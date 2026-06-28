@@ -42,7 +42,7 @@ agent_name = "built:trn1-nki1"
 hw_config = TrnHardwareConfig("trn1.2xlarge")
 prob_type = "trn-tutorial-nki1"
 prob_id = 2
-models = ["openai::gpt-5.4"]
+models = ["openai::gpt-5.5"]
 ```
 
 Then run:
@@ -172,7 +172,7 @@ Anthropic (Claude) models on Bedrock use the native Anthropic SDK adapter. All o
 
 ```python
 models = [
-    "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",  # Claude (Anthropic adapter)
+    "aws::anthropic.claude-opus-4-8",                   # Claude (Anthropic adapter)
     "aws::zai.glm-5",                                   # GLM 5
 ]
 ```
@@ -199,7 +199,7 @@ The most important parameters are:
   - `MetalHardwareConfig("M2", "4.0", "apple8", 8)`
 
 **Evaluation Backend**
-- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `gemmini`, `kernelbench`, `gpumode`, `saturn`, `xnnpack`, and `metal`.
+- `backend_name`: The evaluation backend to use. Currently supported values are `trn`, `tpu`, `jaxbench`, `gemmini`, `kernelbench`, `gpumode`, `saturn`, `xnnpack`, and `metal`.
 - `simulator`: The evaluation method to use, if the backend supports multiple. For all others, put `None`.
   - For Gemmini, `spike` (only optimizes instruction counts, not cycle counts) or `firesim`
   - For Saturn/XNNPACK, `spike` or `firesim`
@@ -208,7 +208,8 @@ The most important parameters are:
 **Benchmark**
 - `prob_type`: The problem type to use.
   - For Trainium, `trn-tutorial-nki1`, `trn-tutorial-nki2`, `trn-advanced-nki1`, or `trn-advanced-nki2`.
-  - For TPU, `tpu`, `jaxbench-pallas`, or `jaxbench-baseline`.
+  - For TPU (`tpu` backend), `tpu`.
+  - For TPU (`jaxbench` backend), `jaxbench-pallas`, `jaxbench-baseline`, or `jaxbench`.
   - For Gemmini, `gemm`, `conv`, or `admm-multifunction`.
   - For CUDA/KernelBench, `kb-level1`, `kb-level2`, `kb-level3`, or `kb-level4`.
   - For CUDA/GPU MODE, `gpumode`.
@@ -221,7 +222,7 @@ The most important parameters are:
 - `agent_name`: The optimization agent to use. See the [table above](#hardware-targets) for the right agent for each target.
 
 **Models**
-- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.4"` or `"gcp::gemini-3.1-pro"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
+- `models`: The list of models to use. Models are specified `"<provider>::<model>"`, for example `"openai::gpt-5.5"` or `"gcp::gemini-3.1-pro"`. Currently supported endpoint providers are OpenAI (`openai`), Google Vertex AI (`gcp`), Anthropic (`anthropic`), AWS Bedrock (`aws`), and Together (`together`). Use provider `vllm` for local serving.
 - `code_models`: The list of models to use for the implementation phase, if you would like to use a distinct set of models from planning. Can be set to `None` to use the same set of models.
 
 **Search**
