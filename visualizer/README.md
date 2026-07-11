@@ -42,7 +42,7 @@ The extension remembers your last output directory across sessions.
 
 Click **Summarize Plans** in the run detail view to generate short summaries for each optimization plan. Use the gear icon to open the settings page and configure the provider and model:
 
-- **OpenAI** — `gpt-5.4-mini`
+- **OpenAI** — `gpt-5.6-luna`
 - **Anthropic** — `claude-haiku-4-5-20251001`
 - **AWS Bedrock** — `us.anthropic.claude-haiku-4-5-20251001-v1:0` (uses EC2 instance credentials automatically)
 - **Google Gemini** — `gemini-3-flash-preview`
@@ -140,8 +140,8 @@ code='''import numpy as np
 score=0.987,
 translation_score=None,
 hw_feedback=[],
-plan_gen_model='aws::us.anthropic.claude-opus-4-5-20251101-v1:0',
-code_gen_model='aws::us.anthropic.claude-opus-4-5-20251101-v1:0',
+plan_gen_model='aws::us.anthropic.claude-opus-4-8',
+code_gen_model='aws::us.anthropic.claude-opus-4-8',
 stdout=None,
 stderr=None)
 ```

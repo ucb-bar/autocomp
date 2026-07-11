@@ -51,7 +51,7 @@ def main():
     # ------------------------------------------------------------------
     # Format: "provider::model" (openai, anthropic, together, aws, gcp, vllm)
     models = [
-        "aws::us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "aws::us.anthropic.claude-opus-4-8",
         "aws::zai.glm-5",
         "aws::minimax.minimax-m2.5",
         "aws::moonshotai.kimi-k2.5",

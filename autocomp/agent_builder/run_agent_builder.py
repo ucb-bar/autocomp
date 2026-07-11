@@ -442,9 +442,9 @@ def main():
                              "target hardware, programming interface, and what's excluded.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Test ingestion only (no LLM calls needed)")
-    parser.add_argument("--model", default="aws::us.anthropic.claude-opus-4-6-v1",
+    parser.add_argument("--model", default="aws::us.anthropic.claude-opus-4-8",
                         help="LLM model for synthesis")
-    parser.add_argument("--light-model", default="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    parser.add_argument("--light-model", default="aws::us.anthropic.claude-sonnet-5",
                         help="Optional cheaper/faster model for high-token extraction tasks")
     parser.add_argument("--context-budget", type=int, default=150_000,
                         help="Max characters (not tokens) of source content per LLM call "

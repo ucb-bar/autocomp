@@ -24,14 +24,14 @@ Beam size can also affect convergence rate: since smaller beam sizes can get cau
 
 ## `models`
 
-Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated June 14, 2026):
+Use 3–4 diverse models for best results. Model diversity matters more than count — different models propose different optimization strategies. Using a single model tends to converge prematurely. Recommended models by provider (last updated July 10, 2026):
 
 | Provider | Model string | Notes |
 |----------|-------------|-------|
-| OpenAI | `"openai::gpt-5.5"` | Flagship model, strong at complex reasoning and coding. 1M context. |
-| OpenAI | `"openai::gpt-5.4-mini"` | Strongest mini model for coding and high-volume workloads. 400k context. |
+| OpenAI | `"openai::gpt-5.6-sol"` | GPT-5.6 Sol; flagship, strong at complex reasoning and coding. 1M context. |
+| OpenAI | `"openai::gpt-5.6-terra"` | GPT-5.6 Terra; balances intelligence and cost, good for high-volume workloads. 1M context. |
 | Anthropic (direct) | `"anthropic::claude-opus-4-8"` | Strongest Anthropic model (4.7 is similar). 1M context. |
-| Anthropic (direct) | `"anthropic::claude-sonnet-4-6"` | Good balance of speed and intelligence. 1M context. |
+| Anthropic (direct) | `"anthropic::claude-sonnet-5"` | Good balance of speed and intelligence. 1M context. |
 | AWS Bedrock (Claude) | `"aws::anthropic.claude-opus-4-8"` | Opus 4.8 on Bedrock; uses Anthropic SDK adapter. |
 | AWS Bedrock (Claude) | `"aws::anthropic.claude-opus-4-7"` | Opus 4.7 on Bedrock (similar to 4.8); uses Anthropic SDK adapter. |
 | AWS Bedrock (open) | `"aws::zai.glm-5"` | GLM-5; strong at code, available via Converse API. |
@@ -42,7 +42,7 @@ Use 3–4 diverse models for best results. Model diversity matters more than cou
 | Google | `"gcp::gemini-3.1-pro-preview"` | Frontier Gemini model, strong reasoning. 1M context. |
 | Google | `"gcp::gemini-3-flash-preview"` | Cheaper model adds diversity. 1M context. |
 
-An example 4-model mix: `"openai::gpt-5.5"`, `"aws::anthropic.claude-opus-4-8"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
+An example 4-model mix: `"openai::gpt-5.6-sol"`, `"aws::anthropic.claude-opus-4-8"`, `"aws::zai.glm-5"`, `"aws::moonshotai.kimi-k2.5"`. This combines two frontier models with two capable open models for maximum strategy diversity.
 
 ## `skip_planning`
 
