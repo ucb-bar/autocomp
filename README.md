@@ -228,8 +228,8 @@ The most important parameters are:
 **Search**
 - `iterations`: The number of iterations to run.
 - `search_strategy`: The search strategy to use. Currently only `beam` is supported.
-- `num_plan_candidates`: Number of plans (strategies) generated per parent candidate per iteration. Default `4`.
-- `num_code_candidates`: Number of code implementations generated per plan. Default `2`.
+- `num_plan_candidates`: Number of plans (strategies) generated per parent candidate per iteration. Default `8`.
+- `num_code_candidates`: Number of code implementations generated per plan. Default `1`.
 - `beam_size`: Number of candidates kept in the beam after each iteration. Default `4`.
 - `dropout_menu_options`: Probability of keeping each strategy menu option in the prompt (lower = more dropout). Default `0.25`.
 - `early_stop_iters`: Stop after N iterations without improvement (0 = disabled).

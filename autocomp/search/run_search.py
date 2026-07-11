@@ -64,8 +64,8 @@ def main():
     search_strategy = "beam"
     metric = "latency"
     iterations = 8
-    num_plan_candidates = 4
-    num_code_candidates = 2
+    num_plan_candidates = 8
+    num_code_candidates = 1
     beam_size = 4
     dropout_menu_options = 0.25
     early_stop_iters = 0            # 0 = disabled
