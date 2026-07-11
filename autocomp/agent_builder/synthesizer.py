@@ -110,8 +110,10 @@ class ComponentSynthesizer:
     ) -> list[tuple[str, str]]:
         """Binary relevance filter: remove items clearly outside the agent's scope.
 
-        Runs one light LLM call per item in parallel with a simple yes/no prompt.
-        Skipped when no user context is provided.
+        Biased toward retention — keeps anything useful for writing or optimizing
+        kernels (architecture, memory model, compiler/toolchain, performance), and
+        removes only content clearly unrelated to programming the target. Runs one
+        light LLM call per item in parallel. Skipped when no user context is provided.
         """
         if not self._context_prefix or not items:
             return items
@@ -123,8 +125,12 @@ class ComponentSynthesizer:
                 f"Source: {key}\n\n"
                 f"=== CONTENT PREVIEW ===\n{preview}\n=== END ===\n\n"
                 f"{self._context_prefix}"
-                f"Is this content directly relevant to the agent's task described above?\n\n"
-                f"Answer YES or NO."
+                f"Answer YES for content useful for writing or optimizing kernels for "
+                f"this target — architecture, memory model, compiler/toolchain, "
+                f"performance — even if only background or partially relevant. Answer NO "
+                f"only for clearly unrelated content (release notes, changelogs, nav "
+                f"pages, setup, licensing). When in doubt, answer YES.\n\n"
+                f"Should this content be kept? Answer YES or NO."
             )
 
         logger.info("Pre-filter: checking relevance of %d items", len(prompts))
