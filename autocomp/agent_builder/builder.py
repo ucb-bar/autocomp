@@ -15,7 +15,7 @@ class AgentBuilder:
     Builds a new hardware-target agent from diverse knowledge sources.
 
     Usage:
-        builder = AgentBuilder(llm_model="anthropic::claude-sonnet-4-20250514")
+        builder = AgentBuilder(llm_model="anthropic::claude-opus-4-8")
         builder.add_source("directory", path="/path/to/hw-sdk/docs")
         builder.add_source("pdf", path="/path/to/architecture-manual.pdf")
         builder.add_source("webpage", url="https://docs.example.com/isa-reference")
@@ -31,7 +31,7 @@ class AgentBuilder:
         """
         Args:
             llm_model: Model identifier for synthesis LLM calls.
-                       Supports "provider::model" syntax (e.g., "anthropic::claude-sonnet-4-20250514")
+                       Supports "provider::model" syntax (e.g., "anthropic::claude-opus-4-8")
                        or just the model name for auto-detection.
             light_llm_model: Optional cheaper/faster model for high-token extraction tasks.
                              Uses the same "provider::model" syntax. Falls back to llm_model if not set.

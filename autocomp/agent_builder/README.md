@@ -69,8 +69,8 @@ Without an agent scope, the pipeline processes all documents without scope filte
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--agent-scope` | `""` | Agent scope definition (see above) |
-| `--model` | `aws::us.anthropic.claude-opus-4-6-v1` | Main LLM for synthesis and reduce steps |
-| `--light-model` | `aws::us.anthropic.claude-haiku-4-5-20251001-v1:0` | Cheaper LLM for routing, filtering, and extraction |
+| `--model` | `aws::us.anthropic.claude-opus-4-8` | Main LLM for synthesis and reduce steps |
+| `--light-model` | `aws::us.anthropic.claude-sonnet-5` | Cheaper LLM for routing, filtering, and extraction |
 | `--context-budget` | `150000` | Max characters (not tokens) per LLM call. ~3-4 chars per token |
 | `--output-dir` | `.built/` | Base output directory |
 
@@ -202,8 +202,8 @@ If `translation_menu.yaml` is absent, a generic default (`"convert high-level co
 from autocomp.agent_builder import AgentBuilder
 
 builder = AgentBuilder(
-    llm_model="aws::us.anthropic.claude-opus-4-6-v1",
-    light_llm_model="aws::us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    llm_model="aws::us.anthropic.claude-opus-4-8",
+    light_llm_model="aws::us.anthropic.claude-sonnet-5",
     agent_scope="Optimizing NKI kernels on AWS Trainium.",
 )
 builder.add_source("directory", path="/path/to/docs")
